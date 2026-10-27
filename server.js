@@ -94,7 +94,7 @@ const server = http.createServer(async (req, res) => {
   try {
     if (req.method === 'POST' && url.pathname === '/api/profile') {
       const { phone, nickname, allowDuplicate } = await body(req);
-      if (!phone || !nickname || nickname.trim().length < 2) return json(res, 400, { error: '전화번호와 2자 이상 닉네임을 입력해 주세요.' });
+      if (!phone || !nickname || nickname.trim().length < 2) return json(res, 400, { error: '전화번호와 2자 이상 이름을 입력해 주세요.' });
       const hash = phoneHash(phone);
       const existing = db.users.some(u => !u.deleted && u.phoneHash === hash);
       if (existing && !allowDuplicate) return json(res, 409, { duplicate: true });
@@ -105,7 +105,7 @@ const server = http.createServer(async (req, res) => {
       const { phone, nickname } = await body(req);
       const hash = phoneHash(phone);
       const user = db.users.find(u => !u.deleted && u.phoneHash === hash && u.nickname === String(nickname || '').trim());
-      if (!user) return json(res, 404, { error: '전화번호 또는 닉네임을 다시 확인해 주세요.' });
+      if (!user) return json(res, 404, { error: '전화번호 또는 이름을 다시 확인해 주세요.' });
       return json(res, 200, { user: privateUser(user) });
     }
     const profileMatch = url.pathname.match(/^\/api\/profile\/([^/]+)$/);
