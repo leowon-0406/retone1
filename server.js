@@ -1,0 +1,207 @@
+const http = require('http');
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+
+const PORT = process.env.PORT || 3000;
+const root = __dirname;
+const dbPath = path.join(root, 'data.json');
+let db = load();
+db.friendships ||= [];
+
+function load() {
+  try { return JSON.parse(fs.readFileSync(dbPath, 'utf8')); }
+  catch { return { users: [], rooms: [], messages: [], agreements: [] }; }
+}
+function save() { fs.writeFileSync(dbPath, JSON.stringify(db, null, 2)); }
+function id(prefix) { return `${prefix}_${crypto.randomUUID()}`; }
+function phoneHash(phone) { return crypto.createHash('sha256').update(String(phone).replace(/\D/g, '')).digest('hex'); }
+function friendCode() { let code; do { code = crypto.randomBytes(3).toString('hex').toUpperCase(); } while (db.users.some(u => u.friendCode === code)); return code; }
+function json(res, code, value) { res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(value)); }
+function body(req) { return new Promise((resolve, reject) => { let raw=''; req.on('data', c => raw += c); req.on('end', () => { try { resolve(raw ? JSON.parse(raw) : {}); } catch { reject(new Error('invalid json')); } }); }); }
+function publicUser(user) {
+  if (!user || user.deleted) return { id: user?.id || 'deleted', nickname: '탈퇴한 사용자', deleted: true };
+  return { id: user.id, nickname: user.nickname, createdAt: user.createdAt };
+}
+function privateUser(user) { return { ...publicUser(user), friendCode: user.friendCode }; }
+function roomForUser(room, userId) { return { ...room, memberCount: room.memberIds.length, joined: room.memberIds.includes(userId) }; }
+function currentUser(userId) { return db.users.find(u => u.id === userId && !u.deleted); }
+function toneCheck(text) {
+  const clean = String(text || '').toLowerCase().replace(/[\s\-_.~!]/g, '').replace(/(.)\1{2,}/g, '$1$1');
+  const profanity = [
+    '씨발','시발','ㅅㅂ','ㅆㅂ','ㅅㅃ','ㅆㅃ','ㅅ발','시1발',
+    '개새끼','개새','ㄱㅅㄲ','개ㅅㄲ','씹새끼','ㅆㅅㄲ',
+    '병신','ㅂㅅ','등신','지랄','ㅈㄹ','좆','존나','ㅈㄴ','조까','ㅈ까',
+    '닥쳐','ㄷㅊ','꺼져','ㄲㅈ','새끼','ㅅㄲ','미친','미친놈','미친년','ㅁㅊ','ㅁㅊㄴ',
+    '죽어','죽인다','죽여버린다','패버린다','엿먹어'
+  ];
+  const categories = [];
+  const matched = profanity.filter(x => clean.includes(x.replace(/[\s\-_.~!]/g, '')));
+  if (matched.length) categories.push('강한 욕설');
+  if (/(너|네가|니가|너는).{0,12}(문제|때문|한심|답답|최악|싫어|꼴도|꺼져)/.test(text)) categories.push('직접 비난');
+  if (/(죽어|죽인다|죽여|패버|가만 안 둬|찾아간다|두고 보자)/.test(text)) categories.push('위협 표현');
+  if (/(나가|빠져|말 걸지 마|끼지 마|너랑 못|차단할 거|다신 보지)/.test(text)) categories.push('배제 표현');
+  if (/(당장|지금 바로|왜 답이 없어|읽씹|빨리 답|무조건 해)/.test(text)) categories.push('강한 압박');
+  if (/(몸매|벗어|사진 보내|만져|야한)/.test(text)) categories.push('불편할 수 있는 성적 표현');
+  const critical = categories.some(x => x === '위협 표현' || x === '불편할 수 있는 성적 표현');
+  return { level: critical ? 'critical' : (categories.length ? 'high' : 'none'), categories, matched };
+}
+function agreementCheck(text) {
+  return /(해줘|해줄래|만들어줘|정리해줘|보내줘|맡아줘|준비해줘|조사해줘|제출해|완성해|공유해|담당해|역할|담당자|마감|까지|전까지|몇 시|내일|모레|이번 주|다음 주|월요일|화요일|수요일|목요일|금요일|토요일|일요일|하자|하기로|맡을게|만날래|만나자|회의|약속|일정|예약|결정하자)/.test(text);
+}
+
+const server = http.createServer(async (req, res) => {
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  if (req.method === 'GET' && !url.pathname.startsWith('/api/')) {
+    const file = url.pathname === '/' ? 'public/index.html' : `public${url.pathname}`;
+    const full = path.join(root, file);
+    if (!full.startsWith(path.join(root, 'public')) || !fs.existsSync(full)) { res.writeHead(404); return res.end('Not found'); }
+    const type = full.endsWith('.css') ? 'text/css' : full.endsWith('.js') ? 'application/javascript' : 'text/html';
+    res.writeHead(200, { 'Content-Type': `${type}; charset=utf-8` }); return fs.createReadStream(full).pipe(res);
+  }
+  try {
+    if (req.method === 'POST' && url.pathname === '/api/profile') {
+      const { phone, nickname, allowDuplicate } = await body(req);
+      if (!phone || !nickname || nickname.trim().length < 2) return json(res, 400, { error: '전화번호와 2자 이상 닉네임을 입력해 주세요.' });
+      const hash = phoneHash(phone);
+      const existing = db.users.some(u => !u.deleted && u.phoneHash === hash);
+      if (existing && !allowDuplicate) return json(res, 409, { duplicate: true });
+      const user = { id: id('user'), phoneHash: hash, nickname: nickname.trim().slice(0, 12), friendCode: friendCode(), createdAt: Date.now() };
+      db.users.push(user); save(); return json(res, 201, { user: privateUser(user) });
+    }
+    if (req.method === 'POST' && url.pathname === '/api/login') {
+      const { phone, nickname } = await body(req);
+      const hash = phoneHash(phone);
+      const user = db.users.find(u => !u.deleted && u.phoneHash === hash && u.nickname === String(nickname || '').trim());
+      if (!user) return json(res, 404, { error: '전화번호 또는 닉네임을 다시 확인해 주세요.' });
+      return json(res, 200, { user: privateUser(user) });
+    }
+    const profileMatch = url.pathname.match(/^\/api\/profile\/([^/]+)$/);
+    if (req.method === 'GET' && profileMatch) {
+      const user = currentUser(profileMatch[1]);
+      if (!user) return json(res, 404, { error: '사용자를 찾을 수 없어요.' });
+      return json(res, 200, { user: privateUser(user) });
+    }
+    if (req.method === 'DELETE' && profileMatch) {
+      const user = currentUser(profileMatch[1]);
+      if (!user) return json(res, 404, { error: '삭제할 계정을 찾을 수 없어요.' });
+      user.deleted = true;
+      user.deletedAt = Date.now();
+      user.nickname = '탈퇴한 사용자';
+      user.phoneHash = null;
+      db.rooms.forEach(room => { room.memberIds = room.memberIds.filter(memberId => memberId !== user.id); });
+      db.friendships = db.friendships.filter(f => f.fromId !== user.id && f.toId !== user.id);
+      save();
+      return json(res, 200, { deleted: true });
+    }
+    if (req.method === 'GET' && url.pathname === '/api/friends') {
+      const userId = url.searchParams.get('userId');
+      if (!currentUser(userId)) return json(res, 403, { error: '사용자를 확인할 수 없어요.' });
+      const friends = db.friendships.filter(f => f.fromId === userId || f.toId === userId).map(f => {
+        const otherId = f.fromId === userId ? f.toId : f.fromId;
+        return { ...f, direction: f.fromId === userId ? 'outgoing' : 'incoming', user: publicUser(db.users.find(u => u.id === otherId)) };
+      });
+      return json(res, 200, friends);
+    }
+    if (req.method === 'GET' && url.pathname === '/api/users') {
+      const userId = url.searchParams.get('userId');
+      if (!currentUser(userId)) return json(res, 403, { error: '사용자를 확인할 수 없어요.' });
+      return json(res, 200, db.users.filter(u => !u.deleted && u.id !== userId).map(publicUser));
+    }
+    if (req.method === 'POST' && url.pathname === '/api/friends/request') {
+      const { userId, friendCode: code } = await body(req); const user = currentUser(userId);
+      const target = db.users.find(u => !u.deleted && u.friendCode === String(code).trim().toUpperCase());
+      if (!user || !target) return json(res, 404, { error: '친구 코드를 찾을 수 없어요.' });
+      if (target.id === user.id) return json(res, 400, { error: '내 친구 코드는 추가할 수 없어요.' });
+      const exists = db.friendships.find(f => (f.fromId === user.id && f.toId === target.id) || (f.fromId === target.id && f.toId === user.id));
+      if (exists) return json(res, 409, { error: '이미 친구 요청을 보냈거나 연결된 친구예요.' });
+      const friendship = { id: id('friend'), fromId: user.id, toId: target.id, status: 'pending', createdAt: Date.now() };
+      db.friendships.push(friendship); save(); return json(res, 201, friendship);
+    }
+    const friendAction = url.pathname.match(/^\/api\/friends\/([^/]+)\/(accept|reject)$/);
+    if (req.method === 'POST' && friendAction) {
+      const [, friendshipId, action] = friendAction; const { userId } = await body(req);
+      const friendship = db.friendships.find(f => f.id === friendshipId && f.toId === userId && f.status === 'pending');
+      if (!friendship) return json(res, 404, { error: '친구 요청을 찾을 수 없어요.' });
+      if (action === 'accept') friendship.status = 'accepted'; else db.friendships = db.friendships.filter(f => f.id !== friendshipId);
+      save(); return json(res, 200, { status: action === 'accept' ? 'accepted' : 'rejected' });
+    }
+    if (req.method === 'POST' && url.pathname === '/api/direct-room') {
+      const { userId, friendId } = await body(req); const user = currentUser(userId); const friend = currentUser(friendId);
+      if (!user || !friend || userId === friendId) return json(res, 403, { error: '사용자를 확인할 수 없어요.' });
+      let room = db.rooms.find(r => r.kind === 'direct' && r.memberIds.length === 2 && r.memberIds.includes(userId) && r.memberIds.includes(friendId));
+      if (!room) { room = { id: id('room'), kind: 'direct', name: `${user.nickname} · ${friend.nickname}`, inviteCode: null, memberIds: [userId, friendId], createdAt: Date.now() }; db.rooms.push(room); save(); }
+      return json(res, 200, roomForUser(room, userId));
+    }
+    const deleteMessageMatch = url.pathname.match(/^\/api\/messages\/([^/]+)$/);
+    if (req.method === 'DELETE' && deleteMessageMatch) {
+      const userId = url.searchParams.get('userId');
+      const message = db.messages.find(m => m.id === deleteMessageMatch[1]);
+      if (!message) return json(res, 404, { error: '메시지를 찾을 수 없어요.' });
+      if (message.senderId !== userId) return json(res, 403, { error: '내가 보낸 메시지만 삭제할 수 있어요.' });
+      db.messages = db.messages.filter(m => m.id !== message.id);
+      save(); return json(res, 200, { deleted: true });
+    }
+    const deleteAgreementMatch = url.pathname.match(/^\/api\/agreements\/([^/]+)$/);
+    if (req.method === 'DELETE' && deleteAgreementMatch) {
+      const userId = url.searchParams.get('userId');
+      const agreement = db.agreements.find(a => a.id === deleteAgreementMatch[1]);
+      if (!agreement) return json(res, 404, { error: '약속을 찾을 수 없어요.' });
+      if (agreement.creatorId && agreement.creatorId !== userId) return json(res, 403, { error: '만든 사람만 약속을 삭제할 수 있어요.' });
+      db.agreements = db.agreements.filter(a => a.id !== agreement.id);
+      save(); return json(res, 200, { deleted: true });
+    }
+    if (req.method === 'GET' && url.pathname === '/api/rooms') {
+      const userId = url.searchParams.get('userId');
+      return json(res, 200, db.rooms.filter(r => r.memberIds.includes(userId)).map(r => roomForUser(r, userId)));
+    }
+    if (req.method === 'POST' && url.pathname === '/api/rooms') {
+      const { userId, name } = await body(req); const user = currentUser(userId);
+      if (!user || !name?.trim()) return json(res, 400, { error: '채팅방 정보를 확인해 주세요.' });
+      const room = { id: id('room'), kind: 'group', name: name.trim().slice(0, 30), inviteCode: crypto.randomBytes(3).toString('hex').toUpperCase(), memberIds: [userId], createdAt: Date.now() };
+      db.rooms.push(room); save(); return json(res, 201, roomForUser(room, userId));
+    }
+    if (req.method === 'POST' && url.pathname === '/api/rooms/join') {
+      const { userId, inviteCode } = await body(req); const room = db.rooms.find(r => r.inviteCode === String(inviteCode).toUpperCase());
+      if (!room || !currentUser(userId)) return json(res, 404, { error: '초대 코드를 찾을 수 없어요.' });
+      if (!room.memberIds.includes(userId)) room.memberIds.push(userId); save(); return json(res, 200, roomForUser(room, userId));
+    }
+    const roomAction = url.pathname.match(/^\/api\/rooms\/([^/]+)\/(leave|invite)$/);
+    if (req.method === 'POST' && roomAction) {
+      const [, roomId, action] = roomAction;
+      const { userId, friendId } = await body(req);
+      const room = db.rooms.find(r => r.id === roomId);
+      if (!room || !room.memberIds.includes(userId)) return json(res, 403, { error: '채팅방에 접근할 수 없어요.' });
+      if (action === 'leave') {
+        room.memberIds = room.memberIds.filter(memberId => memberId !== userId);
+        save(); return json(res, 200, { left: true });
+      }
+      const friend = currentUser(friendId);
+      if (room.kind === 'direct') return json(res, 400, { error: '1:1 채팅에는 친구를 초대할 수 없어요.' });
+      if (!friend) return json(res, 404, { error: '초대할 사용자를 찾을 수 없어요.' });
+      if (!room.memberIds.includes(friendId)) room.memberIds.push(friendId);
+      save(); return json(res, 200, roomForUser(room, userId));
+    }
+    const roomMatch = url.pathname.match(/^\/api\/rooms\/([^/]+)\/(messages|agreements)$/);
+    if (roomMatch) {
+      const [, roomId, thing] = roomMatch; const room = db.rooms.find(r => r.id === roomId); const userId = url.searchParams.get('userId');
+      if (!room || !room.memberIds.includes(userId)) return json(res, 403, { error: '채팅방에 접근할 수 없어요.' });
+      if (req.method === 'GET' && thing === 'messages') {
+        const messages = db.messages.filter(m => m.roomId === roomId).map(m => ({ ...m, sender: publicUser(currentUser(m.senderId)) })); return json(res, 200, messages);
+      }
+      if (req.method === 'GET' && thing === 'agreements') return json(res, 200, db.agreements.filter(a => a.roomId === roomId));
+      if (req.method === 'POST' && thing === 'messages') {
+        const { content } = await body(req); if (!content?.trim()) return json(res, 400, { error: '메시지를 입력해 주세요.' });
+        const message = { id: id('msg'), roomId, senderId: userId, content: content.trim().slice(0, 1000), createdAt: Date.now(), tone: toneCheck(content), agreementCandidate: agreementCheck(content) };
+        db.messages.push(message); save(); return json(res, 201, { ...message, sender: publicUser(currentUser(userId)) });
+      }
+      if (req.method === 'POST' && thing === 'agreements') {
+        const { task, assignee, deadline } = await body(req); if (!task?.trim()) return json(res, 400, { error: '할 일을 입력해 주세요.' });
+        const agreement = { id: id('agreement'), roomId, creatorId: userId, task: task.trim(), assignee: assignee?.trim() || '미정', deadline: deadline?.trim() || '미정', status: '진행 중', createdAt: Date.now() };
+        db.agreements.push(agreement); save(); return json(res, 201, agreement);
+      }
+    }
+    json(res, 404, { error: '요청을 찾을 수 없어요.' });
+  } catch (error) { json(res, 500, { error: '서버 오류가 발생했어요.' }); }
+});
+server.listen(PORT, '0.0.0.0', () => console.log(`Re:Tone is running on port ${PORT}`));
