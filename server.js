@@ -5,7 +5,11 @@ const crypto = require('crypto');
 
 const PORT = process.env.PORT || 3000;
 const root = __dirname;
-const dbPath = path.join(root, 'data.json');
+// On a Render Persistent Disk, set RETONE_DATA_DIR to the disk mount path.
+// Without it the local file is intentionally only a development fallback.
+const dataDir = process.env.RETONE_DATA_DIR || root;
+fs.mkdirSync(dataDir, { recursive: true });
+const dbPath = path.join(dataDir, 'data.json');
 let db = load();
 db.friendships ||= [];
 const pendingAnalyses = new Map();
@@ -46,6 +50,11 @@ function toneCheck(text) {
   if (/(몸매|벗어|사진 보내|만져|야한)/.test(text)) categories.push('불편할 수 있는 성적 표현');
   const critical = categories.some(x => x === '위협 표현' || x === '불편할 수 있는 성적 표현');
   return { level: critical ? 'critical' : (categories.length ? 'high' : 'none'), categories, matched };
+}
+const FREE_PASS_MESSAGES = new Set(['ㅋ','ㅋㅋ','ㅋㅋㅋ','ㅋㅋㅋㅋ','ㅋㅋㅋㅋㅋ','ㅎㅎ','ㅎㅎㅎ','ㅎㅎㅎㅎ','ㅎ','ㅎㅇ','ㅎㅇㅎㅇ','하이','하이요','안녕','안뇽','안녕하세용','안녕하세요','반가워','반갑습니다','굿모닝','좋은아침','좋은 아침','굿나잇','잘자','잘 자','잘자요','수고','수고했어','수고하셨어요','고마워','감사','감사합니다','ㄱㅅ','ㄱㅅㄱㅅ','ㅇㅋ','오케이','오키','ok','okay','넵','넹','네','예','응','웅','ㅇㅇ','ㅇㅇㅇ','ㄴㄴ','아니','아뇨','ㄹㅇ','ㄹㅇㅋㅋ','헐','헉','오','오오','와','와우','대박','굿','굳','굳굳','ㅊㅋ','축하해','축하합니다','ㅃㅇ','바이','빠이','잘가','잘 가','다녀와','다녀오세요','화이팅','파이팅','ㅍㅇㅌ','힘내','힘내요','ㅈㅅ','죄송','미안','미안해','미안합니다','괜찮아','괜찮아요','노노','yes','no','thx','thanks','ty','lol','lmao','hi','hello','bye','good night','good morning']);
+function isFreePassMessage(text) {
+  const normalized = String(text || '').trim().toLowerCase().replace(/[!?~.]/g, '');
+  return normalized.length <= 18 && FREE_PASS_MESSAGES.has(normalized);
 }
 function agreementCheck(text) {
   return /(해줘|해줄래|만들어줘|정리해줘|보내줘|맡아줘|준비해줘|조사해줘|제출해|완성해|공유해|담당해|해라|해|해야|역할|담당자|마감|까지|전까지|몇 시|내일|모레|이번 주|다음 주|월요일|화요일|수요일|목요일|금요일|토요일|일요일|하자|하기로|맡을게|만날래|만나자|회의|약속|일정|예약|결정하자|자료|발표|과제|보고서)/.test(text);
@@ -249,9 +258,9 @@ const server = http.createServer(async (req, res) => {
       }
       if (req.method === 'GET' && thing === 'agreements') return json(res, 200, db.agreements.filter(a => a.roomId === roomId));
       if (req.method === 'POST' && thing === 'messages') {
-        const { content, analysisId } = await body(req); if (!content?.trim()) return json(res, 400, { error: '메시지를 입력해 주세요.' });
+        const { content, analysisId, skipAI } = await body(req); if (!content?.trim()) return json(res, 400, { error: '메시지를 입력해 주세요.' });
         const cleanContent = content.trim().slice(0, 1000); const saved = pendingAnalyses.get(analysisId);
-        const analysis = saved && saved.roomId === roomId && saved.userId === userId && saved.content === cleanContent && saved.expiresAt > Date.now() ? saved.analysis : await analyzeWithOpenAI(cleanContent, db.messages.filter(m => m.roomId === roomId));
+        const analysis = saved && saved.roomId === roomId && saved.userId === userId && saved.content === cleanContent && saved.expiresAt > Date.now() ? saved.analysis : (skipAI && isFreePassMessage(cleanContent) ? fallbackAnalysis(cleanContent) : await analyzeWithOpenAI(cleanContent, db.messages.filter(m => m.roomId === roomId)));
         if (analysisId) pendingAnalyses.delete(analysisId);
         const message = { id: id('msg'), roomId, senderId: userId, content: cleanContent, createdAt: Date.now(), ...analysis };
         db.messages.push(message); save(); return json(res, 201, { ...message, sender: publicUser(currentUser(userId)) });
