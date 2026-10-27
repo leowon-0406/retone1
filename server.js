@@ -66,14 +66,30 @@ async function analyzeWithOpenAI(text, history = []) {
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 6500);
-    const response = await fetch('https://api.openai.com/v1/responses', {
+    // Chat Completions의 JSON 모드는 Responses 형식 호환성 문제를 피하면서도
+    // 이 앱처럼 짧은 한 문장 점검에 빠르게 적합하다.
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${process.env.OPENAI_API_KEY}` },
-      body: JSON.stringify({ model: 'gpt-4.1-mini', store: false, instructions, input, max_output_tokens: 300, text: { format: { type: 'json_object' } } }), signal: controller.signal
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        temperature: 0.1,
+        max_tokens: 300,
+        response_format: { type: 'json_object' },
+        messages: [
+          { role: 'system', content: instructions },
+          { role: 'user', content: input }
+        ]
+      }), signal: controller.signal
     });
     clearTimeout(timer);
-    if (!response.ok) { console.warn(`OpenAI analysis fallback: API returned HTTP ${response.status}`); return fallback; }
+    if (!response.ok) {
+      const failure = await response.json().catch(() => null);
+      const detail = String(failure?.error?.message || failure?.error?.code || '').replace(/[\r\n]/g, ' ').slice(0, 180);
+      console.warn(`OpenAI analysis fallback: API returned HTTP ${response.status}${detail ? ` (${detail})` : ''}`);
+      return fallback;
+    }
     const payload = await response.json();
-    const raw = payload?.output_text;
+    const raw = payload?.choices?.[0]?.message?.content;
     const parsed = JSON.parse(raw);
     const categories = Array.isArray(parsed.categories) ? parsed.categories.slice(0, 4).map(String) : [];
     const severity = ['none', 'low', 'high', 'critical'].includes(parsed.severity) ? parsed.severity : (categories.length ? 'low' : 'none');
