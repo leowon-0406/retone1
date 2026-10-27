@@ -60,7 +60,7 @@ function fallbackAnalysis(text) {
 }
 async function analyzeWithOpenAI(text, history = []) {
   const fallback = fallbackAnalysis(text);
-  if (!process.env.OPENAI_API_KEY) return fallback;
+  if (!process.env.OPENAI_API_KEY) { console.warn('OpenAI analysis fallback: OPENAI_API_KEY is not configured'); return fallback; }
   const instructions = '너는 청소년 협업 채팅 앱 Re:Tone의 빠르고 신중한 메시지 점검기다. 모든 메시지를 분석하되, 검열하지 말고 상대가 상처받거나 오해할 가능성과 협업 약속 여부를 적극적으로 찾아낸다. "왜 안 했어?", "빨리 해", "그냥 해", "너 때문에", 단정적 비난, 퉁명스러운 명령, 역할·기한·부탁·과제 언급도 점검 대상으로 본다. 반드시 JSON만 반환한다. JSON 형식: {"categories":["강한 욕설|직접 비난|위협 표현|배제 표현|강한 압박|무뚝뚝한 명령|오해 가능 표현"],"severity":"none|low|high|critical","needsReview":true|false,"reason":"30자 이내 한국어","suggestion":"원래 의도를 유지한 대체 문장 또는 빈 문자열","agreementCandidate":true|false,"agreementDraft":{"task":"","assignee":"미정","deadline":"미정"}|null}. 문장이 평범한 인사·정보 전달이면 needsReview는 false다. 그 외의 부탁·지시·갈등 가능 표현은 보수적으로 true로 한다.';
   const input = `최근 대화: ${JSON.stringify(history.slice(-5).map(m=>m.content))}\n새 메시지: ${text}`;
   try {
@@ -71,7 +71,7 @@ async function analyzeWithOpenAI(text, history = []) {
       body: JSON.stringify({ model: 'gpt-4.1-mini', store: false, instructions, input, max_output_tokens: 300, text: { format: { type: 'json_object' } } }), signal: controller.signal
     });
     clearTimeout(timer);
-    if (!response.ok) return fallback;
+    if (!response.ok) { console.warn(`OpenAI analysis fallback: API returned HTTP ${response.status}`); return fallback; }
     const payload = await response.json();
     const raw = payload?.output_text;
     const parsed = JSON.parse(raw);
@@ -80,7 +80,7 @@ async function analyzeWithOpenAI(text, history = []) {
     const agreementCandidate = Boolean(parsed.agreementCandidate);
     const needsReview = Boolean(parsed.needsReview) || categories.length > 0;
     return { tone: { level: severity, categories, matched: [], source: 'openai', needsReview, reason: String(parsed.reason || '').slice(0, 100), suggestion: String(parsed.suggestion || '').slice(0, 300) }, agreementCandidate, agreementDraft: agreementCandidate ? { task: String(parsed.agreementDraft?.task || text).slice(0, 300), assignee: String(parsed.agreementDraft?.assignee || '미정').slice(0, 40), deadline: String(parsed.agreementDraft?.deadline || '미정').slice(0, 60) } : null };
-  } catch { return fallback; }
+  } catch (error) { console.warn(`OpenAI analysis fallback: ${error.name || 'request failed'}`); return fallback; }
 }
 
 const server = http.createServer(async (req, res) => {
