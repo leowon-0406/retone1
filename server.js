@@ -48,12 +48,12 @@ function toneCheck(text) {
   return { level: critical ? 'critical' : (categories.length ? 'high' : 'none'), categories, matched };
 }
 function agreementCheck(text) {
-  return /(해줘|해줄래|만들어줘|정리해줘|보내줘|맡아줘|준비해줘|조사해줘|제출해|완성해|공유해|담당해|역할|담당자|마감|까지|전까지|몇 시|내일|모레|이번 주|다음 주|월요일|화요일|수요일|목요일|금요일|토요일|일요일|하자|하기로|맡을게|만날래|만나자|회의|약속|일정|예약|결정하자)/.test(text);
+  return /(해줘|해줄래|만들어줘|정리해줘|보내줘|맡아줘|준비해줘|조사해줘|제출해|완성해|공유해|담당해|해라|해|해야|역할|담당자|마감|까지|전까지|몇 시|내일|모레|이번 주|다음 주|월요일|화요일|수요일|목요일|금요일|토요일|일요일|하자|하기로|맡을게|만날래|만나자|회의|약속|일정|예약|결정하자|자료|발표|과제|보고서)/.test(text);
 }
 function fallbackAnalysis(text) {
   const tone = toneCheck(text);
   return {
-    tone: { ...tone, source: 'rule', reason: tone.categories.length ? '상대에게 강하거나 불편하게 들릴 수 있는 표현이 있어요.' : '' },
+    tone: { ...tone, source: 'rule', needsReview: tone.categories.length > 0, reason: tone.categories.length ? '상대에게 강하거나 불편하게 들릴 수 있는 표현이 있어요.' : '' },
     agreementCandidate: agreementCheck(text),
     agreementDraft: agreementCheck(text) ? { task: String(text).trim(), assignee: '미정', deadline: '미정' } : null
   };
@@ -61,7 +61,7 @@ function fallbackAnalysis(text) {
 async function analyzeWithOpenAI(text, history = []) {
   const fallback = fallbackAnalysis(text);
   if (!process.env.OPENAI_API_KEY) return fallback;
-  const instructions = '너는 청소년 협업 채팅 앱 Re:Tone의 빠르고 신중한 메시지 점검기다. 검열하지 말고, 상대가 상처받거나 오해할 가능성과 협업 약속 여부만 판단한다. 반드시 JSON만 반환한다. JSON 형식: {"categories":["강한 욕설|직접 비난|위협 표현|배제 표현|강한 압박|불편할 수 있는 성적 표현"],"severity":"none|low|high|critical","reason":"20자 이내 한국어","suggestion":"원래 의도를 유지한 대체 문장 또는 빈 문자열","agreementCandidate":true|false,"agreementDraft":{"task":"","assignee":"미정","deadline":"미정"}|null}. 문제가 없으면 categories는 빈 배열, severity는 none, suggestion은 빈 문자열로 한다.';
+  const instructions = '너는 청소년 협업 채팅 앱 Re:Tone의 빠르고 신중한 메시지 점검기다. 모든 메시지를 분석하되, 검열하지 말고 상대가 상처받거나 오해할 가능성과 협업 약속 여부를 적극적으로 찾아낸다. "왜 안 했어?", "빨리 해", "그냥 해", "너 때문에", 단정적 비난, 퉁명스러운 명령, 역할·기한·부탁·과제 언급도 점검 대상으로 본다. 반드시 JSON만 반환한다. JSON 형식: {"categories":["강한 욕설|직접 비난|위협 표현|배제 표현|강한 압박|무뚝뚝한 명령|오해 가능 표현"],"severity":"none|low|high|critical","needsReview":true|false,"reason":"30자 이내 한국어","suggestion":"원래 의도를 유지한 대체 문장 또는 빈 문자열","agreementCandidate":true|false,"agreementDraft":{"task":"","assignee":"미정","deadline":"미정"}|null}. 문장이 평범한 인사·정보 전달이면 needsReview는 false다. 그 외의 부탁·지시·갈등 가능 표현은 보수적으로 true로 한다.';
   const input = `최근 대화: ${JSON.stringify(history.slice(-5).map(m=>m.content))}\n새 메시지: ${text}`;
   try {
     const controller = new AbortController();
@@ -78,7 +78,8 @@ async function analyzeWithOpenAI(text, history = []) {
     const categories = Array.isArray(parsed.categories) ? parsed.categories.slice(0, 4).map(String) : [];
     const severity = ['none', 'low', 'high', 'critical'].includes(parsed.severity) ? parsed.severity : (categories.length ? 'low' : 'none');
     const agreementCandidate = Boolean(parsed.agreementCandidate);
-    return { tone: { level: severity, categories, matched: [], source: 'gemini', reason: String(parsed.reason || '').slice(0, 100), suggestion: String(parsed.suggestion || '').slice(0, 300) }, agreementCandidate, agreementDraft: agreementCandidate ? { task: String(parsed.agreementDraft?.task || text).slice(0, 300), assignee: String(parsed.agreementDraft?.assignee || '미정').slice(0, 40), deadline: String(parsed.agreementDraft?.deadline || '미정').slice(0, 60) } : null };
+    const needsReview = Boolean(parsed.needsReview) || categories.length > 0;
+    return { tone: { level: severity, categories, matched: [], source: 'openai', needsReview, reason: String(parsed.reason || '').slice(0, 100), suggestion: String(parsed.suggestion || '').slice(0, 300) }, agreementCandidate, agreementDraft: agreementCandidate ? { task: String(parsed.agreementDraft?.task || text).slice(0, 300), assignee: String(parsed.agreementDraft?.assignee || '미정').slice(0, 40), deadline: String(parsed.agreementDraft?.deadline || '미정').slice(0, 60) } : null };
   } catch { return fallback; }
 }
 
