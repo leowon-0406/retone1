@@ -8,6 +8,7 @@ const root = __dirname;
 const dbPath = path.join(root, 'data.json');
 let db = load();
 db.friendships ||= [];
+const pendingAnalyses = new Map();
 
 function load() {
   try { return JSON.parse(fs.readFileSync(dbPath, 'utf8')); }
@@ -48,6 +49,37 @@ function toneCheck(text) {
 }
 function agreementCheck(text) {
   return /(해줘|해줄래|만들어줘|정리해줘|보내줘|맡아줘|준비해줘|조사해줘|제출해|완성해|공유해|담당해|역할|담당자|마감|까지|전까지|몇 시|내일|모레|이번 주|다음 주|월요일|화요일|수요일|목요일|금요일|토요일|일요일|하자|하기로|맡을게|만날래|만나자|회의|약속|일정|예약|결정하자)/.test(text);
+}
+function fallbackAnalysis(text) {
+  const tone = toneCheck(text);
+  return {
+    tone: { ...tone, source: 'rule', reason: tone.categories.length ? '상대에게 강하거나 불편하게 들릴 수 있는 표현이 있어요.' : '' },
+    agreementCandidate: agreementCheck(text),
+    agreementDraft: agreementCheck(text) ? { task: String(text).trim(), assignee: '미정', deadline: '미정' } : null
+  };
+}
+async function analyzeWithOpenAI(text, history = []) {
+  const fallback = fallbackAnalysis(text);
+  if (!process.env.OPENAI_API_KEY) return fallback;
+  const instructions = '너는 청소년 협업 채팅 앱 Re:Tone의 빠르고 신중한 메시지 점검기다. 검열하지 말고, 상대가 상처받거나 오해할 가능성과 협업 약속 여부만 판단한다. 반드시 JSON만 반환한다. JSON 형식: {"categories":["강한 욕설|직접 비난|위협 표현|배제 표현|강한 압박|불편할 수 있는 성적 표현"],"severity":"none|low|high|critical","reason":"20자 이내 한국어","suggestion":"원래 의도를 유지한 대체 문장 또는 빈 문자열","agreementCandidate":true|false,"agreementDraft":{"task":"","assignee":"미정","deadline":"미정"}|null}. 문제가 없으면 categories는 빈 배열, severity는 none, suggestion은 빈 문자열로 한다.';
+  const input = `최근 대화: ${JSON.stringify(history.slice(-5).map(m=>m.content))}\n새 메시지: ${text}`;
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 6500);
+    const response = await fetch('https://api.openai.com/v1/responses', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${process.env.OPENAI_API_KEY}` },
+      body: JSON.stringify({ model: 'gpt-4.1-mini', store: false, instructions, input, max_output_tokens: 300, text: { format: { type: 'json_object' } } }), signal: controller.signal
+    });
+    clearTimeout(timer);
+    if (!response.ok) return fallback;
+    const payload = await response.json();
+    const raw = payload?.output_text;
+    const parsed = JSON.parse(raw);
+    const categories = Array.isArray(parsed.categories) ? parsed.categories.slice(0, 4).map(String) : [];
+    const severity = ['none', 'low', 'high', 'critical'].includes(parsed.severity) ? parsed.severity : (categories.length ? 'low' : 'none');
+    const agreementCandidate = Boolean(parsed.agreementCandidate);
+    return { tone: { level: severity, categories, matched: [], source: 'gemini', reason: String(parsed.reason || '').slice(0, 100), suggestion: String(parsed.suggestion || '').slice(0, 300) }, agreementCandidate, agreementDraft: agreementCandidate ? { task: String(parsed.agreementDraft?.task || text).slice(0, 300), assignee: String(parsed.agreementDraft?.assignee || '미정').slice(0, 40), deadline: String(parsed.agreementDraft?.deadline || '미정').slice(0, 60) } : null };
+  } catch { return fallback; }
 }
 
 const server = http.createServer(async (req, res) => {
@@ -182,6 +214,15 @@ const server = http.createServer(async (req, res) => {
       if (!room.memberIds.includes(friendId)) room.memberIds.push(friendId);
       save(); return json(res, 200, roomForUser(room, userId));
     }
+    const analyzeMatch = url.pathname.match(/^\/api\/rooms\/([^/]+)\/analyze$/);
+    if (req.method === 'POST' && analyzeMatch) {
+      const roomId = analyzeMatch[1]; const room = db.rooms.find(r => r.id === roomId); const userId = url.searchParams.get('userId'); const { content } = await body(req);
+      if (!room || !room.memberIds.includes(userId)) return json(res, 403, { error: '채팅방에 접근할 수 없어요.' });
+      if (!content?.trim()) return json(res, 400, { error: '메시지를 입력해 주세요.' });
+      const analysis = await analyzeWithOpenAI(content.trim().slice(0, 1000), db.messages.filter(m => m.roomId === roomId));
+      const analysisId = id('analysis'); pendingAnalyses.set(analysisId, { roomId, userId, content: content.trim().slice(0, 1000), analysis, expiresAt: Date.now() + 90000 });
+      return json(res, 200, { analysisId, ...analysis });
+    }
     const roomMatch = url.pathname.match(/^\/api\/rooms\/([^/]+)\/(messages|agreements)$/);
     if (roomMatch) {
       const [, roomId, thing] = roomMatch; const room = db.rooms.find(r => r.id === roomId); const userId = url.searchParams.get('userId');
@@ -191,8 +232,11 @@ const server = http.createServer(async (req, res) => {
       }
       if (req.method === 'GET' && thing === 'agreements') return json(res, 200, db.agreements.filter(a => a.roomId === roomId));
       if (req.method === 'POST' && thing === 'messages') {
-        const { content } = await body(req); if (!content?.trim()) return json(res, 400, { error: '메시지를 입력해 주세요.' });
-        const message = { id: id('msg'), roomId, senderId: userId, content: content.trim().slice(0, 1000), createdAt: Date.now(), tone: toneCheck(content), agreementCandidate: agreementCheck(content) };
+        const { content, analysisId } = await body(req); if (!content?.trim()) return json(res, 400, { error: '메시지를 입력해 주세요.' });
+        const cleanContent = content.trim().slice(0, 1000); const saved = pendingAnalyses.get(analysisId);
+        const analysis = saved && saved.roomId === roomId && saved.userId === userId && saved.content === cleanContent && saved.expiresAt > Date.now() ? saved.analysis : await analyzeWithOpenAI(cleanContent, db.messages.filter(m => m.roomId === roomId));
+        if (analysisId) pendingAnalyses.delete(analysisId);
+        const message = { id: id('msg'), roomId, senderId: userId, content: cleanContent, createdAt: Date.now(), ...analysis };
         db.messages.push(message); save(); return json(res, 201, { ...message, sender: publicUser(currentUser(userId)) });
       }
       if (req.method === 'POST' && thing === 'agreements') {
