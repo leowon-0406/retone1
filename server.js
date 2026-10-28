@@ -57,12 +57,15 @@ function json(res, code, value) { res.writeHead(code, { 'Content-Type': 'applica
 function body(req) { return new Promise((resolve, reject) => { let raw=''; req.on('data', c => raw += c); req.on('end', () => { try { resolve(raw ? JSON.parse(raw) : {}); } catch { reject(new Error('invalid json')); } }); }); }
 function publicUser(user) {
   if (!user || user.deleted) return { id: user?.id || 'deleted', nickname: '탈퇴한 사용자', deleted: true };
-  return { id: user.id, nickname: user.nickname, createdAt: user.createdAt };
+  return { id: user.id, nickname: user.nickname, avatar: user.avatar || null, createdAt: user.createdAt };
 }
 function privateUser(user) { return { ...publicUser(user), friendCode: user.friendCode, isAdmin: Boolean(user.isAdmin) }; }
 function roomForUser(room, userId) { return { ...room, memberCount: room.memberIds.length, joined: room.memberIds.includes(userId) }; }
 function currentUser(userId) { return db.users.find(u => u.id === userId && !u.deleted); }
-function deleteUserAccount(user) { user.deleted = true; user.deletedAt = Date.now(); user.nickname = '탈퇴한 사용자'; user.phoneHash = null; user.passwordHash = null; db.rooms.forEach(room => { room.memberIds = room.memberIds.filter(memberId => memberId !== user.id); }); db.friendships = db.friendships.filter(f => f.fromId !== user.id && f.toId !== user.id); }
+function deleteUserAccount(user) { user.deleted = true; user.deletedAt = Date.now(); user.nickname = '탈퇴한 사용자'; user.avatar = null; user.phoneHash = null; user.passwordHash = null; db.rooms.forEach(room => { room.memberIds = room.memberIds.filter(memberId => memberId !== user.id); }); db.friendships = db.friendships.filter(f => f.fromId !== user.id && f.toId !== user.id); }
+function validAvatar(avatar) {
+  return avatar === null || (typeof avatar === 'string' && avatar.length <= 300000 && /^data:image\/(?:jpeg|png|webp);base64,[a-z0-9+/=]+$/i.test(avatar));
+}
 function toneCheck(text) {
   const clean = String(text || '').toLowerCase().replace(/[\s\-_.~!]/g, '').replace(/(.)\1{2,}/g, '$1$1');
   const profanity = [
@@ -218,6 +221,14 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && profileMatch) {
       const user = currentUser(profileMatch[1]);
       if (!user) return json(res, 404, { error: '사용자를 찾을 수 없어요.' });
+      return json(res, 200, { user: privateUser(user) });
+    }
+    if (req.method === 'PATCH' && profileMatch) {
+      const user = currentUser(profileMatch[1]); const { userId, avatar } = await body(req);
+      if (!user || user.id !== userId) return json(res, 403, { error: '프로필을 확인할 수 없어요.' });
+      if (!validAvatar(avatar)) return json(res, 400, { error: '사진은 300KB 이하의 JPG, PNG 또는 WebP만 사용할 수 있어요.' });
+      user.avatar = avatar || null;
+      save();
       return json(res, 200, { user: privateUser(user) });
     }
     if (req.method === 'DELETE' && profileMatch) {
