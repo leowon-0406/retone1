@@ -2,6 +2,7 @@ const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { Pool } = require('pg');
 
 const PORT = process.env.PORT || 3000;
 const root = __dirname;
@@ -13,12 +14,34 @@ const dbPath = path.join(dataDir, 'data.json');
 let db = load();
 db.friendships ||= [];
 const pendingAnalyses = new Map();
+let statePool = null;
+let saveQueue = Promise.resolve();
 
 function load() {
   try { return JSON.parse(fs.readFileSync(dbPath, 'utf8')); }
   catch { return { users: [], rooms: [], messages: [], agreements: [] }; }
 }
-function save() { fs.writeFileSync(dbPath, JSON.stringify(db, null, 2)); }
+async function initializeStorage() {
+  if (!process.env.DATABASE_URL) { console.warn('Persistent storage is not configured; using local fallback.'); return; }
+  try {
+    statePool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+    await statePool.query('CREATE TABLE IF NOT EXISTS retone_state (id INTEGER PRIMARY KEY, payload JSONB NOT NULL, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW())');
+    const saved = await statePool.query('SELECT payload FROM retone_state WHERE id = 1');
+    if (saved.rowCount) db = saved.rows[0].payload;
+    else await statePool.query('INSERT INTO retone_state (id, payload) VALUES (1, $1::jsonb)', [JSON.stringify(db)]);
+    db.friendships ||= [];
+    console.log('Re:Tone persistent Postgres storage connected.');
+  } catch (error) {
+    statePool = null;
+    console.error(`Persistent storage fallback: ${error.name || 'connection failed'}`);
+  }
+}
+const storageReady = initializeStorage();
+function save() {
+  const snapshot = JSON.stringify(db);
+  if (!statePool) { fs.writeFileSync(dbPath, snapshot); return; }
+  saveQueue = saveQueue.then(() => statePool.query('INSERT INTO retone_state (id, payload, updated_at) VALUES (1, $1::jsonb, NOW()) ON CONFLICT (id) DO UPDATE SET payload = EXCLUDED.payload, updated_at = NOW()', [snapshot])).catch(error => console.error(`Persistent storage save failed: ${error.name || 'request failed'}`));
+}
 function id(prefix) { return `${prefix}_${crypto.randomUUID()}`; }
 function phoneHash(phone) { return crypto.createHash('sha256').update(String(phone).replace(/\D/g, '')).digest('hex'); }
 function passwordHash(password) { const salt = crypto.randomBytes(16).toString('hex'); const hash = crypto.scryptSync(String(password), salt, 32).toString('hex'); return `${salt}:${hash}`; }
@@ -113,6 +136,7 @@ async function analyzeWithOpenAI(text, history = []) {
 }
 
 const server = http.createServer(async (req, res) => {
+  await storageReady;
   const url = new URL(req.url, `http://${req.headers.host}`);
   if (req.method === 'GET' && !url.pathname.startsWith('/api/')) {
     const file = url.pathname === '/' ? 'public/index.html' : `public${url.pathname}`;
