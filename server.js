@@ -97,7 +97,7 @@ function fallbackAnalysis(text) {
 async function analyzeWithOpenAI(text, history = []) {
   const fallback = fallbackAnalysis(text);
   if (!process.env.OPENAI_API_KEY) { console.warn('OpenAI analysis fallback: OPENAI_API_KEY is not configured'); return fallback; }
-  const instructions = '너는 청소년 협업 채팅 앱 Re:Tone의 빠르고 신중한 메시지 점검기다. 모든 메시지를 분석하되, 검열하지 말고 상대가 상처받거나 오해할 가능성과 협업 약속 여부를 적극적으로 찾아낸다. "왜 안 했어?", "빨리 해", "그냥 해", "너 때문에", 단정적 비난, 퉁명스러운 명령, 역할·기한·부탁·과제 언급도 점검 대상으로 본다. 반드시 JSON만 반환한다. JSON 형식: {"categories":["강한 욕설|직접 비난|위협 표현|배제 표현|강한 압박|무뚝뚝한 명령|오해 가능 표현"],"severity":"none|low|high|critical","needsReview":true|false,"reason":"30자 이내 한국어","suggestion":"원래 의도를 유지한 대체 문장 또는 빈 문자열","agreementCandidate":true|false,"agreementDraft":{"task":"","assignee":"미정","deadline":"미정"}|null}. 문장이 평범한 인사·정보 전달이면 needsReview는 false다. 그 외의 부탁·지시·갈등 가능 표현은 보수적으로 true로 한다.';
+  const instructions = '너는 청소년 협업 채팅 앱 Re:Tone의 빠르고 절제된 메시지 점검기다. 검열하지 말고, 명백히 상처·위협·갈등을 키울 표현만 찾아낸다. 욕설, 위협, 직접적인 인신공격·비난, 조롱, 반복적 또는 강한 압박(예: "왜 아직 안 했어? 빨리 해.", "너 때문에 망했어")일 때만 needsReview를 true로 한다. 평범한 인사, 정보 전달, 짧은 답, 정중한 부탁("자료 보내줄래?", "내일까지 가능할까?"), 간결한 협업 지시는 needsReview를 false로 한다. 역할·기한·부탁·과제는 말맞춤 후보로만 판단하며 표현 경고의 이유가 아니다. 반드시 JSON만 반환한다. JSON 형식: {"categories":["강한 욕설|직접 비난|위협 표현|배제 표현|강한 압박|무뚝뚝한 명령|오해 가능 표현"],"severity":"none|low|high|critical","needsReview":true|false,"reason":"30자 이내 한국어","suggestion":"원래 의도를 유지한 대체 문장 또는 빈 문자열","agreementCandidate":true|false,"agreementDraft":{"task":"","assignee":"미정","deadline":"미정"}|null}.';
   const input = `최근 대화: ${JSON.stringify(history.slice(-5).map(m=>m.content))}\n새 메시지: ${text}`;
   try {
     const controller = new AbortController();
