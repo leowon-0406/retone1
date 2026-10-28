@@ -21,6 +21,9 @@ function load() {
 function save() { fs.writeFileSync(dbPath, JSON.stringify(db, null, 2)); }
 function id(prefix) { return `${prefix}_${crypto.randomUUID()}`; }
 function phoneHash(phone) { return crypto.createHash('sha256').update(String(phone).replace(/\D/g, '')).digest('hex'); }
+function passwordHash(password) { const salt = crypto.randomBytes(16).toString('hex'); const hash = crypto.scryptSync(String(password), salt, 32).toString('hex'); return `${salt}:${hash}`; }
+function passwordMatches(password, stored) { if (!stored || !String(stored).includes(':')) return false; const [salt, hash] = String(stored).split(':'); const candidate = crypto.scryptSync(String(password), salt, 32).toString('hex'); return crypto.timingSafeEqual(Buffer.from(candidate, 'hex'), Buffer.from(hash, 'hex')); }
+function isDemoAdmin(phone, nickname, password) { return String(phone).replace(/\D/g, '') === '12341234' && String(nickname).trim() === '12341234' && String(password) === '12341234'; }
 function friendCode() { let code; do { code = crypto.randomBytes(3).toString('hex').toUpperCase(); } while (db.users.some(u => u.friendCode === code)); return code; }
 function json(res, code, value) { res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(value)); }
 function body(req) { return new Promise((resolve, reject) => { let raw=''; req.on('data', c => raw += c); req.on('end', () => { try { resolve(raw ? JSON.parse(raw) : {}); } catch { reject(new Error('invalid json')); } }); }); }
@@ -28,9 +31,10 @@ function publicUser(user) {
   if (!user || user.deleted) return { id: user?.id || 'deleted', nickname: '탈퇴한 사용자', deleted: true };
   return { id: user.id, nickname: user.nickname, createdAt: user.createdAt };
 }
-function privateUser(user) { return { ...publicUser(user), friendCode: user.friendCode }; }
+function privateUser(user) { return { ...publicUser(user), friendCode: user.friendCode, isAdmin: Boolean(user.isAdmin) }; }
 function roomForUser(room, userId) { return { ...room, memberCount: room.memberIds.length, joined: room.memberIds.includes(userId) }; }
 function currentUser(userId) { return db.users.find(u => u.id === userId && !u.deleted); }
+function deleteUserAccount(user) { user.deleted = true; user.deletedAt = Date.now(); user.nickname = '탈퇴한 사용자'; user.phoneHash = null; user.passwordHash = null; db.rooms.forEach(room => { room.memberIds = room.memberIds.filter(memberId => memberId !== user.id); }); db.friendships = db.friendships.filter(f => f.fromId !== user.id && f.toId !== user.id); }
 function toneCheck(text) {
   const clean = String(text || '').toLowerCase().replace(/[\s\-_.~!]/g, '').replace(/(.)\1{2,}/g, '$1$1');
   const profanity = [
@@ -119,19 +123,22 @@ const server = http.createServer(async (req, res) => {
   }
   try {
     if (req.method === 'POST' && url.pathname === '/api/profile') {
-      const { phone, nickname, allowDuplicate } = await body(req);
-      if (!phone || !nickname || nickname.trim().length < 2) return json(res, 400, { error: '전화번호와 2자 이상 이름을 입력해 주세요.' });
+      const { phone, nickname, password, allowDuplicate } = await body(req);
+      const admin = isDemoAdmin(phone, nickname, password);
+      if (!phone || !nickname || (!admin && nickname.trim().length < 2) || !password || String(password).length < 6) return json(res, 400, { error: '전화번호, 이름, 6자 이상 비밀번호를 입력해 주세요.' });
       const hash = phoneHash(phone);
       const existing = db.users.some(u => !u.deleted && u.phoneHash === hash);
       if (existing && !allowDuplicate) return json(res, 409, { duplicate: true });
-      const user = { id: id('user'), phoneHash: hash, nickname: nickname.trim().slice(0, 12), friendCode: friendCode(), createdAt: Date.now() };
+      const user = { id: id('user'), phoneHash: hash, passwordHash: passwordHash(password), nickname: nickname.trim().slice(0, 12), friendCode: friendCode(), isAdmin: admin, createdAt: Date.now() };
       db.users.push(user); save(); return json(res, 201, { user: privateUser(user) });
     }
     if (req.method === 'POST' && url.pathname === '/api/login') {
-      const { phone, nickname } = await body(req);
+      const { phone, nickname, password } = await body(req);
       const hash = phoneHash(phone);
       const user = db.users.find(u => !u.deleted && u.phoneHash === hash && u.nickname === String(nickname || '').trim());
-      if (!user) return json(res, 404, { error: '전화번호 또는 이름을 다시 확인해 주세요.' });
+      if (!user) return json(res, 404, { error: '전화번호, 이름 또는 비밀번호를 다시 확인해 주세요.' });
+      if (!user.passwordHash) { user.passwordHash = passwordHash(password); save(); }
+      else if (!passwordMatches(password, user.passwordHash)) return json(res, 401, { error: '전화번호, 이름 또는 비밀번호를 다시 확인해 주세요.' });
       return json(res, 200, { user: privateUser(user) });
     }
     const profileMatch = url.pathname.match(/^\/api\/profile\/([^/]+)$/);
@@ -143,14 +150,22 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'DELETE' && profileMatch) {
       const user = currentUser(profileMatch[1]);
       if (!user) return json(res, 404, { error: '삭제할 계정을 찾을 수 없어요.' });
-      user.deleted = true;
-      user.deletedAt = Date.now();
-      user.nickname = '탈퇴한 사용자';
-      user.phoneHash = null;
-      db.rooms.forEach(room => { room.memberIds = room.memberIds.filter(memberId => memberId !== user.id); });
-      db.friendships = db.friendships.filter(f => f.fromId !== user.id && f.toId !== user.id);
+      deleteUserAccount(user);
       save();
       return json(res, 200, { deleted: true });
+    }
+    if (req.method === 'GET' && url.pathname === '/api/admin/users') {
+      const admin = currentUser(url.searchParams.get('adminId'));
+      if (!admin?.isAdmin) return json(res, 403, { error: '관리자 권한이 필요해요.' });
+      return json(res, 200, db.users.filter(u => !u.deleted).map(publicUser));
+    }
+    const adminUserMatch = url.pathname.match(/^\/api\/admin\/users\/([^/]+)$/);
+    if (req.method === 'DELETE' && adminUserMatch) {
+      const admin = currentUser(url.searchParams.get('adminId')); const target = currentUser(adminUserMatch[1]);
+      if (!admin?.isAdmin) return json(res, 403, { error: '관리자 권한이 필요해요.' });
+      if (!target) return json(res, 404, { error: '사용자를 찾을 수 없어요.' });
+      if (target.id === admin.id) return json(res, 400, { error: '관리자 계정은 여기서 삭제할 수 없어요.' });
+      deleteUserAccount(target); save(); return json(res, 200, { deleted: true });
     }
     if (req.method === 'GET' && url.pathname === '/api/friends') {
       const userId = url.searchParams.get('userId');
