@@ -258,6 +258,20 @@ const server = http.createServer(async (req, res) => {
       db.agreements = db.agreements.filter(a => a.id !== agreement.id);
       save(); return json(res, 200, { deleted: true });
     }
+    const agreementActionMatch = url.pathname.match(/^\/api\/agreements\/([^/]+)\/(complete|hide)$/);
+    if (req.method === 'POST' && agreementActionMatch) {
+      const [, agreementId, action] = agreementActionMatch; const { userId } = await body(req); const agreement = db.agreements.find(item => item.id === agreementId);
+      const user = currentUser(userId);
+      if (!agreement || !user) return json(res, 404, { error: '약속을 찾을 수 없어요.' });
+      if (action === 'complete') {
+        if (agreement.assignee !== user.nickname) return json(res, 403, { error: '담당자만 완료할 수 있어요.' });
+        agreement.status = '완료'; agreement.completedAt = Date.now();
+      } else {
+        agreement.hiddenBy ||= [];
+        if (!agreement.hiddenBy.includes(userId)) agreement.hiddenBy.push(userId);
+      }
+      save(); return json(res, 200, { agreement });
+    }
     if (req.method === 'GET' && url.pathname === '/api/rooms') {
       const userId = url.searchParams.get('userId');
       return json(res, 200, db.rooms.filter(r => r.memberIds.includes(userId)).map(r => roomForUser(r, userId)));
@@ -318,7 +332,7 @@ const server = http.createServer(async (req, res) => {
       if (req.method === 'GET' && thing === 'messages') {
         const messages = db.messages.filter(m => m.roomId === roomId).map(m => ({ ...m, sender: publicUser(currentUser(m.senderId)) })); return json(res, 200, messages);
       }
-      if (req.method === 'GET' && thing === 'agreements') return json(res, 200, db.agreements.filter(a => a.roomId === roomId));
+      if (req.method === 'GET' && thing === 'agreements') return json(res, 200, db.agreements.filter(a => a.roomId === roomId && !a.hiddenBy?.includes(userId) && a.status !== '완료'));
       if (req.method === 'POST' && thing === 'messages') {
         const { content, analysisId, skipAI } = await body(req); if (!content?.trim()) return json(res, 400, { error: '메시지를 입력해 주세요.' });
         const cleanContent = content.trim().slice(0, 1000); const saved = pendingAnalyses.get(analysisId);
@@ -328,8 +342,9 @@ const server = http.createServer(async (req, res) => {
         db.messages.push(message); save(); return json(res, 201, { ...message, sender: publicUser(currentUser(userId)) });
       }
       if (req.method === 'POST' && thing === 'agreements') {
-        const { task, assignee, deadline } = await body(req); if (!task?.trim()) return json(res, 400, { error: '할 일을 입력해 주세요.' });
-        const agreement = { id: id('agreement'), roomId, creatorId: userId, task: task.trim(), assignee: assignee?.trim() || '미정', deadline: deadline?.trim() || '미정', status: '진행 중', createdAt: Date.now() };
+        const { task, assignee, deadline, deadlineStart, deadlineEnd } = await body(req); if (!task?.trim()) return json(res, 400, { error: '할 일을 입력해 주세요.' });
+        const start = String(deadlineStart || '').slice(0, 10); const end = String(deadlineEnd || deadline || '').slice(0, 10);
+        const agreement = { id: id('agreement'), roomId, creatorId: userId, task: task.trim(), assignee: assignee?.trim() || '미정', deadline: end || '미정', deadlineStart: start || null, deadlineEnd: end || null, status: '진행 중', createdAt: Date.now() };
         db.agreements.push(agreement); save(); return json(res, 201, agreement);
       }
     }
