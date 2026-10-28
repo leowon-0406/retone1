@@ -48,6 +48,7 @@ function save() {
   saveQueue = saveQueue.then(() => statePool.query('INSERT INTO retone_state (id, payload, updated_at) VALUES (1, $1::jsonb, NOW()) ON CONFLICT (id) DO UPDATE SET payload = EXCLUDED.payload, updated_at = NOW()', [snapshot])).catch(error => console.error(`Persistent storage save failed: ${error.name || 'request failed'}`));
 }
 function id(prefix) { return `${prefix}_${crypto.randomUUID()}`; }
+function prunePendingAnalyses() { const now = Date.now(); for (const [key, value] of pendingAnalyses) if (value.expiresAt <= now) pendingAnalyses.delete(key); }
 function phoneHash(phone) { return crypto.createHash('sha256').update(String(phone).replace(/\D/g, '')).digest('hex'); }
 function passwordHash(password) { const salt = crypto.randomBytes(16).toString('hex'); const hash = crypto.scryptSync(String(password), salt, 32).toString('hex'); return `${salt}:${hash}`; }
 function passwordMatches(password, stored) { if (!stored || !String(stored).includes(':')) return false; const [salt, hash] = String(stored).split(':'); const candidate = crypto.scryptSync(String(password), salt, 32).toString('hex'); return crypto.timingSafeEqual(Buffer.from(candidate, 'hex'), Buffer.from(hash, 'hex')); }
@@ -67,9 +68,9 @@ function validAvatar(avatar) {
   return avatar === null || (typeof avatar === 'string' && avatar.length <= 300000 && /^data:image\/(?:jpeg|png|webp);base64,[a-z0-9+/=]+$/i.test(avatar));
 }
 function toneCheck(text) {
-  const clean = String(text || '').toLowerCase().replace(/[\s\-_.~!]/g, '').replace(/(.)\1{2,}/g, '$1$1');
+  const clean = String(text || '').normalize('NFKC').toLowerCase().replace(/[\s\-_.~!]/g, '').replace(/(.)\1{2,}/g, '$1$1');
   const profanity = [
-    '씨발','시발','ㅅㅂ','ㅆㅂ','ㅅㅃ','ㅆㅃ','ㅅ발','시1발',
+    '씨발','시발','시발애','시밞','씨밞','ㅅㅂ','ㅆㅂ','ㅅㅃ','ㅆㅃ','ㅅ발','시1발',
     '개새끼','개새','ㄱㅅㄲ','개ㅅㄲ','씹새끼','ㅆㅅㄲ',
     '병신','ㅂㅅ','등신','지랄','ㅈㄹ','좆','존나','ㅈㄴ','조까','ㅈ까',
     '닥쳐','ㄷㅊ','꺼져','ㄲㅈ','새끼','ㅅㄲ','미친','미친놈','미친년','ㅁㅊ','ㅁㅊㄴ',
@@ -148,8 +149,8 @@ function fallbackAnalysis(text) {
 async function analyzeWithOpenAI(text, history = []) {
   const fallback = fallbackAnalysis(text);
   if (!process.env.OPENAI_API_KEY) { console.warn('OpenAI analysis fallback: OPENAI_API_KEY is not configured'); return fallback; }
-  const instructions = '너는 청소년 협업 채팅 앱 Re:Tone의 빠르고 절제된 메시지 점검기다. 검열하지 말고, 명백히 상처·위협·갈등을 키울 표현만 찾아낸다. 욕설, 위협, 직접적인 인신공격·비난, 조롱, 반복적 또는 강한 압박(예: "왜 아직 안 했어? 빨리 해.", "너 때문에 망했어")일 때만 needsReview를 true로 한다. 평범한 인사, 정보 전달, 짧은 답, 정중한 부탁("자료 보내줄래?", "내일까지 가능할까?"), 간결한 협업 지시는 needsReview를 false로 한다. 역할·기한·부탁·과제는 말맞춤 후보로만 판단하며 표현 경고의 이유가 아니다. 반드시 JSON만 반환한다. JSON 형식: {"categories":["강한 욕설|직접 비난|위협 표현|배제 표현|강한 압박|무뚝뚝한 명령|오해 가능 표현"],"severity":"none|low|high|critical","needsReview":true|false,"reason":"30자 이내 한국어","suggestion":"원래 의도를 유지한 대체 문장 또는 빈 문자열","agreementCandidate":true|false,"agreementDraft":{"task":"","assignee":"미정","deadline":"미정"}|null}.';
-  const input = `최근 대화: ${JSON.stringify(history.slice(-5).map(m=>m.content))}\n새 메시지: ${text}`;
+  const instructions = '너는 청소년 협업 채팅 앱 Re:Tone의 빠르고 절제된 메시지 점검기다. 최종 판정은 오직 current_message 자체만으로 내린다. 이전 대화의 욕설·갈등·분위기 때문에 안전한 현재 문장을 경고하면 안 된다. "어어", "응", "안녕", 짧은 답, 정보 전달, 정중한 부탁, 협업 지시는 항상 needsReview=false다. 명백한 욕설(우회 오타·초성 포함), 위협, 직접적인 인신공격·비난, 조롱, 반복적 또는 강한 압박일 때만 needsReview=true다. 역할·기한·부탁·과제는 말맞춤 후보일 뿐 표현 경고 사유가 아니다. 반드시 JSON만 반환한다. JSON 형식: {"categories":["강한 욕설|직접 비난|위협 표현|배제 표현|강한 압박|무뚝뚝한 명령|오해 가능 표현"],"severity":"none|low|high|critical","needsReview":true|false,"reason":"30자 이내 한국어","suggestion":"원래 의도를 유지한 대체 문장 또는 빈 문자열","agreementCandidate":true|false,"agreementDraft":{"task":"","assignee":"미정","deadline":"미정"}|null}.';
+  const input = `current_message: ${text}`;
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 6500);
@@ -160,7 +161,7 @@ async function analyzeWithOpenAI(text, history = []) {
       body: JSON.stringify({
         model: 'gpt-4o-mini',
         temperature: 0.1,
-        max_tokens: 300,
+        max_tokens: 220,
         response_format: { type: 'json_object' },
         messages: [
           { role: 'system', content: instructions },
@@ -390,6 +391,7 @@ const server = http.createServer(async (req, res) => {
       const roomId = analyzeMatch[1]; const room = db.rooms.find(r => r.id === roomId); const userId = url.searchParams.get('userId'); const { content } = await body(req);
       if (!room || !room.memberIds.includes(userId)) return json(res, 403, { error: '채팅방에 접근할 수 없어요.' });
       if (!content?.trim()) return json(res, 400, { error: '메시지를 입력해 주세요.' });
+      prunePendingAnalyses();
       const analysis = await analyzeMessage(content.trim().slice(0, 1000), db.messages.filter(m => m.roomId === roomId));
       const analysisId = id('analysis'); pendingAnalyses.set(analysisId, { roomId, userId, content: content.trim().slice(0, 1000), analysis, expiresAt: Date.now() + 90000 });
       return json(res, 200, { analysisId, ...analysis });
