@@ -60,7 +60,7 @@ function publicUser(user) {
   return { id: user.id, nickname: user.nickname, avatar: user.avatar || null, createdAt: user.createdAt };
 }
 function privateUser(user) { return { ...publicUser(user), friendCode: user.friendCode, isAdmin: Boolean(user.isAdmin) }; }
-function roomForUser(room, userId) { return { ...room, memberCount: room.memberIds.length, joined: room.memberIds.includes(userId) }; }
+function roomForUser(room, userId) { const { mutedBy, ...safeRoom } = room; return { ...safeRoom, memberCount: room.memberIds.length, joined: room.memberIds.includes(userId), notificationsMuted: Boolean(mutedBy?.includes(userId)) }; }
 function currentUser(userId) { return db.users.find(u => u.id === userId && !u.deleted); }
 function deleteUserAccount(user) { user.deleted = true; user.deletedAt = Date.now(); user.nickname = '탈퇴한 사용자'; user.avatar = null; user.phoneHash = null; user.passwordHash = null; db.rooms.forEach(room => { room.memberIds = room.memberIds.filter(memberId => memberId !== user.id); }); db.friendships = db.friendships.filter(f => f.fromId !== user.id && f.toId !== user.id); }
 function validAvatar(avatar) {
@@ -268,7 +268,11 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'GET' && url.pathname === '/api/notifications') {
       const userId = url.searchParams.get('userId');
       if (!currentUser(userId)) return json(res, 403, { error: '사용자를 확인할 수 없어요.' });
-      return json(res, 200, db.notifications.filter(notification => notification.userId === userId).slice(-30));
+      return json(res, 200, db.notifications.filter(notification => {
+        if (notification.userId !== userId) return false;
+        const room = notification.roomId && db.rooms.find(item => item.id === notification.roomId);
+        return !room?.mutedBy?.includes(userId);
+      }).slice(-30));
     }
     if (req.method === 'POST' && url.pathname === '/api/friends/request') {
       const { userId, friendCode: code } = await body(req); const user = currentUser(userId);
@@ -342,6 +346,15 @@ const server = http.createServer(async (req, res) => {
       if (!room || !currentUser(userId)) return json(res, 404, { error: '초대 코드를 찾을 수 없어요.' });
       if (!room.memberIds.includes(userId)) room.memberIds.push(userId); save(); return json(res, 200, roomForUser(room, userId));
     }
+    const roomNotificationSetting = url.pathname.match(/^\/api\/rooms\/([^/]+)\/notification-setting$/);
+    if (req.method === 'POST' && roomNotificationSetting) {
+      const room = db.rooms.find(item => item.id === roomNotificationSetting[1]); const { userId, muted } = await body(req);
+      if (!room || !room.memberIds.includes(userId)) return json(res, 403, { error: '채팅방에 접근할 수 없어요.' });
+      room.mutedBy ||= [];
+      if (muted && !room.mutedBy.includes(userId)) room.mutedBy.push(userId);
+      if (!muted) room.mutedBy = room.mutedBy.filter(memberId => memberId !== userId);
+      save(); return json(res, 200, { notificationsMuted: Boolean(muted) });
+    }
     const roomAction = url.pathname.match(/^\/api\/rooms\/([^/]+)\/(leave|invite)$/);
     if (req.method === 'POST' && roomAction) {
       const [, roomId, action] = roomAction;
@@ -350,6 +363,7 @@ const server = http.createServer(async (req, res) => {
       if (!room || !room.memberIds.includes(userId)) return json(res, 403, { error: '채팅방에 접근할 수 없어요.' });
       if (action === 'leave') {
         room.memberIds = room.memberIds.filter(memberId => memberId !== userId);
+        room.mutedBy = (room.mutedBy || []).filter(memberId => memberId !== userId);
         save(); return json(res, 200, { left: true });
       }
       const friend = currentUser(friendId);
