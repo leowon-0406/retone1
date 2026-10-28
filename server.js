@@ -13,6 +13,7 @@ fs.mkdirSync(dataDir, { recursive: true });
 const dbPath = path.join(dataDir, 'data.json');
 let db = load();
 db.friendships ||= [];
+db.notifications ||= [];
 const pendingAnalyses = new Map();
 const typingStates = new Map();
 let statePool = null;
@@ -31,6 +32,7 @@ async function initializeStorage() {
     if (saved.rowCount) db = saved.rows[0].payload;
     else await statePool.query('INSERT INTO retone_state (id, payload) VALUES (1, $1::jsonb)', [JSON.stringify(db)]);
     db.friendships ||= [];
+    db.notifications ||= [];
     console.log('Re:Tone persistent Postgres storage connected.');
   } catch (error) {
     statePool = null;
@@ -208,6 +210,11 @@ const server = http.createServer(async (req, res) => {
       if (!currentUser(userId)) return json(res, 403, { error: '사용자를 확인할 수 없어요.' });
       return json(res, 200, db.users.filter(u => !u.deleted && u.id !== userId).map(publicUser));
     }
+    if (req.method === 'GET' && url.pathname === '/api/notifications') {
+      const userId = url.searchParams.get('userId');
+      if (!currentUser(userId)) return json(res, 403, { error: '사용자를 확인할 수 없어요.' });
+      return json(res, 200, db.notifications.filter(notification => notification.userId === userId).slice(-30));
+    }
     if (req.method === 'POST' && url.pathname === '/api/friends/request') {
       const { userId, friendCode: code } = await body(req); const user = currentUser(userId);
       const target = db.users.find(u => !u.deleted && u.friendCode === String(code).trim().toUpperCase());
@@ -279,7 +286,10 @@ const server = http.createServer(async (req, res) => {
       const friend = currentUser(friendId);
       if (room.kind === 'direct') return json(res, 400, { error: '1:1 채팅에는 친구를 초대할 수 없어요.' });
       if (!friend) return json(res, 404, { error: '초대할 사용자를 찾을 수 없어요.' });
-      if (!room.memberIds.includes(friendId)) room.memberIds.push(friendId);
+      if (!room.memberIds.includes(friendId)) {
+        room.memberIds.push(friendId);
+        db.notifications.push({ id: id('notice'), userId: friendId, type: 'room-invite', roomId, roomName: room.name, inviter: currentUser(userId).nickname, createdAt: Date.now() });
+      }
       save(); return json(res, 200, roomForUser(room, userId));
     }
     const analyzeMatch = url.pathname.match(/^\/api\/rooms\/([^/]+)\/analyze$/);
