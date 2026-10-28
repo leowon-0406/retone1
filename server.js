@@ -80,8 +80,9 @@ function toneCheck(text) {
 }
 const FREE_PASS_MESSAGES = new Set(['ㅋ','ㅋㅋ','ㅋㅋㅋ','ㅋㅋㅋㅋ','ㅋㅋㅋㅋㅋ','ㅎㅎ','ㅎㅎㅎ','ㅎㅎㅎㅎ','ㅎ','ㅎㅇ','ㅎㅇㅎㅇ','하이','하이요','안녕','안뇽','안녕하세용','안녕하세요','반가워','반갑습니다','굿모닝','좋은아침','좋은 아침','굿나잇','잘자','잘 자','잘자요','수고','수고했어','수고하셨어요','고마워','감사','감사합니다','ㄱㅅ','ㄱㅅㄱㅅ','ㅇㅋ','오케이','오키','ok','okay','넵','넹','네','예','응','웅','ㅇㅇ','ㅇㅇㅇ','ㄴㄴ','아니','아뇨','ㄹㅇ','ㄹㅇㅋㅋ','헐','헉','오','오오','와','와우','대박','굿','굳','굳굳','ㅊㅋ','축하해','축하합니다','ㅃㅇ','바이','빠이','잘가','잘 가','다녀와','다녀오세요','화이팅','파이팅','ㅍㅇㅌ','힘내','힘내요','ㅈㅅ','죄송','미안','미안해','미안합니다','괜찮아','괜찮아요','노노','yes','no','thx','thanks','ty','lol','lmao','hi','hello','bye','good night','good morning']);
 function isFreePassMessage(text) {
-  const normalized = String(text || '').trim().toLowerCase().replace(/[!?~.]/g, '');
-  return normalized.length <= 18 && FREE_PASS_MESSAGES.has(normalized);
+  const raw = String(text || '').trim().toLowerCase();
+  const normalized = raw.replace(/[!?~.]/g, '');
+  return raw.length <= 24 && (FREE_PASS_MESSAGES.has(normalized) || /^[ㅋㅎ]+$/.test(raw) || /^\?+$/.test(raw));
 }
 function agreementCheck(text) {
   return /(해줘|해줄래|만들어줘|정리해줘|보내줘|맡아줘|준비해줘|조사해줘|제출해|완성해|공유해|담당해|해라|해|해야|역할|담당자|마감|까지|전까지|몇 시|내일|모레|이번 주|다음 주|월요일|화요일|수요일|목요일|금요일|토요일|일요일|하자|하기로|맡을게|만날래|만나자|회의|약속|일정|예약|결정하자|자료|발표|과제|보고서)/.test(text);
