@@ -14,6 +14,7 @@ const dbPath = path.join(dataDir, 'data.json');
 let db = load();
 db.friendships ||= [];
 const pendingAnalyses = new Map();
+const typingStates = new Map();
 let statePool = null;
 let saveQueue = Promise.resolve();
 
@@ -131,7 +132,8 @@ async function analyzeWithOpenAI(text, history = []) {
     const categories = Array.isArray(parsed.categories) ? parsed.categories.slice(0, 4).map(String) : [];
     const severity = ['none', 'low', 'high', 'critical'].includes(parsed.severity) ? parsed.severity : (categories.length ? 'low' : 'none');
     const agreementCandidate = Boolean(parsed.agreementCandidate);
-    const needsReview = Boolean(parsed.needsReview) || categories.length > 0;
+    const reviewCategories = new Set(['강한 욕설', '직접 비난', '위협 표현', '배제 표현', '강한 압박']);
+    const needsReview = Boolean(parsed.needsReview) && categories.some(category => reviewCategories.has(category));
     return { tone: { level: severity, categories, matched: [], source: 'openai', needsReview, reason: String(parsed.reason || '').slice(0, 100), suggestion: String(parsed.suggestion || '').slice(0, 300) }, agreementCandidate, agreementDraft: agreementCandidate ? { task: String(parsed.agreementDraft?.task || text).slice(0, 300), assignee: String(parsed.agreementDraft?.assignee || '미정').slice(0, 40), deadline: String(parsed.agreementDraft?.deadline || '미정').slice(0, 60) } : null };
   } catch (error) { console.warn(`OpenAI analysis fallback: ${error.name || 'request failed'}`); return fallback; }
 }
@@ -281,6 +283,16 @@ const server = http.createServer(async (req, res) => {
       save(); return json(res, 200, roomForUser(room, userId));
     }
     const analyzeMatch = url.pathname.match(/^\/api\/rooms\/([^/]+)\/analyze$/);
+    const typingMatch = url.pathname.match(/^\/api\/rooms\/([^/]+)\/typing$/);
+    if (typingMatch) {
+      const roomId = typingMatch[1]; const room = db.rooms.find(r => r.id === roomId); const userId = url.searchParams.get('userId');
+      if (!room || !room.memberIds.includes(userId)) return json(res, 403, { error: '채팅방에 접근할 수 없어요.' });
+      if (req.method === 'POST') { typingStates.set(`${roomId}:${userId}`, Date.now() + 3200); return json(res, 200, { typing: true }); }
+      if (req.method === 'GET') {
+        const now = Date.now(); const users = room.memberIds.filter(id => id !== userId && typingStates.get(`${roomId}:${id}`) > now).map(id => publicUser(currentUser(id)));
+        return json(res, 200, { users });
+      }
+    }
     if (req.method === 'POST' && analyzeMatch) {
       const roomId = analyzeMatch[1]; const room = db.rooms.find(r => r.id === roomId); const userId = url.searchParams.get('userId'); const { content } = await body(req);
       if (!room || !room.memberIds.includes(userId)) return json(res, 403, { error: '채팅방에 접근할 수 없어요.' });
