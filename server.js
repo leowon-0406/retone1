@@ -14,6 +14,7 @@ const dbPath = path.join(dataDir, 'data.json');
 let db = load();
 db.friendships ||= [];
 db.notifications ||= [];
+db.analysisCache ||= {};
 const pendingAnalyses = new Map();
 const typingStates = new Map();
 let statePool = null;
@@ -33,6 +34,7 @@ async function initializeStorage() {
     else await statePool.query('INSERT INTO retone_state (id, payload) VALUES (1, $1::jsonb)', [JSON.stringify(db)]);
     db.friendships ||= [];
     db.notifications ||= [];
+    db.analysisCache ||= {};
     console.log('Re:Tone persistent Postgres storage connected.');
   } catch (error) {
     statePool = null;
@@ -86,6 +88,48 @@ function isFreePassMessage(text) {
   const raw = String(text || '').trim().toLowerCase();
   const normalized = raw.replace(/[!?~.]/g, '');
   return raw.length <= 24 && (FREE_PASS_MESSAGES.has(normalized) || /^[ㅋㅎ]+$/.test(raw) || /^\?+$/.test(raw));
+}
+// Store only a fingerprint, never the original message text.  This lets an
+// already-reviewed message be sent quickly without adding a second copy of a
+// student's wording to the database.
+function analysisCacheKey(text) {
+  const normalized = String(text || '').trim().toLowerCase().replace(/\s+/g, ' ').replace(/[“”]/g, '"');
+  return crypto.createHash('sha256').update(normalized).digest('hex');
+}
+function cachedAnalysis(text) {
+  const entry = db.analysisCache?.[analysisCacheKey(text)];
+  // AI guidance can change as the app is improved, so do not reuse an old
+  // result forever.  A cache entry is still shared by every chat room.
+  if (!entry || entry.version !== 1 || !entry.analysis || Date.now() - entry.checkedAt > 1000 * 60 * 60 * 24 * 90) return null;
+  return {
+    ...entry.analysis,
+    tone: { ...entry.analysis.tone, source: 'cache' },
+    cacheHit: true
+  };
+}
+function rememberAnalysis(text, analysis) {
+  // A fallback may be caused by a timeout or missing key; caching it would
+  // incorrectly turn a temporary failure into a permanent result.
+  if (analysis?.tone?.source !== 'openai') return analysis;
+  const key = analysisCacheKey(text);
+  db.analysisCache ||= {};
+  db.analysisCache[key] = {
+    version: 1,
+    checkedAt: Date.now(),
+    analysis: { ...analysis, tone: { ...analysis.tone, source: 'openai' } }
+  };
+  const keys = Object.keys(db.analysisCache);
+  if (keys.length > 1500) {
+    keys.sort((a, b) => db.analysisCache[a].checkedAt - db.analysisCache[b].checkedAt)
+      .slice(0, keys.length - 1500).forEach(keyToRemove => delete db.analysisCache[keyToRemove]);
+  }
+  save();
+  return { ...analysis, cacheHit: false };
+}
+async function analyzeMessage(text, history = []) {
+  const cached = cachedAnalysis(text);
+  if (cached) return cached;
+  return rememberAnalysis(text, await analyzeWithOpenAI(text, history));
 }
 function agreementCheck(text) {
   return /(해줘|해줄래|만들어줘|정리해줘|보내줘|맡아줘|준비해줘|조사해줘|제출해|완성해|공유해|담당해|해라|해|해야|역할|담당자|마감|까지|전까지|몇 시|내일|모레|이번 주|다음 주|월요일|화요일|수요일|목요일|금요일|토요일|일요일|하자|하기로|맡을게|만날래|만나자|회의|약속|일정|예약|결정하자|자료|발표|과제|보고서)/.test(text);
@@ -321,7 +365,7 @@ const server = http.createServer(async (req, res) => {
       const roomId = analyzeMatch[1]; const room = db.rooms.find(r => r.id === roomId); const userId = url.searchParams.get('userId'); const { content } = await body(req);
       if (!room || !room.memberIds.includes(userId)) return json(res, 403, { error: '채팅방에 접근할 수 없어요.' });
       if (!content?.trim()) return json(res, 400, { error: '메시지를 입력해 주세요.' });
-      const analysis = await analyzeWithOpenAI(content.trim().slice(0, 1000), db.messages.filter(m => m.roomId === roomId));
+      const analysis = await analyzeMessage(content.trim().slice(0, 1000), db.messages.filter(m => m.roomId === roomId));
       const analysisId = id('analysis'); pendingAnalyses.set(analysisId, { roomId, userId, content: content.trim().slice(0, 1000), analysis, expiresAt: Date.now() + 90000 });
       return json(res, 200, { analysisId, ...analysis });
     }
@@ -336,7 +380,7 @@ const server = http.createServer(async (req, res) => {
       if (req.method === 'POST' && thing === 'messages') {
         const { content, analysisId, skipAI } = await body(req); if (!content?.trim()) return json(res, 400, { error: '메시지를 입력해 주세요.' });
         const cleanContent = content.trim().slice(0, 1000); const saved = pendingAnalyses.get(analysisId);
-        const analysis = saved && saved.roomId === roomId && saved.userId === userId && saved.content === cleanContent && saved.expiresAt > Date.now() ? saved.analysis : (skipAI && isFreePassMessage(cleanContent) ? fallbackAnalysis(cleanContent) : await analyzeWithOpenAI(cleanContent, db.messages.filter(m => m.roomId === roomId)));
+        const analysis = saved && saved.roomId === roomId && saved.userId === userId && saved.content === cleanContent && saved.expiresAt > Date.now() ? saved.analysis : (skipAI && isFreePassMessage(cleanContent) ? fallbackAnalysis(cleanContent) : await analyzeMessage(cleanContent, db.messages.filter(m => m.roomId === roomId)));
         if (analysisId) pendingAnalyses.delete(analysisId);
         const message = { id: id('msg'), roomId, senderId: userId, content: cleanContent, createdAt: Date.now(), ...analysis };
         db.messages.push(message); save(); return json(res, 201, { ...message, sender: publicUser(currentUser(userId)) });
