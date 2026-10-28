@@ -345,7 +345,10 @@ const server = http.createServer(async (req, res) => {
         const { task, assignee, deadline, deadlineStart, deadlineEnd } = await body(req); if (!task?.trim()) return json(res, 400, { error: '할 일을 입력해 주세요.' });
         const start = String(deadlineStart || '').slice(0, 10); const end = String(deadlineEnd || deadline || '').slice(0, 10);
         const agreement = { id: id('agreement'), roomId, creatorId: userId, task: task.trim(), assignee: assignee?.trim() || '미정', deadline: end || '미정', deadlineStart: start || null, deadlineEnd: end || null, status: '진행 중', createdAt: Date.now() };
-        db.agreements.push(agreement); save(); return json(res, 201, agreement);
+        db.agreements.push(agreement);
+        const creator = currentUser(userId);
+        room.memberIds.filter(memberId => memberId !== userId).forEach(memberId => db.notifications.push({ id: id('notice'), userId: memberId, type: 'agreement-created', roomId, roomName: room.name, creator: creator?.nickname || '누군가', task: agreement.task, createdAt: Date.now() }));
+        save(); return json(res, 201, agreement);
       }
     }
     json(res, 404, { error: '요청을 찾을 수 없어요.' });
