@@ -2,12 +2,13 @@
 //! It shares the existing `retone_state` JSONB record with Node, so it can be
 //! verified in parallel without changing user accounts or chat history.
 
-use axum::{extract::State, http::StatusCode, response::IntoResponse, routing::get, Json, Router};
+use axum::{extract::{Path, Query, State}, http::StatusCode, response::{IntoResponse, Response}, routing::get, Json, Router};
 use serde_json::{json, Value};
 use sqlx::{postgres::PgPoolOptions, PgPool};
-use std::{env, net::SocketAddr, sync::Arc};
+use std::{collections::HashMap, env, net::SocketAddr, sync::Arc};
 use tokio::sync::RwLock;
 use tower_http::services::ServeDir;
+use uuid::Uuid;
 
 #[derive(Clone)]
 struct AppState { database: Arc<RwLock<Value>>, postgres: Option<PgPool> }
@@ -48,10 +49,42 @@ async fn migration_status(State(state): State<AppState>) -> impl IntoResponse {
 }
 async fn not_migrated() -> impl IntoResponse { (StatusCode::NOT_IMPLEMENTED, Json(json!({"error":"이 API는 Rust 이전 작업 중이에요.","migration":true}))) }
 
+fn error(code: StatusCode, text: &str) -> Response { (code, Json(json!({"error":text}))).into_response() }
+fn user_exists(db: &Value, id: &str) -> bool { db["users"].as_array().is_some_and(|users| users.iter().any(|user| user["id"] == id && !user["deleted"].as_bool().unwrap_or(false))) }
+fn public_user(user: &Value) -> Value { json!({"id":user["id"],"nickname":user["nickname"],"avatar":user.get("avatar").cloned().unwrap_or(Value::Null),"createdAt":user["createdAt"]}) }
+fn room_for_user(room: &Value, user_id: &str) -> Value {
+    let mut item=room.clone();
+    if let Some(object)=item.as_object_mut() { object.remove("mutedBy"); object.remove("readBy"); object.remove("pinnedBy"); object.insert("memberCount".into(),json!(room["memberIds"].as_array().map_or(0,Vec::len))); object.insert("joined".into(),json!(room["memberIds"].as_array().is_some_and(|ids|ids.iter().any(|id|id==user_id)))); object.insert("notificationsMuted".into(),json!(room["mutedBy"].as_array().is_some_and(|ids|ids.iter().any(|id|id==user_id)))); object.insert("pinned".into(),json!(room["pinnedBy"].as_array().is_some_and(|ids|ids.iter().any(|id|id==user_id)))); }
+    item
+}
+async fn get_rooms(State(state): State<AppState>, Query(query): Query<HashMap<String,String>>) -> Response {
+    let Some(user_id)=query.get("userId") else{return error(StatusCode::BAD_REQUEST,"사용자를 확인해 주세요.")};
+    let db=state.database.read().await;
+    if !user_exists(&db,user_id){return error(StatusCode::FORBIDDEN,"사용자를 확인할 수 없어요.")}
+    Json(Value::Array(db["rooms"].as_array().into_iter().flatten().filter(|room|room["memberIds"].as_array().is_some_and(|ids|ids.iter().any(|id|id==user_id))).map(|room|room_for_user(room,user_id)).collect())).into_response()
+}
+async fn get_users(State(state): State<AppState>, Query(query): Query<HashMap<String,String>>) -> Response {
+    let Some(user_id)=query.get("userId") else{return error(StatusCode::BAD_REQUEST,"사용자를 확인해 주세요.")}; let db=state.database.read().await;
+    if !user_exists(&db,user_id){return error(StatusCode::FORBIDDEN,"사용자를 확인할 수 없어요.")}
+    Json(Value::Array(db["users"].as_array().into_iter().flatten().filter(|user|user["id"]!=*user_id&&!user["deleted"].as_bool().unwrap_or(false)).map(public_user).collect())).into_response()
+}
+async fn create_room(State(state): State<AppState>, Json(body): Json<Value>) -> Response {
+    let user_id=body["userId"].as_str().unwrap_or(""); let name=body["name"].as_str().unwrap_or("").trim();
+    if name.is_empty(){return error(StatusCode::BAD_REQUEST,"채팅방 정보를 확인해 주세요.")}
+    let room={let mut db=state.database.write().await; if !user_exists(&db,user_id){return error(StatusCode::FORBIDDEN,"사용자를 확인할 수 없어요.")}; let room=json!({"id":format!("room_{}",Uuid::new_v4()),"kind":"group","name":name.chars().take(30).collect::<String>(),"inviteCode":Uuid::new_v4().simple().to_string()[..6].to_uppercase(),"memberIds":[user_id],"createdAt":chrono::Utc::now().timestamp_millis()}); db["rooms"].as_array_mut().unwrap().push(room.clone()); room};
+    if state.save().await.is_err(){return error(StatusCode::INTERNAL_SERVER_ERROR,"저장하지 못했어요.")}; Json(room_for_user(&room,user_id)).into_response()
+}
+async fn get_messages(State(state): State<AppState>, Path(room_id): Path<String>, Query(query): Query<HashMap<String,String>>) -> Response {
+    let user_id=query.get("userId").map(String::as_str).unwrap_or(""); let db=state.database.read().await;
+    let Some(room)=db["rooms"].as_array().and_then(|rooms|rooms.iter().find(|room|room["id"]==room_id)) else{return error(StatusCode::NOT_FOUND,"채팅방을 찾을 수 없어요.")};
+    if !room["memberIds"].as_array().is_some_and(|ids|ids.iter().any(|id|id==user_id)){return error(StatusCode::FORBIDDEN,"채팅방에 접근할 수 없어요.")}
+    let messages=db["messages"].as_array().into_iter().flatten().filter(|message|message["roomId"]==room_id).map(|message|{let mut item=message.clone();let sender=db["users"].as_array().and_then(|users|users.iter().find(|user|user["id"]==message["senderId"])).map(public_user).unwrap_or_else(||json!({"id":"deleted","nickname":"탈퇴한 사용자","deleted":true}));item["sender"]=sender;item}).collect();Json(Value::Array(messages)).into_response()
+}
+
 #[tokio::main]
 async fn main() {
     let state = AppState::load().await;
-    let api = Router::new().route("/health", get(health)).route("/rust-status", get(migration_status)).fallback(not_migrated).with_state(state);
+    let api = Router::new().route("/health", get(health)).route("/rust-status", get(migration_status)).route("/rooms", get(get_rooms).post(create_room)).route("/users", get(get_users)).route("/rooms/{room_id}/messages", get(get_messages)).fallback(not_migrated).with_state(state);
     let app = Router::new().nest("/api", api).fallback_service(ServeDir::new("public"));
     let port = env::var("PORT").unwrap_or_else(|_| "3000".into()).parse().expect("valid PORT");
     let address = SocketAddr::from(([0,0,0,0],port));
