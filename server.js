@@ -61,7 +61,7 @@ function publicUser(user) {
   return { id: user.id, nickname: user.nickname, avatar: user.avatar || null, createdAt: user.createdAt };
 }
 function privateUser(user) { return { ...publicUser(user), friendCode: user.friendCode, isAdmin: Boolean(user.isAdmin) }; }
-function roomForUser(room, userId) { const { mutedBy, readBy, ...safeRoom } = room; return { ...safeRoom, memberCount: room.memberIds.length, joined: room.memberIds.includes(userId), notificationsMuted: Boolean(mutedBy?.includes(userId)) }; }
+function roomForUser(room, userId) { const { mutedBy, readBy, pinnedBy, ...safeRoom } = room; return { ...safeRoom, memberCount: room.memberIds.length, joined: room.memberIds.includes(userId), notificationsMuted: Boolean(mutedBy?.includes(userId)), pinned: Boolean(pinnedBy?.includes(userId)) }; }
 function currentUser(userId) { return db.users.find(u => u.id === userId && !u.deleted); }
 function deleteUserAccount(user) { user.deleted = true; user.deletedAt = Date.now(); user.nickname = '탈퇴한 사용자'; user.avatar = null; user.phoneHash = null; user.passwordHash = null; db.rooms.forEach(room => { room.memberIds = room.memberIds.filter(memberId => memberId !== user.id); }); db.friendships = db.friendships.filter(f => f.fromId !== user.id && f.toId !== user.id); }
 function validAvatar(avatar) {
@@ -301,6 +301,18 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, roomForUser(room, userId));
     }
     const deleteMessageMatch = url.pathname.match(/^\/api\/messages\/([^/]+)$/);
+    const messageReactionMatch = url.pathname.match(/^\/api\/messages\/([^/]+)\/reaction$/);
+    if (req.method === 'POST' && messageReactionMatch) {
+      const { userId, emoji } = await body(req); const message = db.messages.find(item => item.id === messageReactionMatch[1]);
+      const room = message && db.rooms.find(item => item.id === message.roomId);
+      if (!message || !room?.memberIds.includes(userId)) return json(res, 403, { error: '메시지에 반응할 수 없어요.' });
+      if (!['👍','❤️','😂','✅'].includes(emoji)) return json(res, 400, { error: '지원하지 않는 반응이에요.' });
+      message.reactions ||= {}; message.reactions[emoji] ||= [];
+      if (message.reactions[emoji].includes(userId)) message.reactions[emoji] = message.reactions[emoji].filter(id => id !== userId);
+      else message.reactions[emoji].push(userId);
+      if (!message.reactions[emoji].length) delete message.reactions[emoji];
+      save(); return json(res, 200, { reactions: Object.fromEntries(Object.entries(message.reactions).map(([key, users]) => [key, users.length])) });
+    }
     if (req.method === 'DELETE' && deleteMessageMatch) {
       const userId = url.searchParams.get('userId');
       const message = db.messages.find(m => m.id === deleteMessageMatch[1]);
@@ -357,6 +369,15 @@ const server = http.createServer(async (req, res) => {
       if (room.readBy[userId] !== messageId) { room.readBy[userId] = messageId; save(); }
       return json(res, 200, { read: true });
     }
+    const roomPinMatch = url.pathname.match(/^\/api\/rooms\/([^/]+)\/pin$/);
+    if (req.method === 'POST' && roomPinMatch) {
+      const room = db.rooms.find(item => item.id === roomPinMatch[1]); const { userId, pinned } = await body(req);
+      if (!room || !room.memberIds.includes(userId)) return json(res, 403, { error: '채팅방에 접근할 수 없어요.' });
+      room.pinnedBy ||= [];
+      if (pinned && !room.pinnedBy.includes(userId)) room.pinnedBy.push(userId);
+      if (!pinned) room.pinnedBy = room.pinnedBy.filter(memberId => memberId !== userId);
+      save(); return json(res, 200, { pinned: Boolean(pinned) });
+    }
     const roomNotificationSetting = url.pathname.match(/^\/api\/rooms\/([^/]+)\/notification-setting$/);
     if (req.method === 'POST' && roomNotificationSetting) {
       const room = db.rooms.find(item => item.id === roomNotificationSetting[1]); const { userId, muted } = await body(req);
@@ -375,6 +396,7 @@ const server = http.createServer(async (req, res) => {
       if (action === 'leave') {
         room.memberIds = room.memberIds.filter(memberId => memberId !== userId);
         room.mutedBy = (room.mutedBy || []).filter(memberId => memberId !== userId);
+        room.pinnedBy = (room.pinnedBy || []).filter(memberId => memberId !== userId);
         if (room.readBy) delete room.readBy[userId];
         save(); return json(res, 200, { left: true });
       }
@@ -417,7 +439,8 @@ const server = http.createServer(async (req, res) => {
         const messageIndex = new Map(messages.map((message, index) => [message.id, index]));
         return json(res, 200, messages.map((message, index) => {
           const unreadCount = room.memberIds.filter(memberId => memberId !== message.senderId && (messageIndex.get(room.readBy?.[memberId]) ?? -1) < index).length;
-          return { ...message, unreadCount, sender: publicUser(currentUser(message.senderId)) };
+          const reactions = Object.fromEntries(Object.entries(message.reactions || {}).map(([emoji, users]) => [emoji, users.length]));
+          return { ...message, reactions, unreadCount, sender: publicUser(currentUser(message.senderId)) };
         }));
       }
       if (req.method === 'GET' && thing === 'agreements') return json(res, 200, db.agreements.filter(a => a.roomId === roomId && !a.hiddenBy?.includes(userId) && a.status !== '완료'));
