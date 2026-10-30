@@ -61,7 +61,7 @@ function publicUser(user) {
   return { id: user.id, nickname: user.nickname, avatar: user.avatar || null, createdAt: user.createdAt };
 }
 function privateUser(user) { return { ...publicUser(user), friendCode: user.friendCode, isAdmin: Boolean(user.isAdmin) }; }
-function roomForUser(room, userId) { const { mutedBy, ...safeRoom } = room; return { ...safeRoom, memberCount: room.memberIds.length, joined: room.memberIds.includes(userId), notificationsMuted: Boolean(mutedBy?.includes(userId)) }; }
+function roomForUser(room, userId) { const { mutedBy, readBy, ...safeRoom } = room; return { ...safeRoom, memberCount: room.memberIds.length, joined: room.memberIds.includes(userId), notificationsMuted: Boolean(mutedBy?.includes(userId)) }; }
 function currentUser(userId) { return db.users.find(u => u.id === userId && !u.deleted); }
 function deleteUserAccount(user) { user.deleted = true; user.deletedAt = Date.now(); user.nickname = '탈퇴한 사용자'; user.avatar = null; user.phoneHash = null; user.passwordHash = null; db.rooms.forEach(room => { room.memberIds = room.memberIds.filter(memberId => memberId !== user.id); }); db.friendships = db.friendships.filter(f => f.fromId !== user.id && f.toId !== user.id); }
 function validAvatar(avatar) {
@@ -70,11 +70,11 @@ function validAvatar(avatar) {
 function toneCheck(text) {
   const clean = String(text || '').normalize('NFKC').toLowerCase().replace(/[\s\-_.~!]/g, '').replace(/(.)\1{2,}/g, '$1$1');
   const profanity = [
-    '씨발','시발','시발애','시밞','씨밞','ㅅㅂ','ㅆㅂ','ㅅㅃ','ㅆㅃ','ㅅ발','시1발',
-    '개새끼','개새','ㄱㅅㄲ','개ㅅㄲ','씹새끼','ㅆㅅㄲ',
-    '병신','ㅂㅅ','등신','지랄','ㅈㄹ','좆','존나','ㅈㄴ','조까','ㅈ까',
-    '닥쳐','ㄷㅊ','꺼져','ㄲㅈ','새끼','ㅅㄲ','미친','미친놈','미친년','ㅁㅊ','ㅁㅊㄴ',
-    '죽어','죽인다','죽여버린다','패버린다','엿먹어'
+    '씨발','시발','시발애','시밞','씨밞','시발놈','시발년','시발새끼','ㅅㅂ','ㅆㅂ','ㅅㅃ','ㅆㅃ','ㅅ발','시1발','시발ㄹ','ㅅㅂㄹ',
+    '개새끼','개새','개샛기','개색기','ㄱㅅㄲ','개ㅅㄲ','씹새끼','씹쌔끼','ㅆㅅㄲ','ㅆㄴ','씹년','씹놈',
+    '병신','병1신','ㅂㅅ','등신','등싄','지랄','지럴','ㅈㄹ','좆','죳','ㅈㄷ','존나','존내','졸라','ㅈㄴ','조까','ㅈ까','조까라','꺼져라',
+    '닥쳐','닥쳐라','ㄷㅊ','꺼져','ㄲㅈ','새끼','ㅅㄲ','미친','미친놈','미친년','ㅁㅊ','ㅁㅊㄴ','미친새끼','돌았냐','돌았나','또라이','ㅌㄹㅇ',
+    '죽어','죽어라','죽인다','죽여','죽여버린다','패버린다','패준다','가만안둬','찾아간다','엿먹어','엿이나먹어','꺼져버려'
   ];
   const categories = [];
   const matched = profanity.filter(x => clean.includes(x.replace(/[\s\-_.~!]/g, '')));
@@ -87,7 +87,7 @@ function toneCheck(text) {
   const critical = categories.some(x => x === '위협 표현' || x === '불편할 수 있는 성적 표현');
   return { level: critical ? 'critical' : (categories.length ? 'high' : 'none'), categories, matched };
 }
-const FREE_PASS_MESSAGES = new Set(['ㅋ','ㅋㅋ','ㅋㅋㅋ','ㅋㅋㅋㅋ','ㅋㅋㅋㅋㅋ','ㅎㅎ','ㅎㅎㅎ','ㅎㅎㅎㅎ','ㅎ','ㅎㅇ','ㅎㅇㅎㅇ','하이','하이요','안녕','안뇽','안녕하세용','안녕하세요','반가워','반갑습니다','굿모닝','좋은아침','좋은 아침','굿나잇','잘자','잘 자','잘자요','수고','수고했어','수고하셨어요','고마워','감사','감사합니다','ㄱㅅ','ㄱㅅㄱㅅ','ㅇㅋ','오케이','오키','ok','okay','넵','넹','네','예','응','웅','ㅇㅇ','ㅇㅇㅇ','ㄴㄴ','아니','아뇨','ㄹㅇ','ㄹㅇㅋㅋ','헐','헉','오','오오','와','와우','대박','굿','굳','굳굳','ㅊㅋ','축하해','축하합니다','ㅃㅇ','바이','빠이','잘가','잘 가','다녀와','다녀오세요','화이팅','파이팅','ㅍㅇㅌ','힘내','힘내요','ㅈㅅ','죄송','미안','미안해','미안합니다','괜찮아','괜찮아요','노노','yes','no','thx','thanks','ty','lol','lmao','hi','hello','bye','good night','good morning']);
+const FREE_PASS_MESSAGES = new Set(['ㅋ','ㅋㅋ','ㅋㅋㅋ','ㅋㅋㅋㅋ','ㅋㅋㅋㅋㅋ','ㅋㅋㅋㅋㅋㅋ','ㅋㅋㅋㅋㅋㅋㅋ','ㅎ','ㅎㅎ','ㅎㅎㅎ','ㅎㅎㅎㅎ','ㅎㅎㅎㅎㅎ','ㅎㅇ','ㅎㅇㅎㅇ','안녕','안뇽','안녕하세용','안녕하세요','하이','하이요','헬로','반가워','반갑다','반갑습니다','굿모닝','굿나잇','좋은아침','좋은 아침','잘자','잘 자','잘자요','굿밤','수고','수고했어','수고했어요','수고하셨어요','고마워','고마워요','감사','감사해','감사합니다','ㄱㅅ','ㄱㅅㄱㅅ','땡큐','ㅇㅋ','ㅇㅋㅇㅋ','오케이','오키','오키오키','넵','넹','네','예','응','웅','ㅇㅇ','ㅇㅇㅇ','ㅇㅇㅇㅇ','ㄴㄴ','ㄴㄴㄴ','아니','아뇨','노','ㄴ','ㄹㅇ','ㅇㄱㄹㅇ','ㄹㅇㅋㅋ','헐','헉','오','오오','오잉','와','와우','대박','굿','굳','굳굳','ㅊㅋ','ㅊㅊ','축하','축하해','축하합니다','ㅃㅇ','ㅂㅂ','바이','빠이','잘가','잘 가','다녀와','다녀오세요','화이팅','파이팅','ㅍㅇㅌ','힘내','힘내요','ㅈㅅ','ㅈㅅㅈㅅ','죄송','죄송해요','미안','미안해','미안합니다','괜찮아','괜찮아요','노노','맞아','맞아요','그래','그래요','그러게','그치','그쵸','ㅇㅈ','인정','ㅇㅋㄷㅋ','가능','가능해','가능합니다','확인','확인했어','확인했습니다','알겠어','알겠어요','알겠습니당','오케바리','좋아','좋아요','좋지','좋습니다','ㄱㄱ','고고','가자','ㄱㅂㅈㄱ','ㄷㄷ','ㅋㅋㄹㅃㅃ','ㅇㅁㅇ','ㅜㅜ','ㅠㅠ','ㅠㅠㅠ','ㅜㅜㅜ','ㅜㅠ','ㅇㅅㅇ','ㅇㅂㅇ','ㅇㅈㅇㅈ','ㅇㅇ맞아','넹넹','네네','오케오케','ㄱㄱㄱ','ㅊㅊㅊ','ㄳ','감삼다','감사링','잘했어','잘했어요','수고수고','파이팅','굿잡','good','yes','no','ok','okay','yep','yup','sure','thanks','thank you','thx','ty','lol','lmao','rofl','hi','hello','hey','bye','good night','good morning','nice','great','cool','awesome']);
 function isFreePassMessage(text) {
   const raw = String(text || '').trim().toLowerCase();
   const normalized = raw.replace(/[!?~.]/g, '');
@@ -345,7 +345,17 @@ const server = http.createServer(async (req, res) => {
     if (req.method === 'POST' && url.pathname === '/api/rooms/join') {
       const { userId, inviteCode } = await body(req); const room = db.rooms.find(r => r.inviteCode === String(inviteCode).toUpperCase());
       if (!room || !currentUser(userId)) return json(res, 404, { error: '초대 코드를 찾을 수 없어요.' });
-      if (!room.memberIds.includes(userId)) room.memberIds.push(userId); save(); return json(res, 200, roomForUser(room, userId));
+      if (!room.memberIds.includes(userId)) { room.memberIds.push(userId); room.readBy ||= {}; room.readBy[userId] = db.messages.filter(message => message.roomId === room.id).at(-1)?.id || null; } save(); return json(res, 200, roomForUser(room, userId));
+    }
+    const roomReadMatch = url.pathname.match(/^\/api\/rooms\/([^/]+)\/read$/);
+    if (req.method === 'POST' && roomReadMatch) {
+      const room = db.rooms.find(item => item.id === roomReadMatch[1]); const { userId, messageId } = await body(req);
+      if (!room || !room.memberIds.includes(userId)) return json(res, 403, { error: '채팅방에 접근할 수 없어요.' });
+      const message = db.messages.find(item => item.id === messageId && item.roomId === room.id);
+      if (!message) return json(res, 404, { error: '메시지를 찾을 수 없어요.' });
+      room.readBy ||= {};
+      if (room.readBy[userId] !== messageId) { room.readBy[userId] = messageId; save(); }
+      return json(res, 200, { read: true });
     }
     const roomNotificationSetting = url.pathname.match(/^\/api\/rooms\/([^/]+)\/notification-setting$/);
     if (req.method === 'POST' && roomNotificationSetting) {
@@ -365,6 +375,7 @@ const server = http.createServer(async (req, res) => {
       if (action === 'leave') {
         room.memberIds = room.memberIds.filter(memberId => memberId !== userId);
         room.mutedBy = (room.mutedBy || []).filter(memberId => memberId !== userId);
+        if (room.readBy) delete room.readBy[userId];
         save(); return json(res, 200, { left: true });
       }
       const friend = currentUser(friendId);
@@ -372,6 +383,7 @@ const server = http.createServer(async (req, res) => {
       if (!friend) return json(res, 404, { error: '초대할 사용자를 찾을 수 없어요.' });
       if (!room.memberIds.includes(friendId)) {
         room.memberIds.push(friendId);
+        room.readBy ||= {}; room.readBy[friendId] = db.messages.filter(message => message.roomId === room.id).at(-1)?.id || null;
         db.notifications.push({ id: id('notice'), userId: friendId, type: 'room-invite', roomId, roomName: room.name, inviter: currentUser(userId).nickname, createdAt: Date.now() });
       }
       save(); return json(res, 200, roomForUser(room, userId));
@@ -401,7 +413,12 @@ const server = http.createServer(async (req, res) => {
       const [, roomId, thing] = roomMatch; const room = db.rooms.find(r => r.id === roomId); const userId = url.searchParams.get('userId');
       if (!room || !room.memberIds.includes(userId)) return json(res, 403, { error: '채팅방에 접근할 수 없어요.' });
       if (req.method === 'GET' && thing === 'messages') {
-        const messages = db.messages.filter(m => m.roomId === roomId).map(m => ({ ...m, sender: publicUser(currentUser(m.senderId)) })); return json(res, 200, messages);
+        const messages = db.messages.filter(m => m.roomId === roomId);
+        const messageIndex = new Map(messages.map((message, index) => [message.id, index]));
+        return json(res, 200, messages.map((message, index) => {
+          const unreadCount = room.memberIds.filter(memberId => memberId !== message.senderId && (messageIndex.get(room.readBy?.[memberId]) ?? -1) < index).length;
+          return { ...message, unreadCount, sender: publicUser(currentUser(message.senderId)) };
+        }));
       }
       if (req.method === 'GET' && thing === 'agreements') return json(res, 200, db.agreements.filter(a => a.roomId === roomId && !a.hiddenBy?.includes(userId) && a.status !== '완료'));
       if (req.method === 'POST' && thing === 'messages') {
