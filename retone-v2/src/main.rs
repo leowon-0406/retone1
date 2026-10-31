@@ -331,8 +331,12 @@ async fn ai_check(State(app): State<App>, Json(input): Json<AiCheck>) -> Json<se
         );
     }
     if bad.iter().any(|p| normalized.contains(p)) {
+        let matched = bad
+            .iter()
+            .find(|p| normalized.contains(**p))
+            .unwrap_or(&"강한 표현");
         return Json(
-            serde_json::json!({"verdict":"WARN","suggestion":"상대에게는 공격적인 표현으로 들릴 수 있어요. 조금 다르게 말해볼까요?","info":{"level":"none","note":null,"queries":[]},"source":"dictionary"}),
+            serde_json::json!({"verdict":"WARN","suggestion":format!("‘{matched}’처럼 강도가 높은 표현은 상대가 내용보다 공격받는 느낌을 먼저 받을 수 있어요. 하고 싶은 요청이나 감정을 구체적으로 말해보면 어떨까요?"),"info":{"level":"none","note":null,"queries":[]},"source":"dictionary"}),
         );
     }
     if level == "light" {
@@ -342,7 +346,7 @@ async fn ai_check(State(app): State<App>, Json(input): Json<AiCheck>) -> Json<se
     }
     let hash = format!(
         "{:x}",
-        Sha256::digest(format!("{level}:{normalized}").as_bytes())
+        Sha256::digest(format!("v2:{level}:{normalized}").as_bytes())
     );
     if let Ok(Some((verdict,suggestion,info_level,info_note,info_queries)))=sqlx::query_as::<_,(String,Option<String>,String,Option<String>,Vec<String>)>("SELECT verdict,suggestion,info_level,info_note,info_queries FROM retone_v2.ai_cache WHERE message_hash=$1").bind(&hash).fetch_optional(&app.db).await{return Json(serde_json::json!({"verdict":verdict,"suggestion":suggestion,"info":{"level":info_level,"note":info_note,"queries":info_queries},"source":"cache"}));}
     let Some(key) = env::var("OPENAI_API_KEY").ok() else {
@@ -351,7 +355,7 @@ async fn ai_check(State(app): State<App>, Json(input): Json<AiCheck>) -> Json<se
         );
     };
     let prompt = format!(
-        "너는 Re:Tone의 대화 거울이다. 판정자·검열자·사실확인 기관이 아니다. 현재 문장을 오직 '이렇게 들릴 수도 있어요'라는 제안으로만 비춘다.\n1) 심한 욕설·위협·명백한 조롱뿐 아니라, 비꼼·냉소·돌려 말하는 압박·상대를 작게 만드는 표현(예: '그래 너는 잘났어', '그것도 못해?', '네가 뭘 알겠어')도 알아차린다. 다만 친한 사이의 가벼운 농담은 WARN하지 않는다.\n2) WARN일 때도 위반·나쁨·부적절함이라고 판정하지 말고 suggestion에 '상대에게는 비꼬는 말이나 공격적인 표현으로 들릴 수 있어요', '조금 다르게 말해볼까요?' 같은 가능성 표현만 쓴다.\n3) 정보 점검: 건강·안전·법·돈·정치·재난·통계·속보성 주장에 출처·날짜·원문이 빠졌다면 info.level=check. 진실·거짓을 판단하지 말고 '출처와 날짜를 함께 확인해 보면 어떨까요?'처럼 제안만 한다.\n4) 현재 개입 강도는 {level}이다. standard는 뚜렷한 경우만, careful은 비꼼·오해 가능성까지 조금 더 꼼꼼히 본다.\n5) JSON만 출력: {{\"verdict\":\"PASS|WARN\",\"suggestion\":string|null,\"info\":{{\"level\":\"none|check\",\"note\":string|null,\"queries\":[string]}}}}. queries는 확인할 검색어 0~2개.\n문장: {text}"
+        "너는 Re:Tone의 대화 거울이다. 판정자·검열자·사실확인 기관이 아니다. 현재 문장을 오직 '이렇게 들릴 수도 있어요'라는 제안으로만 비춘다.\n1) 심한 욕설·위협·명백한 조롱뿐 아니라, 비꼼·냉소·돌려 말하는 압박·상대를 작게 만드는 표현도 알아차린다. 친한 사이의 가벼운 농담은 WARN하지 않는다.\n2) WARN일 때 suggestion은 반드시 이 문장에 맞춰 두 문장으로 쓴다. 첫 문장은 실제 문제 지점(단어·어조·비꼼)을 따옴표로 구체적으로 짚고 왜 상대가 압박·비난·조롱으로 느낄 수 있는지 설명한다. 둘째 문장은 원래 의도를 살린 짧은 대체 표현을 제안한다. 일반적인 반복 문구를 쓰지 마라. 단, 위반·나쁨·부적절함이라고 판정하지 말고 가능성 표현만 쓴다.\n3) 정보 점검: 건강·안전·법·돈·정치·재난·통계·속보성 주장에 출처·날짜·원문이 빠졌다면 info.level=check. 진실·거짓을 판단하지 말고 출처와 날짜 확인을 제안한다.\n4) 현재 개입 강도는 {level}이다. standard는 뚜렷한 경우만, careful은 비꼼·오해 가능성까지 조금 더 꼼꼼히 본다.\n5) JSON만 출력: {{\"verdict\":\"PASS|WARN\",\"suggestion\":string|null,\"info\":{{\"level\":\"none|check\",\"note\":string|null,\"queries\":[string]}}}}. queries는 확인할 검색어 0~2개.\n문장: {text}"
     );
     let res = reqwest::Client::new()
         .post("https://api.openai.com/v1/responses")
