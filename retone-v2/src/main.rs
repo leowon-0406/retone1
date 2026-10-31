@@ -82,6 +82,7 @@ struct NewAppointment {
 }
 #[derive(Deserialize)]
 struct Credentials { name:String, phone:String, password:String }
+#[derive(Deserialize)] struct AiCheck { text:String }
 #[derive(Serialize)]
 struct PublicUser { id:String, name:String, avatar_url:Option<String> }
 fn phone_hash(phone:&str)->String { format!("phone:{}",phone.chars().filter(|c|c.is_ascii_digit()).collect::<String>()) }
@@ -103,6 +104,7 @@ async fn login(State(app):State<App>,Json(input):Json<Credentials>)->Result<Json
  let row=sqlx::query_as::<_,(Uuid,String,Option<String>,String)>("SELECT id,name,avatar_url,password_hash FROM retone_v2.users WHERE phone_hash=$1 AND name=$2 AND deleted_at IS NULL").bind(phone_hash(&input.phone)).bind(input.name.trim()).fetch_optional(&app.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?.ok_or(StatusCode::UNAUTHORIZED)?;
  let parsed=PasswordHash::new(&row.3).map_err(|_|StatusCode::UNAUTHORIZED)?; Argon2::default().verify_password(input.password.as_bytes(),&parsed).map_err(|_|StatusCode::UNAUTHORIZED)?; Ok(Json(user_out(row.0,row.1,row.2)))}
 async fn users(State(app):State<App>)->Result<Json<Vec<PublicUser>>,StatusCode>{let rows=sqlx::query_as::<_,(Uuid,String,Option<String>)>("SELECT id,name,avatar_url FROM retone_v2.users WHERE deleted_at IS NULL ORDER BY created_at").fetch_all(&app.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;Ok(Json(rows.into_iter().map(|r|user_out(r.0,r.1,r.2)).collect()))}
+async fn ai_check(Json(input):Json<AiCheck>)->Json<serde_json::Value>{let text=input.text.trim();let pass=["ㅋㅋ","ㅎㅎ","ㅎㅇ","안녕","응","어","?","!","ㅇㅋ","ok"];if text.is_empty()||pass.iter().any(|p|text==*p){return Json(serde_json::json!({"verdict":"PASS","suggestion":null,"source":"fast"}))}let Some(key)=env::var("OPENAI_API_KEY").ok() else{return Json(serde_json::json!({"verdict":"PASS","suggestion":null,"source":"unavailable"}))};let prompt=format!("현재 문장만 판단. 심한 욕설·위협·명백한 조롱만 WARN, 나머지는 PASS. 말투를 부드럽게 바꿀 필요가 있으면 짧은 한국어 제안. JSON만: {{\"verdict\":\"PASS|WARN\",\"suggestion\":string|null}}\\n문장: {text}");let res=reqwest::Client::new().post("https://api.openai.com/v1/responses").bearer_auth(key).json(&serde_json::json!({"model":"gpt-4o-mini","input":prompt,"max_output_tokens":80})).send().await;let Ok(r)=res else{return Json(serde_json::json!({"verdict":"PASS","suggestion":null,"source":"fallback"}))};let v=r.json::<serde_json::Value>().await.unwrap_or_default();let out=v["output"][0]["content"][0]["text"].as_str().unwrap_or("{}");let parsed=serde_json::from_str::<serde_json::Value>(out).unwrap_or_else(|_|serde_json::json!({"verdict":"PASS","suggestion":null}));Json(serde_json::json!({"verdict":parsed["verdict"],"suggestion":parsed["suggestion"],"source":"ai"}))}
 async fn bootstrap(State(app): State<App>) -> Json<DataOut> {
     let d = app.data.read().await;
     Json(DataOut {
@@ -252,6 +254,7 @@ async fn main() {
         .route("/api/auth/signup", post(signup))
         .route("/api/auth/login", post(login))
         .route("/api/users", get(users))
+        .route("/api/ai/check", post(ai_check))
         .route("/api/bootstrap", get(bootstrap))
         .route("/api/rooms", post(create_room))
         .route("/api/agreements", post(create_agreement))
