@@ -1,19 +1,20 @@
+use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use axum::{
     Json, Router,
     extract::{Path, State},
     http::StatusCode,
     routing::{delete, get, post},
 };
-use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use chrono::Utc;
+use password_hash::SaltString;
+use rand_core::OsRng;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use std::{env, net::SocketAddr, sync::Arc};
 use tokio::sync::RwLock;
 use tower_http::services::ServeDir;
 use uuid::Uuid;
-use password_hash::SaltString;
-use rand_core::OsRng;
 
 #[derive(Clone, Serialize)]
 struct Room {
@@ -81,12 +82,37 @@ struct NewAppointment {
     place: String,
 }
 #[derive(Deserialize)]
-struct Credentials { name:String, phone:String, password:String }
-#[derive(Deserialize)] struct AiCheck { text:String }
+struct Credentials {
+    name: String,
+    phone: String,
+    password: String,
+}
+#[derive(Deserialize)]
+struct AiCheck {
+    text: String,
+}
 #[derive(Serialize)]
-struct PublicUser { id:String, name:String, avatar_url:Option<String> }
-fn phone_hash(phone:&str)->String { format!("phone:{}",phone.chars().filter(|c|c.is_ascii_digit()).collect::<String>()) }
-fn user_out(id:Uuid,name:String,avatar_url:Option<String>)->PublicUser{PublicUser{id:id.to_string(),name,avatar_url}}
+struct PublicUser {
+    id: String,
+    name: String,
+    avatar_url: Option<String>,
+}
+fn phone_hash(phone: &str) -> String {
+    format!(
+        "phone:{}",
+        phone
+            .chars()
+            .filter(|c| c.is_ascii_digit())
+            .collect::<String>()
+    )
+}
+fn user_out(id: Uuid, name: String, avatar_url: Option<String>) -> PublicUser {
+    PublicUser {
+        id: id.to_string(),
+        name,
+        avatar_url,
+    }
+}
 
 async fn health() -> Json<serde_json::Value> {
     let storage = prepare_storage().await.is_some();
@@ -94,17 +120,81 @@ async fn health() -> Json<serde_json::Value> {
         serde_json::json!({"ok":true,"runtime":"rust","storage":storage,"version":"v2-foundation"}),
     )
 }
-async fn signup(State(app):State<App>,Json(input):Json<Credentials>)->Result<Json<PublicUser>,StatusCode>{
- let name=input.name.trim(); let phone=phone_hash(&input.phone);
- if name.is_empty()||input.phone.chars().filter(|c|c.is_ascii_digit()).count()<7||input.password.len()<6{return Err(StatusCode::BAD_REQUEST)}
- let salt=SaltString::generate(&mut OsRng); let hash=Argon2::default().hash_password(input.password.as_bytes(),&salt).map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?.to_string(); let id=Uuid::new_v4();
- let result=sqlx::query("INSERT INTO retone_v2.users(id,phone_hash,name,password_hash,is_admin) VALUES($1,$2,$3,$4,$5)").bind(id).bind(phone).bind(name).bind(hash).bind(input.phone=="12341234"&&name=="12341234").execute(&app.db).await;
- if result.is_err(){return Err(StatusCode::CONFLICT)}; Ok(Json(user_out(id,name.to_string(),None)))}
-async fn login(State(app):State<App>,Json(input):Json<Credentials>)->Result<Json<PublicUser>,StatusCode>{
- let row=sqlx::query_as::<_,(Uuid,String,Option<String>,String)>("SELECT id,name,avatar_url,password_hash FROM retone_v2.users WHERE phone_hash=$1 AND name=$2 AND deleted_at IS NULL").bind(phone_hash(&input.phone)).bind(input.name.trim()).fetch_optional(&app.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?.ok_or(StatusCode::UNAUTHORIZED)?;
- let parsed=PasswordHash::new(&row.3).map_err(|_|StatusCode::UNAUTHORIZED)?; Argon2::default().verify_password(input.password.as_bytes(),&parsed).map_err(|_|StatusCode::UNAUTHORIZED)?; Ok(Json(user_out(row.0,row.1,row.2)))}
-async fn users(State(app):State<App>)->Result<Json<Vec<PublicUser>>,StatusCode>{let rows=sqlx::query_as::<_,(Uuid,String,Option<String>)>("SELECT id,name,avatar_url FROM retone_v2.users WHERE deleted_at IS NULL ORDER BY created_at").fetch_all(&app.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;Ok(Json(rows.into_iter().map(|r|user_out(r.0,r.1,r.2)).collect()))}
-async fn ai_check(Json(input):Json<AiCheck>)->Json<serde_json::Value>{let text=input.text.trim();let pass=["ㅋㅋ","ㅎㅎ","ㅎㅇ","안녕","응","어","?","!","ㅇㅋ","ok"];if text.is_empty()||pass.iter().any(|p|text==*p){return Json(serde_json::json!({"verdict":"PASS","suggestion":null,"source":"fast"}))}let Some(key)=env::var("OPENAI_API_KEY").ok() else{return Json(serde_json::json!({"verdict":"PASS","suggestion":null,"source":"unavailable"}))};let prompt=format!("현재 문장만 판단. 심한 욕설·위협·명백한 조롱만 WARN, 나머지는 PASS. 말투를 부드럽게 바꿀 필요가 있으면 짧은 한국어 제안. JSON만: {{\"verdict\":\"PASS|WARN\",\"suggestion\":string|null}}\\n문장: {text}");let res=reqwest::Client::new().post("https://api.openai.com/v1/responses").bearer_auth(key).json(&serde_json::json!({"model":"gpt-4o-mini","input":prompt,"max_output_tokens":80})).send().await;let Ok(r)=res else{return Json(serde_json::json!({"verdict":"PASS","suggestion":null,"source":"fallback"}))};let v=r.json::<serde_json::Value>().await.unwrap_or_default();let out=v["output"][0]["content"][0]["text"].as_str().unwrap_or("{}");let parsed=serde_json::from_str::<serde_json::Value>(out).unwrap_or_else(|_|serde_json::json!({"verdict":"PASS","suggestion":null}));Json(serde_json::json!({"verdict":parsed["verdict"],"suggestion":parsed["suggestion"],"source":"ai"}))}
+async fn signup(
+    State(app): State<App>,
+    Json(input): Json<Credentials>,
+) -> Result<Json<PublicUser>, StatusCode> {
+    let name = input.name.trim();
+    let phone = phone_hash(&input.phone);
+    if name.is_empty()
+        || input.phone.chars().filter(|c| c.is_ascii_digit()).count() < 7
+        || input.password.len() < 6
+    {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let salt = SaltString::generate(&mut OsRng);
+    let hash = Argon2::default()
+        .hash_password(input.password.as_bytes(), &salt)
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .to_string();
+    let id = Uuid::new_v4();
+    let result=sqlx::query("INSERT INTO retone_v2.users(id,phone_hash,name,password_hash,is_admin) VALUES($1,$2,$3,$4,$5)").bind(id).bind(phone).bind(name).bind(hash).bind(input.phone=="12341234"&&name=="12341234").execute(&app.db).await;
+    if result.is_err() {
+        return Err(StatusCode::CONFLICT);
+    };
+    Ok(Json(user_out(id, name.to_string(), None)))
+}
+async fn login(
+    State(app): State<App>,
+    Json(input): Json<Credentials>,
+) -> Result<Json<PublicUser>, StatusCode> {
+    let row=sqlx::query_as::<_,(Uuid,String,Option<String>,String)>("SELECT id,name,avatar_url,password_hash FROM retone_v2.users WHERE phone_hash=$1 AND name=$2 AND deleted_at IS NULL").bind(phone_hash(&input.phone)).bind(input.name.trim()).fetch_optional(&app.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?.ok_or(StatusCode::UNAUTHORIZED)?;
+    let parsed = PasswordHash::new(&row.3).map_err(|_| StatusCode::UNAUTHORIZED)?;
+    Argon2::default()
+        .verify_password(input.password.as_bytes(), &parsed)
+        .map_err(|_| StatusCode::UNAUTHORIZED)?;
+    Ok(Json(user_out(row.0, row.1, row.2)))
+}
+async fn users(State(app): State<App>) -> Result<Json<Vec<PublicUser>>, StatusCode> {
+    let rows=sqlx::query_as::<_,(Uuid,String,Option<String>)>("SELECT id,name,avatar_url FROM retone_v2.users WHERE deleted_at IS NULL ORDER BY created_at").fetch_all(&app.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(
+        rows.into_iter().map(|r| user_out(r.0, r.1, r.2)).collect(),
+    ))
+}
+async fn ai_check(State(app): State<App>, Json(input): Json<AiCheck>) -> Json<serde_json::Value> {
+    let text = input.text.trim();
+    let normalized=text.to_lowercase().chars().filter(|c|!c.is_whitespace()&&!c.is_ascii_punctuation()).collect::<String>();
+    let pass = ["ㅋㅋ","ㅋㅋㅋ","ㅎㅎ","ㅎㅎㅎ","ㅎㅇ","하이","안녕","안녕하세요","응","어","웅","넹","네","ㅇㅋ","오케이","ok","yes","no","?","!","ㅇㅇ","ㄱㄱ","ㄴㄴ","ㅂㅂ","잘자","고마워","감사","수고","굿","헐","대박","진짜","맞아","아니","왜","좋아","좋다","화이팅","파이팅"];
+    let bad = ["시발","씨발","시ㅂ","ㅅㅂ","ㅆㅂ","개새끼","개새","병신","ㅂㅅ","ㅄ","좆","ㅈㄴ","존나","미친놈","미친년","꺼져","죽어","죽인다","뒤져","닥쳐","엿먹어","새끼","년아","놈아","씹","지랄","ㅈㄹ","ㅁㅊ","미친","fuck","shit","bitch","asshole"];
+    if text.is_empty() || pass.iter().any(|p| text==*p||normalized==*p) {
+        return Json(serde_json::json!({"verdict":"PASS","suggestion":null,"source":"fast"}));
+    }
+    if bad.iter().any(|p|normalized.contains(p)){return Json(serde_json::json!({"verdict":"WARN","suggestion":"조금 더 차분한 표현으로 바꿔볼까요?","source":"dictionary"}));}
+    let hash=format!("{:x}",Sha256::digest(normalized.as_bytes()));
+    if let Ok(Some((verdict,suggestion)))=sqlx::query_as::<_,(String,Option<String>)>("SELECT verdict,suggestion FROM retone_v2.ai_cache WHERE message_hash=$1").bind(&hash).fetch_optional(&app.db).await{return Json(serde_json::json!({"verdict":verdict,"suggestion":suggestion,"source":"cache"}));}
+    let Some(key) = env::var("OPENAI_API_KEY").ok() else {
+        return Json(serde_json::json!({"verdict":"PASS","suggestion":null,"source":"unavailable"}));
+    };
+    let prompt = format!(
+        "현재 문장만 판단. 심한 욕설·위협·명백한 조롱만 WARN, 나머지는 PASS. 말투를 부드럽게 바꿀 필요가 있으면 짧은 한국어 제안. JSON만: {{\"verdict\":\"PASS|WARN\",\"suggestion\":string|null}}\\n문장: {text}"
+    );
+    let res = reqwest::Client::new()
+        .post("https://api.openai.com/v1/responses")
+        .bearer_auth(key)
+        .json(&serde_json::json!({"model":"gpt-4o-mini","input":prompt,"max_output_tokens":80}))
+        .send()
+        .await;
+    let Ok(r) = res else {
+        return Json(serde_json::json!({"verdict":"PASS","suggestion":null,"source":"fallback"}));
+    };
+    let v = r.json::<serde_json::Value>().await.unwrap_or_default();
+    let out = v["output"][0]["content"][0]["text"]
+        .as_str()
+        .unwrap_or("{}");
+    let parsed = serde_json::from_str::<serde_json::Value>(out)
+        .unwrap_or_else(|_| serde_json::json!({"verdict":"PASS","suggestion":null}));
+    let verdict=parsed["verdict"].as_str().unwrap_or("PASS");let suggestion=parsed["suggestion"].as_str();let _=sqlx::query("INSERT INTO retone_v2.ai_cache(message_hash,verdict,suggestion) VALUES($1,$2,$3) ON CONFLICT(message_hash) DO UPDATE SET verdict=EXCLUDED.verdict,suggestion=EXCLUDED.suggestion,checked_at=NOW()").bind(&hash).bind(verdict).bind(suggestion).execute(&app.db).await;Json(serde_json::json!({"verdict":verdict,"suggestion":suggestion,"source":"ai"}))
+}
 async fn bootstrap(State(app): State<App>) -> Json<DataOut> {
     let d = app.data.read().await;
     Json(DataOut {
@@ -154,7 +244,20 @@ async fn send(
     }
     Ok(Json(message))
 }
-async fn delete_message(State(app):State<App>,Path((room_id,message_id)):Path<(String,String)>)->StatusCode{let mut d=app.data.write().await;let before=d.messages.len();d.messages.retain(|m|!(m.room_id==room_id&&m.id==message_id&&m.mine));if d.messages.len()<before{StatusCode::NO_CONTENT}else{StatusCode::NOT_FOUND}}
+async fn delete_message(
+    State(app): State<App>,
+    Path((room_id, message_id)): Path<(String, String)>,
+) -> StatusCode {
+    let mut d = app.data.write().await;
+    let before = d.messages.len();
+    d.messages
+        .retain(|m| !(m.room_id == room_id && m.id == message_id && m.mine));
+    if d.messages.len() < before {
+        StatusCode::NO_CONTENT
+    } else {
+        StatusCode::NOT_FOUND
+    }
+}
 async fn create_room(
     State(app): State<App>,
     Json(input): Json<NewRoom>,
@@ -260,7 +363,10 @@ async fn main() {
         .route("/api/agreements", post(create_agreement))
         .route("/api/appointments", post(create_appointment))
         .route("/api/rooms/{id}/messages", get(messages).post(send))
-        .route("/api/rooms/{room_id}/messages/{message_id}", delete(delete_message))
+        .route(
+            "/api/rooms/{room_id}/messages/{message_id}",
+            delete(delete_message),
+        )
         .with_state(app_state)
         .fallback_service(ServeDir::new("public"));
     let port = env::var("PORT")
