@@ -41,6 +41,8 @@ struct Agreement {
     task: String,
     assignee: String,
     deadline: String,
+    confirmations: u8,
+    revisions: u8,
 }
 #[derive(Clone, Serialize)]
 struct Appointment {
@@ -208,10 +210,18 @@ async fn reset_v2(
     sqlx::query("TRUNCATE TABLE retone_v2.ai_reports,retone_v2.ai_cache,retone_v2.appointments,retone_v2.agreements,retone_v2.messages,retone_v2.room_members,retone_v2.rooms,retone_v2.users RESTART IDENTITY CASCADE").execute(&app.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(serde_json::json!({"ok":true})))
 }
-async fn delete_account(State(app): State<App>, Path(id): Path<Uuid>, Json(input): Json<Credentials>) -> Result<StatusCode, StatusCode> {
+async fn delete_account(
+    State(app): State<App>,
+    Path(id): Path<Uuid>,
+    Json(input): Json<Credentials>,
+) -> Result<StatusCode, StatusCode> {
     let row=sqlx::query_as::<_,(String,)>("SELECT password_hash FROM retone_v2.users WHERE id=$1 AND phone_hash=$2 AND name=$3 AND deleted_at IS NULL").bind(id).bind(phone_hash(&input.phone)).bind(input.name.trim()).fetch_optional(&app.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?.ok_or(StatusCode::UNAUTHORIZED)?;
-    let parsed=PasswordHash::new(&row.0).map_err(|_|StatusCode::UNAUTHORIZED)?;Argon2::default().verify_password(input.password.as_bytes(),&parsed).map_err(|_|StatusCode::UNAUTHORIZED)?;
-    sqlx::query("UPDATE retone_v2.users SET deleted_at=NOW(),name='탈퇴한 사용자',avatar_url=NULL WHERE id=$1").bind(id).execute(&app.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;Ok(StatusCode::NO_CONTENT)
+    let parsed = PasswordHash::new(&row.0).map_err(|_| StatusCode::UNAUTHORIZED)?;
+    Argon2::default()
+        .verify_password(input.password.as_bytes(), &parsed)
+        .map_err(|_| StatusCode::UNAUTHORIZED)?;
+    sqlx::query("UPDATE retone_v2.users SET deleted_at=NOW(),name='탈퇴한 사용자',avatar_url=NULL WHERE id=$1").bind(id).execute(&app.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(StatusCode::NO_CONTENT)
 }
 async fn update_preferences(
     State(app): State<App>,
@@ -628,6 +638,8 @@ async fn create_agreement(
         } else {
             input.deadline.trim().chars().take(40).collect()
         },
+        confirmations: 0,
+        revisions: 0,
     };
     app.data.write().await.agreements.push(agreement.clone());
     Ok(Json(agreement))
