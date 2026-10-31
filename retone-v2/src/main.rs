@@ -351,7 +351,7 @@ async fn ai_check(State(app): State<App>, Json(input): Json<AiCheck>) -> Json<se
         );
     };
     let prompt = format!(
-        "너는 Re:Tone의 대화 거울이다. 판정자·검열자·사실확인 기관이 아니다. 현재 문장을 오직 '이렇게 들릴 수도 있어요'라는 제안으로만 비춘다.\n1) 심한 욕설·위협·명백한 조롱이 있으면 verdict=WARN. 하지만 위반·나쁨·부적절함이라고 판정하지 말고 suggestion에 '상대에게는 공격적인 표현으로 들릴 수 있어요', '조금 다르게 말해볼까요?' 같은 가능성 표현만 쓴다. 그 외는 PASS. 일상 인사·농담·짧은 대답은 PASS.\n2) 정보 점검: 건강·안전·법·돈·정치·재난·통계·속보성 주장에 출처·날짜·원문이 빠졌다면 info.level=check. 진실·거짓을 판단하지 말고 '출처와 날짜를 함께 확인해 보면 어떨까요?'처럼 제안만 한다.\n3) 현재 개입 강도는 {level}이다. standard는 중요한 주장만, careful은 중요한 주장과 오해될 수 있는 표현을 조금 더 꼼꼼히 본다.\n4) JSON만 출력: {{\"verdict\":\"PASS|WARN\",\"suggestion\":string|null,\"info\":{{\"level\":\"none|check\",\"note\":string|null,\"queries\":[string]}}}}. queries는 확인할 검색어 0~2개.\n문장: {text}"
+        "너는 Re:Tone의 대화 거울이다. 판정자·검열자·사실확인 기관이 아니다. 현재 문장을 오직 '이렇게 들릴 수도 있어요'라는 제안으로만 비춘다.\n1) 심한 욕설·위협·명백한 조롱뿐 아니라, 비꼼·냉소·돌려 말하는 압박·상대를 작게 만드는 표현(예: '그래 너는 잘났어', '그것도 못해?', '네가 뭘 알겠어')도 알아차린다. 다만 친한 사이의 가벼운 농담은 WARN하지 않는다.\n2) WARN일 때도 위반·나쁨·부적절함이라고 판정하지 말고 suggestion에 '상대에게는 비꼬는 말이나 공격적인 표현으로 들릴 수 있어요', '조금 다르게 말해볼까요?' 같은 가능성 표현만 쓴다.\n3) 정보 점검: 건강·안전·법·돈·정치·재난·통계·속보성 주장에 출처·날짜·원문이 빠졌다면 info.level=check. 진실·거짓을 판단하지 말고 '출처와 날짜를 함께 확인해 보면 어떨까요?'처럼 제안만 한다.\n4) 현재 개입 강도는 {level}이다. standard는 뚜렷한 경우만, careful은 비꼼·오해 가능성까지 조금 더 꼼꼼히 본다.\n5) JSON만 출력: {{\"verdict\":\"PASS|WARN\",\"suggestion\":string|null,\"info\":{{\"level\":\"none|check\",\"note\":string|null,\"queries\":[string]}}}}. queries는 확인할 검색어 0~2개.\n문장: {text}"
     );
     let res = reqwest::Client::new()
         .post("https://api.openai.com/v1/responses")
@@ -421,6 +421,12 @@ async fn ai_rewrite(Json(input): Json<RewriteRequest>) -> Json<serde_json::Value
         Err(_) => String::new(),
     };
     Json(serde_json::json!({"suggestion":suggestion}))
+}
+async fn ai_support(Json(input): Json<RewriteRequest>) -> Json<serde_json::Value> {
+    let text=input.text.trim();let Some(key)=env::var("OPENAI_API_KEY").ok() else{return Json(serde_json::json!({"reply":""}));};
+    let prompt=format!("너는 Re:Tone의 공감 대화 도우미다. 사용자의 감정을 짧게 되짚고, 상대에게 보낼 수 있는 따뜻하고 자연스러운 문장 1~2개를 제안해라. 판단하거나 훈계하지 말고, 한국어로 4문장 이내로 답해라. 사용자의 말: {text}");
+    let response=reqwest::Client::new().post("https://api.openai.com/v1/responses").bearer_auth(key).json(&serde_json::json!({"model":"gpt-4o-mini","input":prompt,"max_output_tokens":180})).send().await;
+    let reply=match response{Ok(r)=>r.json::<serde_json::Value>().await.ok().and_then(|v|v["output"][0]["content"][0]["text"].as_str().map(str::to_string)).unwrap_or_default(),Err(_)=>String::new()};Json(serde_json::json!({"reply":reply}))
 }
 async fn report_ai(
     State(app): State<App>,
@@ -596,6 +602,7 @@ async fn main() {
         .route("/api/users/{id}/preferences", patch(update_preferences))
         .route("/api/ai/check", post(ai_check))
         .route("/api/ai/rewrite", post(ai_rewrite))
+        .route("/api/ai/support", post(ai_support))
         .route("/api/ai/reports", post(report_ai))
         .route("/api/bootstrap", get(bootstrap))
         .route("/api/rooms", post(create_room))
