@@ -59,5 +59,13 @@ CREATE TABLE IF NOT EXISTS retone_v2.ai_cache (
   message_hash TEXT PRIMARY KEY,
   verdict TEXT NOT NULL,
   suggestion TEXT,
+  info_level TEXT NOT NULL DEFAULT 'none',
+  info_note TEXT,
+  info_queries TEXT[] NOT NULL DEFAULT '{}',
   checked_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Safe for databases created before the information-check fields were added.
+ALTER TABLE retone_v2.ai_cache ADD COLUMN IF NOT EXISTS info_level TEXT NOT NULL DEFAULT 'none';
+ALTER TABLE retone_v2.ai_cache ADD COLUMN IF NOT EXISTS info_note TEXT;
+ALTER TABLE retone_v2.ai_cache ADD COLUMN IF NOT EXISTS info_queries TEXT[] NOT NULL DEFAULT '{}';
