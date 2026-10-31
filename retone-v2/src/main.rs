@@ -2,7 +2,7 @@ use axum::{
     Json, Router,
     extract::{Path, State},
     http::StatusCode,
-    routing::{get, post},
+    routing::{delete, get, post},
 };
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use chrono::Utc;
@@ -152,6 +152,7 @@ async fn send(
     }
     Ok(Json(message))
 }
+async fn delete_message(State(app):State<App>,Path((room_id,message_id)):Path<(String,String)>)->StatusCode{let mut d=app.data.write().await;let before=d.messages.len();d.messages.retain(|m|!(m.room_id==room_id&&m.id==message_id&&m.mine));if d.messages.len()<before{StatusCode::NO_CONTENT}else{StatusCode::NOT_FOUND}}
 async fn create_room(
     State(app): State<App>,
     Json(input): Json<NewRoom>,
@@ -256,6 +257,7 @@ async fn main() {
         .route("/api/agreements", post(create_agreement))
         .route("/api/appointments", post(create_appointment))
         .route("/api/rooms/{id}/messages", get(messages).post(send))
+        .route("/api/rooms/{room_id}/messages/{message_id}", delete(delete_message))
         .with_state(app_state)
         .fallback_service(ServeDir::new("public"));
     let port = env::var("PORT")
