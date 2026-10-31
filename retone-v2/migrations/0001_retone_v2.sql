@@ -7,6 +7,7 @@ CREATE TABLE IF NOT EXISTS retone_v2.users (
   name TEXT NOT NULL,
   password_hash TEXT NOT NULL,
   avatar_url TEXT,
+  ai_intervention TEXT NOT NULL DEFAULT 'standard',
   is_admin BOOLEAN NOT NULL DEFAULT FALSE,
   deleted_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -69,3 +70,4 @@ CREATE TABLE IF NOT EXISTS retone_v2.ai_cache (
 ALTER TABLE retone_v2.ai_cache ADD COLUMN IF NOT EXISTS info_level TEXT NOT NULL DEFAULT 'none';
 ALTER TABLE retone_v2.ai_cache ADD COLUMN IF NOT EXISTS info_note TEXT;
 ALTER TABLE retone_v2.ai_cache ADD COLUMN IF NOT EXISTS info_queries TEXT[] NOT NULL DEFAULT '{}';
+ALTER TABLE retone_v2.users ADD COLUMN IF NOT EXISTS ai_intervention TEXT NOT NULL DEFAULT 'standard';

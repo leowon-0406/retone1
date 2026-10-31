@@ -3,7 +3,7 @@ use axum::{
     Json, Router,
     extract::{Path, State},
     http::StatusCode,
-    routing::{delete, get, post},
+    routing::{delete, get, patch, post},
 };
 use chrono::Utc;
 use password_hash::SaltString;
@@ -86,16 +86,23 @@ struct Credentials {
     name: String,
     phone: String,
     password: String,
+    ai_intervention: Option<String>,
 }
 #[derive(Deserialize)]
 struct AiCheck {
     text: String,
+    ai_intervention: Option<String>,
+}
+#[derive(Deserialize)]
+struct Preferences {
+    ai_intervention: String,
 }
 #[derive(Serialize)]
 struct PublicUser {
     id: String,
     name: String,
     avatar_url: Option<String>,
+    ai_intervention: String,
 }
 fn phone_hash(phone: &str) -> String {
     format!(
@@ -106,11 +113,23 @@ fn phone_hash(phone: &str) -> String {
             .collect::<String>()
     )
 }
-fn user_out(id: Uuid, name: String, avatar_url: Option<String>) -> PublicUser {
+fn ai_level(value: Option<&str>) -> String {
+    match value.unwrap_or("standard") {
+        "off" | "light" | "standard" | "careful" => value.unwrap_or("standard").to_string(),
+        _ => "standard".to_string(),
+    }
+}
+fn user_out(
+    id: Uuid,
+    name: String,
+    avatar_url: Option<String>,
+    ai_intervention: String,
+) -> PublicUser {
     PublicUser {
         id: id.to_string(),
         name,
         avatar_url,
+        ai_intervention,
     }
 }
 
@@ -138,45 +157,191 @@ async fn signup(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .to_string();
     let id = Uuid::new_v4();
-    let result=sqlx::query("INSERT INTO retone_v2.users(id,phone_hash,name,password_hash,is_admin) VALUES($1,$2,$3,$4,$5)").bind(id).bind(phone).bind(name).bind(hash).bind(input.phone=="12341234"&&name=="12341234").execute(&app.db).await;
+    let level = ai_level(input.ai_intervention.as_deref());
+    let result=sqlx::query("INSERT INTO retone_v2.users(id,phone_hash,name,password_hash,is_admin,ai_intervention) VALUES($1,$2,$3,$4,$5,$6)").bind(id).bind(phone).bind(name).bind(hash).bind(input.phone=="12341234"&&name=="12341234").bind(&level).execute(&app.db).await;
     if result.is_err() {
         return Err(StatusCode::CONFLICT);
     };
-    Ok(Json(user_out(id, name.to_string(), None)))
+    Ok(Json(user_out(id, name.to_string(), None, level)))
 }
 async fn login(
     State(app): State<App>,
     Json(input): Json<Credentials>,
 ) -> Result<Json<PublicUser>, StatusCode> {
-    let row=sqlx::query_as::<_,(Uuid,String,Option<String>,String)>("SELECT id,name,avatar_url,password_hash FROM retone_v2.users WHERE phone_hash=$1 AND name=$2 AND deleted_at IS NULL").bind(phone_hash(&input.phone)).bind(input.name.trim()).fetch_optional(&app.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?.ok_or(StatusCode::UNAUTHORIZED)?;
+    let row=sqlx::query_as::<_,(Uuid,String,Option<String>,String,String)>("SELECT id,name,avatar_url,password_hash,ai_intervention FROM retone_v2.users WHERE phone_hash=$1 AND name=$2 AND deleted_at IS NULL").bind(phone_hash(&input.phone)).bind(input.name.trim()).fetch_optional(&app.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?.ok_or(StatusCode::UNAUTHORIZED)?;
     let parsed = PasswordHash::new(&row.3).map_err(|_| StatusCode::UNAUTHORIZED)?;
     Argon2::default()
         .verify_password(input.password.as_bytes(), &parsed)
         .map_err(|_| StatusCode::UNAUTHORIZED)?;
-    Ok(Json(user_out(row.0, row.1, row.2)))
+    Ok(Json(user_out(row.0, row.1, row.2, row.4)))
 }
 async fn users(State(app): State<App>) -> Result<Json<Vec<PublicUser>>, StatusCode> {
-    let rows=sqlx::query_as::<_,(Uuid,String,Option<String>)>("SELECT id,name,avatar_url FROM retone_v2.users WHERE deleted_at IS NULL ORDER BY created_at").fetch_all(&app.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;
+    let rows=sqlx::query_as::<_,(Uuid,String,Option<String>,String)>("SELECT id,name,avatar_url,ai_intervention FROM retone_v2.users WHERE deleted_at IS NULL ORDER BY created_at").fetch_all(&app.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(
-        rows.into_iter().map(|r| user_out(r.0, r.1, r.2)).collect(),
+        rows.into_iter()
+            .map(|r| user_out(r.0, r.1, r.2, r.3))
+            .collect(),
     ))
+}
+async fn update_preferences(
+    State(app): State<App>,
+    Path(id): Path<Uuid>,
+    Json(input): Json<Preferences>,
+) -> Result<Json<PublicUser>, StatusCode> {
+    let level = ai_level(Some(&input.ai_intervention));
+    let row=sqlx::query_as::<_,(Uuid,String,Option<String>,String)>("UPDATE retone_v2.users SET ai_intervention=$1 WHERE id=$2 AND deleted_at IS NULL RETURNING id,name,avatar_url,ai_intervention").bind(&level).bind(id).fetch_optional(&app.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?.ok_or(StatusCode::NOT_FOUND)?;
+    Ok(Json(user_out(row.0, row.1, row.2, row.3)))
 }
 async fn ai_check(State(app): State<App>, Json(input): Json<AiCheck>) -> Json<serde_json::Value> {
     let text = input.text.trim();
-    let normalized=text.to_lowercase().chars().filter(|c|!c.is_whitespace()&&!c.is_ascii_punctuation()).collect::<String>();
-    let pass = ["ㅋㅋ","ㅋㅋㅋ","ㅋㅋㅋㅋ","ㅋㅋㅋㅋㅋ","ㅎㅎ","ㅎㅎㅎ","ㅎㅎㅎㅎ","ㅎㅇ","하이","안녕","안녕하세요","응","어","웅","넹","네","ㅇㅋ","오케이","ok","yes","no","?","!","ㅇㅇ","ㄱㄱ","ㄴㄴ","ㅂㅂ","잘자","고마워","감사","수고","굿","헐","대박","진짜","맞아","아니","왜","좋아","좋다","화이팅","파이팅","오","오오","와","아","앗","헉","엥","ㄹㅇ","레알","ㅈㄱㄴ","ㅊㅋ","축하","미안","죄송","괜찮아","괜찮아요","반가워","반갑습니다","다녀와","잘가","잘자요","좋은밤","굿밤","굿모닝","맛점","맛저","점심","저녁","ㅇㅈ","ㅁㄹ","모름","ㄱㅅ","감사해","고생","수고했어","수고하세요","파이팅"];
-    let bad = ["시발","씨발","시ㅂ","ㅅㅂ","ㅆㅂ","개새끼","개새","병신","ㅂㅅ","ㅄ","좆","ㅈㄴ","존나","미친놈","미친년","꺼져","죽어","죽인다","뒤져","닥쳐","엿먹어","새끼","년아","놈아","씹","지랄","ㅈㄹ","ㅁㅊ","fuck","shit","bitch","asshole"];
-    if text.is_empty() || pass.iter().any(|p| text==*p||normalized==*p) {
-        return Json(serde_json::json!({"verdict":"PASS","suggestion":null,"info":{"level":"none","note":null,"queries":[]},"source":"fast"}));
+    let normalized = text
+        .to_lowercase()
+        .chars()
+        .filter(|c| !c.is_whitespace() && !c.is_ascii_punctuation())
+        .collect::<String>();
+    let level = ai_level(input.ai_intervention.as_deref());
+    let pass = [
+        "ㅋㅋ",
+        "ㅋㅋㅋ",
+        "ㅋㅋㅋㅋ",
+        "ㅋㅋㅋㅋㅋ",
+        "ㅎㅎ",
+        "ㅎㅎㅎ",
+        "ㅎㅎㅎㅎ",
+        "ㅎㅇ",
+        "하이",
+        "안녕",
+        "안녕하세요",
+        "응",
+        "어",
+        "웅",
+        "넹",
+        "네",
+        "ㅇㅋ",
+        "오케이",
+        "ok",
+        "yes",
+        "no",
+        "?",
+        "!",
+        "ㅇㅇ",
+        "ㄱㄱ",
+        "ㄴㄴ",
+        "ㅂㅂ",
+        "잘자",
+        "고마워",
+        "감사",
+        "수고",
+        "굿",
+        "헐",
+        "대박",
+        "진짜",
+        "맞아",
+        "아니",
+        "왜",
+        "좋아",
+        "좋다",
+        "화이팅",
+        "파이팅",
+        "오",
+        "오오",
+        "와",
+        "아",
+        "앗",
+        "헉",
+        "엥",
+        "ㄹㅇ",
+        "레알",
+        "ㅈㄱㄴ",
+        "ㅊㅋ",
+        "축하",
+        "미안",
+        "죄송",
+        "괜찮아",
+        "괜찮아요",
+        "반가워",
+        "반갑습니다",
+        "다녀와",
+        "잘가",
+        "잘자요",
+        "좋은밤",
+        "굿밤",
+        "굿모닝",
+        "맛점",
+        "맛저",
+        "점심",
+        "저녁",
+        "ㅇㅈ",
+        "ㅁㄹ",
+        "모름",
+        "ㄱㅅ",
+        "감사해",
+        "고생",
+        "수고했어",
+        "수고하세요",
+        "파이팅",
+    ];
+    let bad = [
+        "시발",
+        "씨발",
+        "시ㅂ",
+        "ㅅㅂ",
+        "ㅆㅂ",
+        "개새끼",
+        "개새",
+        "병신",
+        "ㅂㅅ",
+        "ㅄ",
+        "좆",
+        "ㅈㄴ",
+        "존나",
+        "미친놈",
+        "미친년",
+        "꺼져",
+        "죽어",
+        "죽인다",
+        "뒤져",
+        "닥쳐",
+        "엿먹어",
+        "새끼",
+        "년아",
+        "놈아",
+        "씹",
+        "지랄",
+        "ㅈㄹ",
+        "ㅁㅊ",
+        "fuck",
+        "shit",
+        "bitch",
+        "asshole",
+    ];
+    if level == "off" || text.is_empty() || pass.iter().any(|p| text == *p || normalized == *p) {
+        return Json(
+            serde_json::json!({"verdict":"PASS","suggestion":null,"info":{"level":"none","note":null,"queries":[]},"source":"fast"}),
+        );
     }
-    if bad.iter().any(|p|normalized.contains(p)){return Json(serde_json::json!({"verdict":"WARN","suggestion":"조금 더 차분한 표현으로 바꿔볼까요?","info":{"level":"none","note":null,"queries":[]},"source":"dictionary"}));}
-    let hash=format!("{:x}",Sha256::digest(normalized.as_bytes()));
+    if bad.iter().any(|p| normalized.contains(p)) {
+        return Json(
+            serde_json::json!({"verdict":"WARN","suggestion":"조금 더 차분한 표현으로 바꿔볼까요?","info":{"level":"none","note":null,"queries":[]},"source":"dictionary"}),
+        );
+    }
+    if level == "light" {
+        return Json(
+            serde_json::json!({"verdict":"PASS","suggestion":null,"info":{"level":"none","note":null,"queries":[]},"source":"light"}),
+        );
+    }
+    let hash = format!(
+        "{:x}",
+        Sha256::digest(format!("{level}:{normalized}").as_bytes())
+    );
     if let Ok(Some((verdict,suggestion,info_level,info_note,info_queries)))=sqlx::query_as::<_,(String,Option<String>,String,Option<String>,Vec<String>)>("SELECT verdict,suggestion,info_level,info_note,info_queries FROM retone_v2.ai_cache WHERE message_hash=$1").bind(&hash).fetch_optional(&app.db).await{return Json(serde_json::json!({"verdict":verdict,"suggestion":suggestion,"info":{"level":info_level,"note":info_note,"queries":info_queries},"source":"cache"}));}
     let Some(key) = env::var("OPENAI_API_KEY").ok() else {
-        return Json(serde_json::json!({"verdict":"PASS","suggestion":null,"info":{"level":"none","note":null,"queries":[]},"source":"unavailable"}));
+        return Json(
+            serde_json::json!({"verdict":"PASS","suggestion":null,"info":{"level":"none","note":null,"queries":[]},"source":"unavailable"}),
+        );
     };
     let prompt = format!(
-        "너는 Re:Tone의 대화 도우미다. 현재 문장만 판단한다.\n1) 심한 욕설·위협·명백한 조롱만 verdict=WARN, 그 외는 PASS. 일상 인사·농담·짧은 대답은 PASS.\n2) 정보 점검: 문장에 건강·안전·법·돈·정치·재난·통계·속보·누가 말했다는 주장처럼 사실 확인이 중요한 내용이 있으면서 출처·날짜·원문이 빠졌거나 단정적으로 퍼질 수 있으면 info.level=check. 그 외 none. 절대로 사실 여부를 단정하거나 거짓이라고 말하지 말고, 확인에 필요한 출처/날짜/원문을 짧게 안내한다.\n3) JSON만 출력: {{\"verdict\":\"PASS|WARN\",\"suggestion\":string|null,\"info\":{{\"level\":\"none|check\",\"note\":string|null,\"queries\":[string]}}}}. queries는 확인할 검색어 0~2개.\n문장: {text}"
+        "너는 Re:Tone의 대화 도우미다. 현재 문장만 판단한다.\n1) 심한 욕설·위협·명백한 조롱만 verdict=WARN, 그 외는 PASS. 일상 인사·농담·짧은 대답은 PASS.\n2) 정보 점검: 문장에 건강·안전·법·돈·정치·재난·통계·속보·누가 말했다는 주장처럼 사실 확인이 중요한 내용이 있으면서 출처·날짜·원문이 빠졌거나 단정적으로 퍼질 수 있으면 info.level=check. 그 외 none. 절대로 사실 여부를 단정하거나 거짓이라고 말하지 말고, 확인에 필요한 출처/날짜/원문을 짧게 안내한다.\n3) 현재 개입 강도는 {level}이다. standard는 중요한 주장만, careful은 중요한 주장과 오해될 수 있는 표현을 조금 더 꼼꼼히 본다.\n4) JSON만 출력: {{\"verdict\":\"PASS|WARN\",\"suggestion\":string|null,\"info\":{{\"level\":\"none|check\",\"note\":string|null,\"queries\":[string]}}}}. queries는 확인할 검색어 0~2개.\n문장: {text}"
     );
     let res = reqwest::Client::new()
         .post("https://api.openai.com/v1/responses")
@@ -185,7 +350,9 @@ async fn ai_check(State(app): State<App>, Json(input): Json<AiCheck>) -> Json<se
         .send()
         .await;
     let Ok(r) = res else {
-        return Json(serde_json::json!({"verdict":"PASS","suggestion":null,"info":{"level":"none","note":null,"queries":[]},"source":"fallback"}));
+        return Json(
+            serde_json::json!({"verdict":"PASS","suggestion":null,"info":{"level":"none","note":null,"queries":[]},"source":"fallback"}),
+        );
     };
     let v = r.json::<serde_json::Value>().await.unwrap_or_default();
     let out = v["output"][0]["content"][0]["text"]
@@ -193,13 +360,24 @@ async fn ai_check(State(app): State<App>, Json(input): Json<AiCheck>) -> Json<se
         .unwrap_or("{}");
     let parsed = serde_json::from_str::<serde_json::Value>(out)
         .unwrap_or_else(|_| serde_json::json!({"verdict":"PASS","suggestion":null,"info":{"level":"none","note":null,"queries":[]}}));
-    let verdict=parsed["verdict"].as_str().unwrap_or("PASS");
-    let suggestion=parsed["suggestion"].as_str();
-    let info_level=parsed["info"]["level"].as_str().unwrap_or("none");
-    let info_note=parsed["info"]["note"].as_str();
-    let info_queries=parsed["info"]["queries"].as_array().map(|items|items.iter().filter_map(|v|v.as_str()).take(2).collect::<Vec<_>>()).unwrap_or_default();
+    let verdict = parsed["verdict"].as_str().unwrap_or("PASS");
+    let suggestion = parsed["suggestion"].as_str();
+    let info_level = parsed["info"]["level"].as_str().unwrap_or("none");
+    let info_note = parsed["info"]["note"].as_str();
+    let info_queries = parsed["info"]["queries"]
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|v| v.as_str())
+                .take(2)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
     let _=sqlx::query("INSERT INTO retone_v2.ai_cache(message_hash,verdict,suggestion,info_level,info_note,info_queries) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(message_hash) DO UPDATE SET verdict=EXCLUDED.verdict,suggestion=EXCLUDED.suggestion,info_level=EXCLUDED.info_level,info_note=EXCLUDED.info_note,info_queries=EXCLUDED.info_queries,checked_at=NOW()").bind(&hash).bind(verdict).bind(suggestion).bind(info_level).bind(info_note).bind(&info_queries).execute(&app.db).await;
-    Json(serde_json::json!({"verdict":verdict,"suggestion":suggestion,"info":{"level":info_level,"note":info_note,"queries":info_queries},"source":"ai"}))
+    Json(
+        serde_json::json!({"verdict":verdict,"suggestion":suggestion,"info":{"level":info_level,"note":info_note,"queries":info_queries},"source":"ai"}),
+    )
 }
 async fn bootstrap(State(app): State<App>) -> Json<DataOut> {
     let d = app.data.read().await;
@@ -347,7 +525,6 @@ async fn prepare_storage() -> Option<PgPool> {
 
 #[tokio::main]
 async fn main() {
-    let now = Utc::now().timestamp_millis();
     let db = prepare_storage().await.expect("DATABASE_URL is required");
     let app_state = App {
         db,
@@ -363,6 +540,7 @@ async fn main() {
         .route("/api/auth/signup", post(signup))
         .route("/api/auth/login", post(login))
         .route("/api/users", get(users))
+        .route("/api/users/{id}/preferences", patch(update_preferences))
         .route("/api/ai/check", post(ai_check))
         .route("/api/bootstrap", get(bootstrap))
         .route("/api/rooms", post(create_room))
