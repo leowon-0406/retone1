@@ -11,7 +11,7 @@ use rand_core::OsRng;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::{PgPool, postgres::PgPoolOptions};
-use std::{env, net::SocketAddr, sync::Arc};
+use std::{collections::HashMap, env, net::SocketAddr, sync::Arc};
 use tokio::sync::RwLock;
 use tower_http::services::ServeDir;
 use uuid::Uuid;
@@ -99,6 +99,7 @@ struct Credentials {
 struct AiCheck {
     text: String,
     ai_intervention: Option<String>,
+    details: Option<HashMap<String, String>>,
 }
 #[derive(Deserialize)]
 struct RewriteRequest {
@@ -245,6 +246,12 @@ async fn ai_check(State(app): State<App>, Json(input): Json<AiCheck>) -> Json<se
         .filter(|c| !c.is_whitespace() && !c.is_ascii_punctuation())
         .collect::<String>();
     let level = ai_level(input.ai_intervention.as_deref());
+    let sarcasm_level = input
+        .details
+        .as_ref()
+        .and_then(|items| items.get("비꼼·압박 표현"))
+        .map(String::as_str)
+        .unwrap_or("균형 있게");
     let pass = [
         "ㅋㅋ",
         "ㅋㅋㅋ",
@@ -411,6 +418,7 @@ async fn ai_check(State(app): State<App>, Json(input): Json<AiCheck>) -> Json<se
         || text.contains("다고")
         || text.contains("라던데");
     if level == "standard"
+        && sarcasm_level != "민감하게"
         && !looks_like_claim
         && !review_signals
             .iter()

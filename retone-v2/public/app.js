@@ -14,6 +14,7 @@ let aiSavedResults = (() => {
     return {};
   }
 })();
+const aiDetails = () => JSON.parse(localStorage.getItem("retone-ai-detail") || "{}");
 const esc = (s) =>
   String(s || "").replace(
     /[&<>]/g,
@@ -158,7 +159,7 @@ function inspectMessage(text) {
 async function factCheck(text) {
   const result = await api("/api/ai/check", {
     method: "POST",
-    body: JSON.stringify({ text, ai_intervention: "careful" }),
+      body: JSON.stringify({ text, ai_intervention: "careful", details: aiDetails() }),
   });
   const info = result.info || {};
   popup(
@@ -217,7 +218,7 @@ async function runAiCheck(text) {
   setAiStatus("AI 확인 중", true);
   const request = api("/api/ai/check", {
     method: "POST",
-    body: JSON.stringify({ text, ai_intervention: aiIntervention }),
+    body: JSON.stringify({ text, ai_intervention: aiIntervention, details: aiDetails() }),
   });
   aiPrefetch.promise = request;
   try {
