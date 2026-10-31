@@ -322,7 +322,7 @@ async fn ai_check(State(app): State<App>, Json(input): Json<AiCheck>) -> Json<se
     }
     if bad.iter().any(|p| normalized.contains(p)) {
         return Json(
-            serde_json::json!({"verdict":"WARN","suggestion":"조금 더 차분한 표현으로 바꿔볼까요?","info":{"level":"none","note":null,"queries":[]},"source":"dictionary"}),
+            serde_json::json!({"verdict":"WARN","suggestion":"상대에게는 공격적인 표현으로 들릴 수 있어요. 조금 다르게 말해볼까요?","info":{"level":"none","note":null,"queries":[]},"source":"dictionary"}),
         );
     }
     if level == "light" {
@@ -341,7 +341,7 @@ async fn ai_check(State(app): State<App>, Json(input): Json<AiCheck>) -> Json<se
         );
     };
     let prompt = format!(
-        "너는 Re:Tone의 대화 도우미다. 현재 문장만 판단한다.\n1) 심한 욕설·위협·명백한 조롱만 verdict=WARN, 그 외는 PASS. 일상 인사·농담·짧은 대답은 PASS.\n2) 정보 점검: 문장에 건강·안전·법·돈·정치·재난·통계·속보·누가 말했다는 주장처럼 사실 확인이 중요한 내용이 있으면서 출처·날짜·원문이 빠졌거나 단정적으로 퍼질 수 있으면 info.level=check. 그 외 none. 절대로 사실 여부를 단정하거나 거짓이라고 말하지 말고, 확인에 필요한 출처/날짜/원문을 짧게 안내한다.\n3) 현재 개입 강도는 {level}이다. standard는 중요한 주장만, careful은 중요한 주장과 오해될 수 있는 표현을 조금 더 꼼꼼히 본다.\n4) JSON만 출력: {{\"verdict\":\"PASS|WARN\",\"suggestion\":string|null,\"info\":{{\"level\":\"none|check\",\"note\":string|null,\"queries\":[string]}}}}. queries는 확인할 검색어 0~2개.\n문장: {text}"
+        "너는 Re:Tone의 대화 거울이다. 판정자·검열자·사실확인 기관이 아니다. 현재 문장을 오직 '이렇게 들릴 수도 있어요'라는 제안으로만 비춘다.\n1) 심한 욕설·위협·명백한 조롱이 있으면 verdict=WARN. 하지만 위반·나쁨·부적절함이라고 판정하지 말고 suggestion에 '상대에게는 공격적인 표현으로 들릴 수 있어요', '조금 다르게 말해볼까요?' 같은 가능성 표현만 쓴다. 그 외는 PASS. 일상 인사·농담·짧은 대답은 PASS.\n2) 정보 점검: 건강·안전·법·돈·정치·재난·통계·속보성 주장에 출처·날짜·원문이 빠졌다면 info.level=check. 진실·거짓을 판단하지 말고 '출처와 날짜를 함께 확인해 보면 어떨까요?'처럼 제안만 한다.\n3) 현재 개입 강도는 {level}이다. standard는 중요한 주장만, careful은 중요한 주장과 오해될 수 있는 표현을 조금 더 꼼꼼히 본다.\n4) JSON만 출력: {{\"verdict\":\"PASS|WARN\",\"suggestion\":string|null,\"info\":{{\"level\":\"none|check\",\"note\":string|null,\"queries\":[string]}}}}. queries는 확인할 검색어 0~2개.\n문장: {text}"
     );
     let res = reqwest::Client::new()
         .post("https://api.openai.com/v1/responses")
