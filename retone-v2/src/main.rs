@@ -344,6 +344,47 @@ async fn ai_check(State(app): State<App>, Json(input): Json<AiCheck>) -> Json<se
             serde_json::json!({"verdict":"PASS","suggestion":null,"info":{"level":"none","note":null,"queries":[]},"source":"light"}),
         );
     }
+    let review_signals = [
+        "죽",
+        "꺼져",
+        "닥쳐",
+        "싫어",
+        "짜증",
+        "최악",
+        "한심",
+        "못해",
+        "왜이래",
+        "뭐하냐",
+        "비꼬",
+        "조롱",
+        "사기",
+        "확정",
+        "속보",
+        "뉴스",
+        "병원",
+        "약",
+        "법",
+        "벌금",
+        "투자",
+        "주식",
+        "대출",
+        "재난",
+        "통계",
+    ];
+    let looks_like_claim = text.contains("?")
+        || text.contains("래")
+        || text.contains("다고")
+        || text.contains("라던데");
+    if level == "standard"
+        && !looks_like_claim
+        && !review_signals
+            .iter()
+            .any(|signal| normalized.contains(signal))
+    {
+        return Json(
+            serde_json::json!({"verdict":"PASS","suggestion":null,"info":{"level":"none","note":null,"queries":[]},"source":"selective"}),
+        );
+    }
     let hash = format!(
         "{:x}",
         Sha256::digest(format!("v2:{level}:{normalized}").as_bytes())
