@@ -252,6 +252,12 @@ async fn ai_check(State(app): State<App>, Json(input): Json<AiCheck>) -> Json<se
         .and_then(|items| items.get("비꼼·압박 표현"))
         .map(String::as_str)
         .unwrap_or("균형 있게");
+    let source_level = input
+        .details
+        .as_ref()
+        .and_then(|items| items.get("출처 확인 제안"))
+        .map(String::as_str)
+        .unwrap_or("중요한 정보만");
     let pass = [
         "ㅋㅋ",
         "ㅋㅋㅋ",
@@ -439,7 +445,7 @@ async fn ai_check(State(app): State<App>, Json(input): Json<AiCheck>) -> Json<se
         );
     };
     let prompt = format!(
-        "너는 Re:Tone의 대화 거울이다. 판정자·검열자·사실확인 기관이 아니다. 현재 문장을 오직 '이렇게 들릴 수도 있어요'라는 제안으로만 비춘다.\n1) 심한 욕설·위협·명백한 조롱뿐 아니라, 비꼼·냉소·돌려 말하는 압박·상대를 작게 만드는 표현도 알아차린다. 친한 사이의 가벼운 농담은 WARN하지 않는다.\n2) WARN일 때 suggestion은 반드시 이 문장에 맞춰 두 문장으로 쓴다. 첫 문장은 실제 문제 지점(단어·어조·비꼼)을 따옴표로 구체적으로 짚고 왜 상대가 압박·비난·조롱으로 느낄 수 있는지 설명한다. 둘째 문장은 원래 의도를 살린 짧은 대체 표현을 제안한다. 일반적인 반복 문구를 쓰지 마라. 단, 위반·나쁨·부적절함이라고 판정하지 말고 가능성 표현만 쓴다.\n3) 정보 점검: 건강·안전·법·돈·정치·재난·통계·속보성 주장에 출처·날짜·원문이 빠졌다면 info.level=check. 진실·거짓을 판단하지 말고 출처와 날짜 확인을 제안한다.\n4) 현재 개입 강도는 {level}이다. standard는 뚜렷한 경우만, careful은 비꼼·오해 가능성까지 조금 더 꼼꼼히 본다.\n5) JSON만 출력: {{\"verdict\":\"PASS|WARN\",\"suggestion\":string|null,\"info\":{{\"level\":\"none|check\",\"note\":string|null,\"queries\":[string]}}}}. queries는 확인할 검색어 0~2개.\n문장: {text}"
+        "너는 Re:Tone의 대화 거울이다. 판정자·검열자·사실확인 기관이 아니다. 현재 문장을 오직 '이렇게 들릴 수도 있어요'라는 제안으로만 비춘다.\n1) 심한 욕설·위협·명백한 조롱뿐 아니라, 비꼼·냉소·돌려 말하는 압박·상대를 작게 만드는 표현도 알아차린다. 친한 사이의 가벼운 농담은 WARN하지 않는다.\n2) WARN일 때 suggestion은 반드시 이 문장에 맞춰 두 문장으로 쓴다. 첫 문장은 실제 문제 지점(단어·어조·비꼼)을 따옴표로 구체적으로 짚고 왜 상대가 압박·비난·조롱으로 느낄 수 있는지 설명한다. 둘째 문장은 원래 의도를 살린 짧은 대체 표현을 제안한다.\n3) 출처 확인 민감도는 {source_level}이다. 꺼짐이면 정보 확인을 절대 제안하지 않는다. 중요한 정보만이면 건강·안전·법·돈·정치·재난·통계·속보성 주장만, 민감하게면 출처 없는 사실 주장도 info.level=check로 제안한다. 진실·거짓은 절대 판단하지 않는다.\n4) 현재 개입 강도는 {level}이다. standard는 뚜렷한 경우만, careful은 비꼼·오해 가능성까지 조금 더 꼼꼼히 본다.\n5) JSON만 출력: {{\"verdict\":\"PASS|WARN\",\"suggestion\":string|null,\"info\":{{\"level\":\"none|check\",\"note\":string|null,\"queries\":[string]}}}}. queries는 확인할 검색어 0~2개.\n문장: {text}"
     );
     let res = reqwest::Client::new()
         .post("https://api.openai.com/v1/responses")
@@ -460,7 +466,11 @@ async fn ai_check(State(app): State<App>, Json(input): Json<AiCheck>) -> Json<se
         .unwrap_or_else(|_| serde_json::json!({"verdict":"PASS","suggestion":null,"info":{"level":"none","note":null,"queries":[]}}));
     let verdict = parsed["verdict"].as_str().unwrap_or("PASS");
     let suggestion = parsed["suggestion"].as_str();
-    let info_level = parsed["info"]["level"].as_str().unwrap_or("none");
+    let info_level = if source_level == "꺼짐" {
+        "none"
+    } else {
+        parsed["info"]["level"].as_str().unwrap_or("none")
+    };
     let info_note = parsed["info"]["note"].as_str();
     let info_queries = parsed["info"]["queries"]
         .as_array()
