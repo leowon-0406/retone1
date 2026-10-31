@@ -83,7 +83,7 @@ function roomSettings() {
 async function startDirect(name) {
   const room = await api("/api/rooms", {
     method: "POST",
-    body: JSON.stringify({ name }),
+    body: JSON.stringify({ name, creator_id: signedInId }),
   });
   data = await api("/api/bootstrap");
   openRoom(room.id);
@@ -351,7 +351,7 @@ async function sendApproved() {
   setAiStatus("");
   await api(`/api/rooms/${next.room}/messages`, {
     method: "POST",
-    body: JSON.stringify({ sender: "나", body: next.body }),
+    body: JSON.stringify({ sender: signedIn, sender_id: signedInId, body: next.body }),
   });
   openRoom(next.room);
 }
@@ -406,6 +406,7 @@ async function saveAgreement() {
     method: "POST",
     body: JSON.stringify({
       task,
+      room_id: roomId,
       assignee: document.querySelector("#assignee").value,
       deadline: document.querySelector("#deadline").value,
     }),
@@ -430,7 +431,7 @@ function newRoom() {
 async function saveRoom() {
   const name = document.querySelector("#roomName").value.trim();
   if (!name) return;
-  await api("/api/rooms", { method: "POST", body: JSON.stringify({ name }) });
+  await api("/api/rooms", { method: "POST", body: JSON.stringify({ name, creator_id: signedInId }) });
   closePopup();
   home();
 }
@@ -446,6 +447,7 @@ async function saveAgreement() {
     method: "POST",
     body: JSON.stringify({
       task,
+      room_id: roomId,
       assignee: document.querySelector("#assignee").value,
       deadline: document.querySelector("#deadline").value,
     }),
@@ -466,6 +468,7 @@ async function saveAppointment() {
     method: "POST",
     body: JSON.stringify({
       title,
+      room_id: roomId,
       date: date.replace("T", " "),
       place: document.querySelector("#appointmentPlace").value,
     }),

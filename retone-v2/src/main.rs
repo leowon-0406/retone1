@@ -66,21 +66,25 @@ struct App {
 #[derive(Deserialize)]
 struct Send {
     sender: String,
+    sender_id: Option<String>,
     body: String,
 }
 #[derive(Deserialize)]
 struct NewRoom {
     name: String,
+    creator_id: Option<String>,
 }
 #[derive(Deserialize)]
 struct NewAgreement {
     task: String,
+    room_id: Option<String>,
     assignee: String,
     deadline: String,
 }
 #[derive(Deserialize)]
 struct NewAppointment {
     title: String,
+    room_id: Option<String>,
     date: String,
     place: String,
 }
