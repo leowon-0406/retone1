@@ -423,10 +423,33 @@ async fn ai_rewrite(Json(input): Json<RewriteRequest>) -> Json<serde_json::Value
     Json(serde_json::json!({"suggestion":suggestion}))
 }
 async fn ai_support(Json(input): Json<RewriteRequest>) -> Json<serde_json::Value> {
-    let text=input.text.trim();let Some(key)=env::var("OPENAI_API_KEY").ok() else{return Json(serde_json::json!({"reply":""}));};
-    let prompt=format!("너는 Re:Tone의 공감 대화 도우미다. 사용자의 감정을 짧게 되짚고, 상대에게 보낼 수 있는 따뜻하고 자연스러운 문장 1~2개를 제안해라. 판단하거나 훈계하지 말고, 한국어로 4문장 이내로 답해라. 사용자의 말: {text}");
-    let response=reqwest::Client::new().post("https://api.openai.com/v1/responses").bearer_auth(key).json(&serde_json::json!({"model":"gpt-4o-mini","input":prompt,"max_output_tokens":180})).send().await;
-    let reply=match response{Ok(r)=>r.json::<serde_json::Value>().await.ok().and_then(|v|v["output"][0]["content"][0]["text"].as_str().map(str::to_string)).unwrap_or_default(),Err(_)=>String::new()};Json(serde_json::json!({"reply":reply}))
+    let text = input.text.trim();
+    let Some(key) = env::var("OPENAI_API_KEY").ok() else {
+        return Json(serde_json::json!({"reply":""}));
+    };
+    let prompt = format!(
+        "너는 Re:Tone의 공감 대화 도우미다. 사용자의 감정을 짧게 되짚고, 상대에게 보낼 수 있는 따뜻하고 자연스러운 문장 1~2개를 제안해라. 판단하거나 훈계하지 말고, 한국어로 4문장 이내로 답해라. 사용자의 말: {text}"
+    );
+    let response = reqwest::Client::new()
+        .post("https://api.openai.com/v1/responses")
+        .bearer_auth(key)
+        .json(&serde_json::json!({"model":"gpt-4o-mini","input":prompt,"max_output_tokens":180}))
+        .send()
+        .await;
+    let reply = match response {
+        Ok(r) => r
+            .json::<serde_json::Value>()
+            .await
+            .ok()
+            .and_then(|v| {
+                v["output"][0]["content"][0]["text"]
+                    .as_str()
+                    .map(str::to_string)
+            })
+            .unwrap_or_default(),
+        Err(_) => String::new(),
+    };
+    Json(serde_json::json!({"reply":reply}))
 }
 async fn report_ai(
     State(app): State<App>,
