@@ -94,6 +94,16 @@ struct AiCheck {
     ai_intervention: Option<String>,
 }
 #[derive(Deserialize)]
+struct RewriteRequest {
+    text: String,
+}
+#[derive(Deserialize)]
+struct AiReport {
+    reporter_name: String,
+    original_text: String,
+    ai_result: Option<String>,
+}
+#[derive(Deserialize)]
 struct Preferences {
     ai_intervention: String,
 }
@@ -379,6 +389,49 @@ async fn ai_check(State(app): State<App>, Json(input): Json<AiCheck>) -> Json<se
         serde_json::json!({"verdict":verdict,"suggestion":suggestion,"info":{"level":info_level,"note":info_note,"queries":info_queries},"source":"ai"}),
     )
 }
+async fn ai_rewrite(Json(input): Json<RewriteRequest>) -> Json<serde_json::Value> {
+    let text = input.text.trim();
+    if text.is_empty() {
+        return Json(serde_json::json!({"suggestion":""}));
+    }
+    let Some(key) = env::var("OPENAI_API_KEY").ok() else {
+        return Json(serde_json::json!({"suggestion":""}));
+    };
+    let prompt = format!(
+        "다음 채팅을 뜻은 최대한 유지하면서 상대가 덜 공격적으로 들을 수 있는 자연스러운 한국어 한 문장으로 바꿔줘. 판정·설명·따옴표 없이 바꾼 문장만 출력. 원문: {text}"
+    );
+    let response = reqwest::Client::new()
+        .post("https://api.openai.com/v1/responses")
+        .bearer_auth(key)
+        .json(&serde_json::json!({"model":"gpt-4o-mini","input":prompt,"max_output_tokens":80}))
+        .send()
+        .await;
+    let suggestion = match response {
+        Ok(r) => r
+            .json::<serde_json::Value>()
+            .await
+            .ok()
+            .and_then(|v| {
+                v["output"][0]["content"][0]["text"]
+                    .as_str()
+                    .map(str::trim)
+                    .map(str::to_string)
+            })
+            .unwrap_or_default(),
+        Err(_) => String::new(),
+    };
+    Json(serde_json::json!({"suggestion":suggestion}))
+}
+async fn report_ai(
+    State(app): State<App>,
+    Json(input): Json<AiReport>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    if input.reporter_name.trim().is_empty() || input.original_text.trim().is_empty() {
+        return Err(StatusCode::BAD_REQUEST);
+    };
+    sqlx::query("INSERT INTO retone_v2.ai_reports(id,reporter_name,original_text,ai_result) VALUES($1,$2,$3,$4)").bind(Uuid::new_v4()).bind(input.reporter_name.trim()).bind(input.original_text.trim()).bind(input.ai_result).execute(&app.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(serde_json::json!({"ok":true})))
+}
 async fn bootstrap(State(app): State<App>) -> Json<DataOut> {
     let d = app.data.read().await;
     Json(DataOut {
@@ -542,6 +595,8 @@ async fn main() {
         .route("/api/users", get(users))
         .route("/api/users/{id}/preferences", patch(update_preferences))
         .route("/api/ai/check", post(ai_check))
+        .route("/api/ai/rewrite", post(ai_rewrite))
+        .route("/api/ai/reports", post(report_ai))
         .route("/api/bootstrap", get(bootstrap))
         .route("/api/rooms", post(create_room))
         .route("/api/agreements", post(create_agreement))

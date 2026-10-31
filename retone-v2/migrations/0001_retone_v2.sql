@@ -65,6 +65,14 @@ CREATE TABLE IF NOT EXISTS retone_v2.ai_cache (
   info_queries TEXT[] NOT NULL DEFAULT '{}',
   checked_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+CREATE TABLE IF NOT EXISTS retone_v2.ai_reports (
+  id UUID PRIMARY KEY,
+  reporter_name TEXT NOT NULL,
+  original_text TEXT NOT NULL,
+  ai_result TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  status TEXT NOT NULL DEFAULT 'open'
+);
 
 -- Safe for databases created before the information-check fields were added.
 ALTER TABLE retone_v2.ai_cache ADD COLUMN IF NOT EXISTS info_level TEXT NOT NULL DEFAULT 'none';
