@@ -38,6 +38,7 @@ struct Message {
 }
 #[derive(Clone, Serialize)]
 struct Agreement {
+    id: String,
     task: String,
     assignee: String,
     deadline: String,
@@ -627,6 +628,7 @@ async fn create_agreement(
         return Err(StatusCode::BAD_REQUEST);
     }
     let agreement = Agreement {
+        id: Uuid::new_v4().to_string(),
         task: input.task.trim().chars().take(100).collect(),
         assignee: if input.assignee.trim().is_empty() {
             "미정".into()
