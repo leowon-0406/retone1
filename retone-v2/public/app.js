@@ -97,9 +97,28 @@ function settings() {
     standard: ["균형 있게", "말투·출처가 중요한 주장만 확인해요"],
     careful: ["꼼꼼하게", "중요 정보와 표현을 조금 더 살펴봐요"],
   };
-  const toggles=["강한 공격 표현","비꼼·압박 표현","출처 확인 제안","표현 바꾸기","입력 중 선검사","감정 도움 AI","확인 결과 재사용"];
-  app.innerHTML = `<main class="layout">${rail()}<section class="page"><header class="head"><h1>설정</h1></header><div class="content"><div class="intro"><h2>${esc(signedIn)}님</h2><p>프로필과 앱 사용 환경을 관리해요.</p></div><div class="rooms"><label class="room"><span class="avatar">${avatar?`<img src="${avatar}">`:esc(signedIn[0])}</span><span class="copy"><b>프로필 사진 바꾸기</b><span>사진을 선택하면 이 기기에서 바로 적용돼요.</span></span><input hidden type="file" accept="image/*" onchange="setAvatar(this)"></label><section class="ai-preferences"><b>AI 개입 정도</b><p>빠른 선택 또는 세부 항목을 조절할 수 있어요.</p><div>${Object.entries(levels).map(([key,[title,desc]])=>`<button class="ai-level ${aiIntervention===key?'selected':''}" onclick="setAiIntervention('${key}')"><strong>${title}</strong><span>${desc}</span></button>`).join('')}</div><div class="ai-toggles">${toggles.map((t,i)=>`<label><input type="checkbox" ${i<6?'checked':''}>${t}</label>`).join('')}</div></section><button class="room" onclick="logout()"><span class="avatar">↪</span><span class="copy"><b>로그아웃</b><span>이 기기에서 안전하게 로그아웃해요.</span></span></button></div></div></section></main>`;
+  const toggles = [
+    ["강한 공격 표현", "필요한 경우만"],
+    ["비꼼·압박 표현", "균형 있게"],
+    ["출처 확인 제안", "중요한 정보만"],
+    ["표현 바꾸기", "요청할 때만"],
+    ["입력 중 선검사", "필요한 경우만"],
+    ["감정 도움 AI", "요청할 때만"],
+    ["확인 결과 재사용", "균형 있게"],
+  ];
+  app.innerHTML = `<main class="layout">${rail()}<section class="page"><header class="head"><h1>설정</h1></header><div class="content"><div class="intro"><h2>${esc(signedIn)}님</h2><p>프로필과 앱 사용 환경을 관리해요.</p></div><div class="rooms"><label class="room"><span class="avatar">${avatar ? `<img src="${avatar}">` : esc(signedIn[0])}</span><span class="copy"><b>프로필 사진 바꾸기</b><span>사진을 선택하면 이 기기에서 바로 적용돼요.</span></span><input hidden type="file" accept="image/*" onchange="setAvatar(this)"></label><section class="ai-preferences"><b>AI 개입 정도</b><p>빠른 선택 또는 세부 항목을 조절할 수 있어요.</p><div>${Object.entries(
+    levels,
+  )
+    .map(
+      ([key, [title, desc]]) =>
+        `<button class="ai-level ${aiIntervention === key ? "selected" : ""}" onclick="setAiIntervention('${key}')"><strong>${title}</strong><span>${desc}</span></button>`,
+    )
+    .join(
+      "",
+    )}</div><div class="ai-toggles">${toggles.map((t, i) => `<label><input type="checkbox" ${i < 6 ? "checked" : ""}>${t}</label>`).join("")}</div></section><button class="room" onclick="logout()"><span class="avatar">↪</span><span class="copy"><b>로그아웃</b><span>이 기기에서 안전하게 로그아웃해요.</span></span></button></div></div></section></main>`;
+  renderDetailedAiSettings();
 }
+function renderDetailedAiSettings(){const root=document.querySelector('.ai-toggles');if(!root)return;const items=[['강한 공격 표현','필요한 경우만'],['비꼼·압박 표현','균형 있게'],['출처 확인 제안','중요한 정보만'],['표현 바꾸기','요청할 때만'],['입력 중 선검사','필요한 경우만'],['감정 도움 AI','요청할 때만'],['확인 결과 재사용','균형 있게']];root.innerHTML=items.map(([name,value])=>`<label>${name}<select aria-label="${name} 민감도">${['꺼짐','필요한 경우만','균형 있게','중요한 정보만','요청할 때만','민감하게'].map(option=>`<option ${option===value?'selected':''}>${option}</option>`).join('')}</select></label>`).join('')}
 async function setAiIntervention(level) {
   if (!signedInId) return;
   const user = await api(`/api/users/${signedInId}/preferences`, {
