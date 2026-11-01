@@ -27,7 +27,7 @@ const aiCategoryDefaults = {
   "감정 도움 AI": "필요할 때",
   "확인 결과 재사용": "켜기",
   "말맞춤 카드": "약속 대화만",
-  "대화 10개 요약": "갈등 있을 때",
+  "대화 흐름 요약": "갈등 있을 때",
 };
 const aiDetails = () => ({
   ...aiCategoryDefaults,
@@ -83,7 +83,7 @@ async function openRoom(id) {
     messages = await api(`/api/rooms/${id}/messages`);
   const reflections = (data.reflections || []).filter((item) => item.room_id === id);
   const appointments = (data.appointments || []).filter((item) => item.room_id === id);
-  const insights = (data.insights || []).filter((item) => item.room_id === id && (item.has_conflict || aiDetails()["대화 10개 요약"] === "항상"));
+  const insights = (data.insights || []).filter((item) => item.room_id === id && (item.has_conflict || aiDetails()["대화 흐름 요약"] === "항상"));
   app.innerHTML = `<main class="layout">${rail()}<section class="chat"><header class="head"><button onclick="home()">←</button><div><h1>${esc(room.name)}</h1><span>참여자 ${room.members}명 · ${isRoomMuted(id) ? "알림 끔" : "연결됨"}</span></div><div class="chat-actions"><button title="친구 초대" onclick="inviteFriends()">＋</button><button title="AI 도움받기" onclick="openAiHelp()">✦</button><button title="회고 카드" onclick="newReflection()">↻</button><button title="채팅방 설정" onclick="roomSettings()">⋯</button><button title="공동 확인" onclick="newAgreement()">✓</button></div></header><section class="messages" id="messages">${toneCard(messages)}${insights.map(viewInsight).join("")}${messages.map(view).join("")}${alignmentCard(messages)}${appointments.map(viewAppointment).join("")}${reflections.map(viewReflection).join("")}${data.agreements
     .slice(0, 1)
     .map(
@@ -166,12 +166,12 @@ const aiCategories = [
   ["감정 도움 AI", "답답하거나 서운할 때 마음을 정리할 공간을 보여줘요.", ["끄기", "필요할 때", "항상"]],
   ["확인 결과 재사용", "같은 문장의 이전 확인 결과를 재사용해 API 사용을 줄여요.", ["끄기", "켜기"]],
   ["말맞춤 카드", "약속·시간을 정하는 대화에서 일정 정리 카드를 제안해요.", ["끄기", "약속 대화만", "넓게"]],
-  ["대화 10개 요약", "대화 10개마다 갈등 가능성을 중립적으로 정리해요.", ["끄기", "갈등 있을 때", "항상"]],
+  ["대화 흐름 요약", "10개마다 실행하지만, 이어지는 주제는 최근 대화 흐름으로 함께 정리해요.", ["끄기", "갈등 있을 때", "항상"]],
 ];
 const aiGroups = [
   ["대화 안전", "상대가 상처받을 수 있는 표현을 어느 정도까지 살펴볼지 정해요.", ["강한 공격 표현", "비꼼·압박 표현"]],
   ["정보와 표현", "출처 확인과 말 다듬기 도움을 설정해요.", ["출처 확인 제안", "표현 바꾸기"]],
-  ["빠른 사용", "AI가 작동하는 방식과 도움 기능을 정해요.", ["입력 중 선검사", "감정 도움 AI", "확인 결과 재사용", "말맞춤 카드", "대화 10개 요약"]],
+  ["빠른 사용", "AI가 작동하는 방식과 도움 기능을 정해요.", ["입력 중 선검사", "감정 도움 AI", "확인 결과 재사용", "말맞춤 카드", "대화 흐름 요약"]],
 ];
 function renderDetailedAiSettings() {
   const root = document.querySelector(".ai-toggles");
@@ -245,7 +245,7 @@ function setIntent(intent) { selectedIntent = intent; closePopup(); const button
 function viewReflection(item) { return `<article class="reflection-card"><span>↻ 약속 회고</span><b>${esc(item.title)}</b><p><strong>계속할 점</strong> ${esc(item.keep || "아직 작성하지 않았어요")}</p><p><strong>다음에는</strong> ${esc(item.next || "아직 작성하지 않았어요")}</p></article>`; }
 function viewAppointment(item) { return `<article class="appointment-card"><span>◷ 말맞춤 약속</span><b>${esc(item.title)}</b><p><strong>${esc(item.date)}</strong>${item.place ? ` · ${esc(item.place)}` : ""}</p></article>`; }
 function setQuickDate(inputId, offset) { const date = new Date(); date.setDate(date.getDate() + offset); date.setHours(18, 0, 0, 0); const value = new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16); const input = document.querySelector(`#${inputId}`); if (input) input.value = value; }
-function viewInsight(item) { return `<article class="insight-card"><span>✦ 10개 대화 말맞춤</span><b>${esc(item.summary)}</b><p><strong>엇갈린 지점</strong> ${esc(item.reason)}</p><p><strong>이렇게 풀어볼까요?</strong> ${esc(item.suggestion)}</p><button onclick="openConflictGuide()">갈등 전환 모드 열기</button></article>`; }
+function viewInsight(item) { return `<article class="insight-card"><span>✦ 대화 흐름 말맞춤 · ${esc(item.topic || "대화 흐름")}</span><b>${esc(item.summary)}</b><p><strong>엇갈린 지점</strong> ${esc(item.reason)}</p><p><strong>이렇게 풀어볼까요?</strong> ${esc(item.suggestion)}</p><button onclick="openConflictGuide()">갈등 전환 모드 열기</button></article>`; }
 function alignmentCard(messages) {
   if (aiDetails()["말맞춤 카드"] === "끄기") return "";
   const message = [...messages].reverse().find((item) => item.alignment_hint && localStorage.getItem(`retone-alignment-dismissed-${item.id}`) !== "1");
@@ -469,7 +469,7 @@ async function sendApproved() {
   });
   selectedIntent = "";
   openRoom(next.room);
-  if (aiDetails()["대화 10개 요약"] !== "끄기") api(`/api/rooms/${next.room}/insight`, { method: "POST" }).then(async () => {
+  if (aiDetails()["대화 흐름 요약"] !== "끄기") api(`/api/rooms/${next.room}/insight`, { method: "POST" }).then(async () => {
     data = await api("/api/bootstrap");
     if (roomId === next.room) openRoom(next.room);
   }).catch(() => {});

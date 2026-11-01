@@ -68,6 +68,7 @@ struct ConversationInsight {
     room_id: String,
     checkpoint: usize,
     has_conflict: bool,
+    topic: String,
     summary: String,
     reason: String,
     suggestion: String,
@@ -818,7 +819,7 @@ async fn create_conversation_insight(
     State(app): State<App>,
     Path(room_id): Path<String>,
 ) -> Json<serde_json::Value> {
-    let (checkpoint, history) = {
+    let (checkpoint, history, previous_summary) = {
         let d = app.data.read().await;
         let messages = d
             .messages
@@ -836,18 +837,25 @@ async fn create_conversation_insight(
         let history = messages
             .iter()
             .rev()
-            .take(10)
+            .take(30)
             .rev()
             .map(|message| format!("{}: {}", message.sender, message.body))
             .collect::<Vec<_>>()
             .join("\n");
-        (checkpoint, history)
+        let previous_summary = d
+            .insights
+            .iter()
+            .rev()
+            .find(|item| item.room_id == room_id)
+            .map(|item| format!("이전 취합 주제: {} / 요약: {}", item.topic, item.summary))
+            .unwrap_or_default();
+        (checkpoint, history, previous_summary)
     };
     let Some(key) = env::var("OPENAI_API_KEY").ok() else {
         return Json(serde_json::json!({"created":false}));
     };
     let prompt = format!(
-        "너는 Re:Tone의 중립적 대화 정리 도우미다. 아래 최근 10개 메시지에서 갈등·싸움·오해가 명확히 보일 때만 has_conflict=true로 해라. 누구의 잘못인지 판단하거나 비난하지 마라. 갈등이 있다면 reason에는 왜 부딪히는지 한 문장으로, suggestion에는 바로 해볼 수 있는 해소 방법을 한 문장으로 쓴다. 갈등이 없으면 has_conflict=false, reason과 suggestion은 빈 문자열. summary는 1문장 대화 요약. JSON만 출력: {{\"has_conflict\":boolean,\"summary\":string,\"reason\":string,\"suggestion\":string}}\n\n{history}"
+        "너는 Re:Tone의 중립적 대화 정리 도우미다. 이 요청은 메시지 10개마다 실행되지만, 분석은 아래 최근 30개 메시지에서 주제가 이어지는 흐름을 찾아 하나의 맥락으로 취합한다. 바로 전 취합의 주제와 이어지는 내용이면 같은 대화 흐름으로 보고, 관련 없는 주제는 억지로 섞지 마라. 갈등·싸움·오해가 명확히 보일 때만 has_conflict=true로 해라. 누구의 잘못인지 판단하거나 비난하지 마라. 갈등이 있다면 reason에는 왜 부딪히는지 한 문장으로, suggestion에는 바로 해볼 수 있는 해소 방법을 한 문장으로 쓴다. 갈등이 없으면 has_conflict=false, reason과 suggestion은 빈 문자열. topic은 대화 주제를 짧게, summary는 해당 주제 흐름을 1문장으로 쓴다. JSON만 출력: {{\"has_conflict\":boolean,\"topic\":string,\"summary\":string,\"reason\":string,\"suggestion\":string}}\n\n{previous_summary}\n\n최근 대화:\n{history}"
     );
     let response = reqwest::Client::new()
         .post("https://api.openai.com/v1/responses")
@@ -871,6 +879,7 @@ async fn create_conversation_insight(
         room_id: room_id.clone(),
         checkpoint,
         has_conflict: parsed["has_conflict"].as_bool().unwrap_or(false),
+        topic: parsed["topic"].as_str().unwrap_or("대화 흐름").chars().take(60).collect(),
         summary: parsed["summary"]
             .as_str()
             .unwrap_or("대화 10개를 함께 확인했어요.")
