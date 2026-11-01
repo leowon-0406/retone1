@@ -153,19 +153,29 @@ const aiCategories = [
   ["감정 도움 AI", "답답하거나 서운할 때 마음을 정리할 공간을 보여줘요.", ["끄기", "필요할 때", "항상"]],
   ["확인 결과 재사용", "같은 문장의 이전 확인 결과를 재사용해 API 사용을 줄여요.", ["끄기", "켜기"]],
 ];
+const aiGroups = [
+  ["대화 안전", "상대가 상처받을 수 있는 표현을 어느 정도까지 살펴볼지 정해요.", ["강한 공격 표현", "비꼼·압박 표현"]],
+  ["정보와 표현", "출처 확인과 말 다듬기 도움을 설정해요.", ["출처 확인 제안", "표현 바꾸기"]],
+  ["빠른 사용", "AI가 작동하는 방식과 도움 기능을 정해요.", ["입력 중 선검사", "감정 도움 AI", "확인 결과 재사용"]],
+];
 function renderDetailedAiSettings() {
   const root = document.querySelector(".ai-toggles");
   if (!root) return;
   const saved = aiDetails();
-  root.innerHTML = `<div class="ai-setting-intro"><b>항목별 AI 개입 설정</b><span>각 항목을 꺼두거나, 필요한 정도만 선택할 수 있어요.</span></div>${aiCategories.map(([name, desc, options]) => `<label class="ai-category"><span><b>${name}</b><small>${desc}</small></span><select onchange="saveAiDetail('${name}',this.value)">${options.map((option) => `<option ${(saved[name] || aiCategoryDefaults[name]) === option ? "selected" : ""}>${option}</option>`).join("")}</select></label>`).join("")}<button class="theme-toggle" onclick="toggleTheme()">${document.body.classList.contains("dark") ? "☀️ 라이트 모드" : "🌙 다크 모드"}</button><button class="danger-action" onclick="openDeleteAccount()">계정 삭제</button>`;
+  const card = (name) => {
+    const [, desc, options] = aiCategories.find(([title]) => title === name);
+    return `<article class="ai-category"><span><b>${name}</b><small>${desc}</small></span><div class="ai-choice-row">${options.map((option) => `<button class="${saved[name] === option ? "selected" : ""}" onclick="saveAiDetail('${name}','${option}')">${option}</button>`).join("")}</div></article>`;
+  };
+  root.innerHTML = `<div class="ai-setting-intro"><b>AI가 어디까지 도울지 골라주세요</b><span>항목을 눌러 펼친 뒤, 원하는 개입 수준을 직접 선택할 수 있어요.</span></div>${aiGroups.map(([title, desc, names], index) => `<details class="ai-setting-group" ${index === 0 ? "open" : ""}><summary><span><b>${title}</b><small>${desc}</small></span><i>⌄</i></summary><div class="ai-category-list">${names.map(card).join("")}</div></details>`).join("")}<section class="settings-actions"><button class="theme-toggle" onclick="toggleTheme()">${document.body.classList.contains("dark") ? "☀️ 라이트 모드" : "🌙 다크 모드"}</button><button class="danger-action" onclick="openDeleteAccount()">계정 삭제</button></section>`;
 }
 function saveAiDetail(name, value) {
   const saved = aiDetails(); saved[name] = value;
   localStorage.setItem("retone-ai-detail", JSON.stringify(saved));
+  renderDetailedAiSettings();
 }
 function toggleTheme(){document.body.classList.toggle('dark');localStorage.setItem('retone-theme',document.body.classList.contains('dark')?'dark':'light');settings()}
-function openDeleteAccount(){popup(`<div class="ai-check warn"><span>계정 삭제</span><h2>정말 탈퇴할까요?</h2><p>삭제 후에는 이 계정으로 다시 로그인할 수 없어요.</p><input id="delete-phone" placeholder="전화번호"><input id="delete-password" type="password" placeholder="비밀번호"><button onclick="deleteMyAccount()">계정 삭제하기</button></div>`)}
-async function deleteMyAccount(){const phone=document.querySelector('#delete-phone').value.replace(/\D/g,''),password=document.querySelector('#delete-password').value;await api(`/api/users/${signedInId}`,{method:'DELETE',body:JSON.stringify({name:signedIn,phone,password})});logout()}
+function openDeleteAccount(){popup(`<div class="ai-check warn"><span>계정 삭제</span><h2>정말 탈퇴할까요?</h2><p>계정 삭제 후에는 같은 계정으로 다시 로그인할 수 없어요.</p><input id="delete-name" placeholder="현재 계정의 이름을 입력해주세요"><input id="delete-password" type="password" placeholder="현재 비밀번호를 입력해주세요"><button class="danger-action" onclick="deleteMyAccount()">계정 삭제하기</button></div>`)}
+async function deleteMyAccount(){const name=document.querySelector('#delete-name').value.trim(),password=document.querySelector('#delete-password').value;if(!name||!password)return alert('이름과 비밀번호를 모두 입력해주세요.');try{await api(`/api/users/${signedInId}`,{method:'DELETE',body:JSON.stringify({name,password})});logout()}catch{alert('이름 또는 비밀번호가 맞지 않아요. 현재 계정 정보를 다시 확인해주세요.')}}
 if(localStorage.getItem('retone-theme')==='dark')document.body.classList.add('dark');
 async function setAiIntervention(level) {
   if (!signedInId) return;

@@ -97,6 +97,11 @@ struct Credentials {
     ai_intervention: Option<String>,
 }
 #[derive(Deserialize)]
+struct DeleteCredentials {
+    name: String,
+    password: String,
+}
+#[derive(Deserialize)]
 struct AiCheck {
     text: String,
     ai_intervention: Option<String>,
@@ -220,9 +225,9 @@ async fn reset_v2(
 async fn delete_account(
     State(app): State<App>,
     Path(id): Path<Uuid>,
-    Json(input): Json<Credentials>,
+    Json(input): Json<DeleteCredentials>,
 ) -> Result<StatusCode, StatusCode> {
-    let row=sqlx::query_as::<_,(String,)>("SELECT password_hash FROM retone_v2.users WHERE id=$1 AND phone_hash=$2 AND name=$3 AND deleted_at IS NULL").bind(id).bind(phone_hash(&input.phone)).bind(input.name.trim()).fetch_optional(&app.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?.ok_or(StatusCode::UNAUTHORIZED)?;
+    let row=sqlx::query_as::<_,(String,)>("SELECT password_hash FROM retone_v2.users WHERE id=$1 AND name=$2 AND deleted_at IS NULL").bind(id).bind(input.name.trim()).fetch_optional(&app.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?.ok_or(StatusCode::UNAUTHORIZED)?;
     let parsed = PasswordHash::new(&row.0).map_err(|_| StatusCode::UNAUTHORIZED)?;
     Argon2::default()
         .verify_password(input.password.as_bytes(), &parsed)
