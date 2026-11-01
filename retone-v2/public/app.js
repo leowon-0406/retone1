@@ -30,10 +30,13 @@ const aiCategoryDefaults = {
   "말맞춤 카드": "약속 대화만",
   "대화 흐름 요약": "갈등 있을 때",
 };
-const aiDetails = () => ({
-  ...aiCategoryDefaults,
-  ...JSON.parse(localStorage.getItem("retone-ai-detail") || "{}"),
-});
+const sensitivityKeys = ["강한 공격 표현", "비꼼·압박 표현", "출처 확인 제안", "표현 바꾸기", "입력 중 선검사", "감정 도움 AI", "확인 결과 재사용", "말맞춤 카드", "대화 흐름 요약"];
+function sensitivityState() { try { const saved = JSON.parse(localStorage.getItem("retone-ai-sensitivity") || "{}"); return { overall: Number.isFinite(saved.overall) ? saved.overall : 50, categories: Object.fromEntries(sensitivityKeys.map((key) => [key, Number.isFinite(saved.categories?.[key]) ? saved.categories[key] : 50])), overrides: saved.overrides || {} }; } catch { return { overall: 50, categories: Object.fromEntries(sensitivityKeys.map((key) => [key, 50])), overrides: {} }; } }
+function saveSensitivity(state) { localStorage.setItem("retone-ai-sensitivity", JSON.stringify(state)); }
+function sensitivityWord(name, value) { if (value <= 0) return "끄기"; if (["입력 중 선검사", "확인 결과 재사용"].includes(name)) return "켜기"; if (["표현 바꾸기", "감정 도움 AI"].includes(name)) return value >= 75 ? "항상" : "필요할 때"; if (name === "말맞춤 카드") return value >= 75 ? "넓게" : "약속 대화만"; if (name === "대화 흐름 요약") return value >= 75 ? "항상" : "갈등 있을 때"; if (name === "비꼼·압박 표현") return value < 35 ? "가볍게" : value < 70 ? "균형 있게" : "민감하게"; if (name === "출처 확인 제안") return value < 35 ? "중요 정보만" : value < 70 ? "균형 있게" : "민감하게"; return value < 35 ? "강한 표현만" : value < 70 ? "균형 있게" : "민감하게"; }
+const aiDetails = () => { const state = sensitivityState(); return Object.fromEntries(sensitivityKeys.map((key) => [key, sensitivityWord(key, state.categories[key])])); };
+const sensitivityLabel = (value) => value <= 20 ? "매우 가볍게" : value <= 40 ? "가볍게" : value <= 60 ? "보통" : value <= 80 ? "꼼꼼하게" : "매우 꼼꼼하게";
+const interventionFromSensitivity = (value) => value <= 0 ? "off" : value <= 33 ? "light" : value <= 66 ? "standard" : "careful";
 const roomPreferenceKey = (kind, id) => `retone-${kind}-${signedInId || "guest"}-${id}`;
 const isRoomMuted = (id) => localStorage.getItem(roomPreferenceKey("muted", id)) === "1";
 const hasLeftRoom = (id) => localStorage.getItem(roomPreferenceKey("left", id)) === "1";
@@ -194,24 +197,36 @@ const aiGroups = [
 function renderDetailedAiSettings() {
   const root = document.querySelector(".ai-toggles");
   if (!root) return;
+  const sensitivity = sensitivityState();
   const saved = aiDetails();
   const card = (name) => {
     const [, desc, options] = aiCategories.find(([title]) => title === name);
     return `<article class="ai-category"><span><b>${name}</b><small>${desc}</small></span><div class="ai-choice-row">${options.map((option) => `<button class="${saved[name] === option ? "selected" : ""}" onclick="saveAiDetail('${name}','${option}')">${option}</button>`).join("")}</div></article>`;
   };
-  root.innerHTML = `<div class="ai-setting-intro"><b>AI가 어디까지 도울지 골라주세요</b><span>항목을 눌러 펼친 뒤, 원하는 개입 수준을 직접 선택할 수 있어요.</span></div>${aiGroups.map(([title, desc, names], index) => `<details class="ai-setting-group" ${index === 0 ? "open" : ""}><summary><span><b>${title}</b><small>${desc}</small></span><i>⌄</i></summary><div class="ai-category-list">${names.map(card).join("")}</div></details>`).join("")}<section class="settings-actions"><button class="theme-toggle" onclick="toggleTheme()">${document.body.classList.contains("dark") ? "☀️ 라이트 모드" : "🌙 다크 모드"}</button><button class="danger-action" onclick="openDeleteAccount()">계정 삭제</button></section>`;
+  root.innerHTML = `<section class="overall-sensitivity"><span>AI 전체 민감도</span><b id="overall-sensitivity-label">${sensitivityLabel(sensitivity.overall)} · ${sensitivity.overall}</b><input type="range" min="0" max="100" value="${sensitivity.overall}" oninput="previewOverallSensitivity(this.value)" onchange="setOverallSensitivity(this.value)"><small>낮을수록 필요한 경우에만, 높을수록 더 세심하게 제안해요.</small></section><div class="ai-setting-intro"><b>세부 민감도는 AI가 조절해요</b><span>‘그냥 보내기’ 선택 패턴을 보고 항목별 수치를 조정합니다. 아래에서 언제든 직접 바꿀 수 있어요.</span></div>${aiGroups.map(([title, desc, names], index) => `<details class="ai-setting-group" ${index === 0 ? "open" : ""}><summary><span><b>${title}</b><small>${desc}</small></span><i>⌄</i></summary><div class="ai-category-list">${names.map(card).join("")}</div></details>`).join("")}<section class="settings-actions"><button class="theme-toggle" onclick="toggleTheme()">${document.body.classList.contains("dark") ? "☀️ 라이트 모드" : "🌙 다크 모드"}</button><button class="danger-action" onclick="openDeleteAccount()">계정 삭제</button></section>`;
 }
 function saveAiDetail(name, value) {
-  const saved = aiDetails(); saved[name] = value;
-  localStorage.setItem("retone-ai-detail", JSON.stringify(saved));
+  const state = sensitivityState();
+  const map = { "끄기": 0, "가볍게": 25, "강한 표현만": 25, "중요 정보만": 25, "필요할 때": 50, "약속 대화만": 50, "갈등 있을 때": 50, "균형 있게": 50, "켜기": 50, "항상": 80, "넓게": 80, "민감하게": 85 };
+  state.categories[name] = map[value] ?? 50; saveSensitivity(state);
   renderDetailedAiSettings();
 }
+function previewOverallSensitivity(value) { const label = document.querySelector("#overall-sensitivity-label"); if (label) label.textContent = `${sensitivityLabel(Number(value))} · ${value}`; }
+async function setOverallSensitivity(value) { const state = sensitivityState(), next = Number(value); state.overall = next; sensitivityKeys.forEach((key) => { state.categories[key] = next; }); saveSensitivity(state); aiIntervention = interventionFromSensitivity(next); sessionStorage.setItem("retone-v2-ai-level", aiIntervention); if (signedInId && !isAdmin) { try { await api(`/api/users/${signedInId}/preferences`, { method: "PATCH", body: JSON.stringify({ ai_intervention: aiIntervention }) }); } catch {} } renderDetailedAiSettings(); }
 function toggleTheme(){document.body.classList.toggle('dark');localStorage.setItem('retone-theme',document.body.classList.contains('dark')?'dark':'light');settings()}
 function openDeleteAccount(){popup(`<div class="ai-check warn"><span>계정 삭제</span><h2>정말 탈퇴할까요?</h2><p>계정 삭제 후에는 같은 계정으로 다시 로그인할 수 없어요.</p><input id="delete-name" placeholder="현재 계정의 이름을 입력해주세요"><input id="delete-password" type="password" placeholder="현재 비밀번호를 입력해주세요"><button class="danger-action" onclick="deleteMyAccount()">계정 삭제하기</button></div>`)}
 async function deleteMyAccount(){const name=document.querySelector('#delete-name').value.trim(),password=document.querySelector('#delete-password').value;if(!name||!password)return alert('이름과 비밀번호를 모두 입력해주세요.');try{await api(`/api/users/${signedInId}`,{method:'DELETE',body:JSON.stringify({name,password})});logout()}catch{alert('이름 또는 비밀번호가 맞지 않아요. 현재 계정 정보를 다시 확인해주세요.')}}
 if(localStorage.getItem('retone-theme')==='dark')document.body.classList.add('dark');
 async function setAiIntervention(level) {
   if (!signedInId) return;
+  const levelToSensitivity = { off: 0, light: 25, standard: 50, careful: 75 };
+  const next = levelToSensitivity[level] ?? 50;
+  const state = sensitivityState();
+  state.overall = next;
+  sensitivityKeys.forEach((key) => {
+    state.categories[key] = next;
+  });
+  saveSensitivity(state);
   const user = await api(`/api/users/${signedInId}/preferences`, {
     method: "PATCH",
     body: JSON.stringify({ ai_intervention: level }),
@@ -427,7 +442,7 @@ function showCheckResult(result) {
     removePendingBubble();
     const rewrite = aiDetails()["표현 바꾸기"] === "끄기" ? "" : `<button class="quiet" onclick="rewritePending()">AI로 표현 바꾸기</button>`;
     popup(
-      `<div class="ai-check warn"><span>Re:Tone의 제안</span><h2>이렇게 들릴 수도 있어요</h2>${suggestion || "<p>상대에게는 공격적인 표현으로 들릴 수 있어요. 조금 다르게 말해볼까요?</p>"}<small>Re:Tone은 이 문장을 판단하거나 막지 않아요. 선택은 언제나 나에게 있어요.</small><div class="modal-actions">${rewrite}<button onclick="sendApproved()">이대로 보내기</button></div><button class="report-ai" onclick="reportAiResult()">AI 제안이 이상했나요? 문의하기</button></div>`,
+      `<div class="ai-check warn"><span>Re:Tone의 제안</span><h2>이렇게 들릴 수도 있어요</h2>${suggestion || "<p>상대에게는 공격적인 표현으로 들릴 수 있어요. 조금 다르게 말해볼까요?</p>"}<small>Re:Tone은 이 문장을 판단하거나 막지 않아요. 선택은 언제나 나에게 있어요.</small><div class="modal-actions">${rewrite}<button onclick="sendDespiteWarning()">그냥 보내기</button></div><button class="report-ai" onclick="reportAiResult()">AI 제안이 이상했나요? 문의하기</button></div>`,
     );
     return;
   }
@@ -437,6 +452,16 @@ function showCheckResult(result) {
       `<div class="ai-check info"><span>Re:Tone의 제안</span><h2>출처를 함께 적어볼까요?</h2><p>${esc(info.note || "이 내용은 출처와 작성 날짜를 함께 확인해 보면 더 정확하게 전달될 수 있어요.")}</p>${(info.queries || []).length ? `<ul>${info.queries.map((q) => `<li>${esc(q)}</li>`).join("")}</ul>` : ""}<small>Re:Tone은 이 정보의 진실·거짓을 판단하지 않아요.</small><div class="modal-actions"><button class="quiet" onclick="editPendingSend()">내용 보완하기</button><button onclick="sendApproved()">이대로 보내기</button></div><button class="report-ai" onclick="reportAiResult()">AI 제안이 이상했나요? 문의하기</button></div>`,
     );
     return;
+  }
+  sendApproved();
+}
+function sendDespiteWarning() {
+  if (pendingSend?.result?.verdict === "WARN") {
+    const state = sensitivityState();
+    const category = pendingSend.result.source === "dictionary" ? "강한 공격 표현" : "비꼼·압박 표현";
+    state.overrides[category] = (state.overrides[category] || 0) + 1;
+    if (state.overrides[category] >= 3) { state.categories[category] = Math.max(0, state.categories[category] - 5); state.overrides[category] = 0; }
+    saveSensitivity(state);
   }
   sendApproved();
 }
@@ -668,7 +693,7 @@ function authForm(mode) {
     .forEach((b, i) => b.classList.toggle("selected", (i === 1) === join));
   if (join) {
     if (!signupAiDetails) signupAiDetails = { ...aiDetails() };
-    if (!signupDraft) signupDraft = { step: 0, name: "", phone: "", password: "", ai: "standard", consent: false };
+    if (!signupDraft) signupDraft = { step: 0, name: "", phone: "", password: "", sensitivity: 50, ai: "standard", consent: false };
     renderSignupWizard();
     return;
   }
@@ -687,19 +712,19 @@ function authForm(mode) {
 }
 function renderSignupWizard() {
   const draft = signupDraft;
-  const steps = ["계정", "AI 기본", "대화 안전", "정보·표현", "사용 방식", "확인"];
-  const group = aiGroups[draft.step - 2];
+  const steps = ["계정", "AI 민감도", "확인"];
   const progress = `<div class="signup-progress"><span>${draft.step + 1} / ${steps.length}</span><b>${steps[draft.step]}</b><div><i style="width:${((draft.step + 1) / steps.length) * 100}%"></i></div></div>`;
   let content = "";
   if (draft.step === 0) content = `<h2>먼저 계정을 만들어요</h2><p>친구들과 안전하게 대화하기 위한 기본 정보예요.</p><label>이름<input id="signup-name" value="${esc(draft.name)}" placeholder="이름을 입력해주세요"></label><label>전화번호<input id="signup-phone" value="${esc(draft.phone)}" inputmode="numeric" placeholder="전화번호를 입력해주세요"></label><label>비밀번호<input id="signup-password" value="${esc(draft.password)}" type="password" placeholder="6자 이상 비밀번호를 입력해주세요"></label>`;
-  else if (draft.step === 1) content = `<h2>AI가 얼마나 도울까요?</h2><p>전체적인 개입 정도를 먼저 정하고, 다음 화면에서 항목별로 조절해요.</p><div class="wizard-levels">${[["light", "가볍게", "강한 욕설만 빠르게 확인"], ["standard", "균형 있게", "말투와 중요한 정보만 확인"], ["careful", "꼼꼼하게", "오해 가능성까지 살펴보기"], ["off", "AI 끄기", "AI 점검 없이 사용"]].map(([value, title, text]) => `<button class="${draft.ai === value ? "selected" : ""}" onclick="setSignupLevel('${value}')"><b>${title}</b><span>${text}</span></button>`).join("")}</div>`;
-  else if (draft.step >= 2 && draft.step <= 4) content = `<h2>${group[0]}</h2><p>${group[1]}</p><div class="wizard-category-list">${group[2].map((name) => { const [, description, options] = aiCategories.find(([title]) => title === name); return `<article><b>${name}</b><small>${description}</small><div>${options.map((option) => `<button class="${signupAiDetails[name] === option ? "selected" : ""}" onclick="setWizardDetail('${name}','${option}')">${option}</button>`).join("")}</div></article>`; }).join("")}</div>`;
+  else if (draft.step === 1) content = `<h2>AI가 얼마나 도울까요?</h2><p>처음에는 보통(50)에서 시작해요. 이후 ‘그냥 보내기’ 선택 패턴을 보고 AI가 세부 민감도를 조절하며, 설정에서 언제든 바꿀 수 있어요.</p><section class="signup-sensitivity"><div><span>AI 민감도</span><b id="signup-sensitivity-label">${sensitivityLabel(draft.sensitivity)} · ${draft.sensitivity}</b></div><input type="range" min="0" max="100" value="${draft.sensitivity}" oninput="previewSignupSensitivity(this.value)" onchange="setSignupSensitivity(this.value)"><small>낮을수록 필요한 순간에만, 높을수록 더 세심하게 제안해요.</small></section>`;
   else content = `<h2>마지막 확인이에요</h2><p>Re:Tone은 판단하거나 차단하지 않고, 선택한 범위에서만 대화를 돕습니다.</p><button type="button" class="ai-policy-link" onclick="showAiPolicy()">AI가 개입하는 이유와 사용 범위 보기</button><label class="consent"><input id="signup-consent" type="checkbox" ${draft.consent ? "checked" : ""}> AI 사용 안내를 읽었고, 선택한 범위의 점검에 동의해요.</label><p class="auth-hint">AI 끄기를 선택한 경우에는 동의 없이도 가입할 수 있어요.</p>`;
   const back = draft.step ? `<button class="wizard-back" onclick="signupBack()">이전</button>` : `<button class="wizard-back" onclick="authForm('login')">로그인으로</button>`;
   const next = draft.step === steps.length - 1 ? `<button class="auth-submit" onclick="completeSignup()">회원가입하고 시작하기</button>` : `<button class="auth-submit" onclick="signupNext()">다음</button>`;
   document.querySelector("#auth-form").innerHTML = `<section class="signup-wizard">${progress}<div class="wizard-content">${content}</div><div class="wizard-actions">${back}${next}</div></section>`;
 }
 function setSignupLevel(value) { signupDraft.ai = value; renderSignupWizard(); }
+function previewSignupSensitivity(value) { signupDraft.sensitivity = Number(value); signupDraft.ai = interventionFromSensitivity(signupDraft.sensitivity); const label = document.querySelector("#signup-sensitivity-label"); if (label) label.textContent = `${sensitivityLabel(Number(value))} · ${value}`; }
+function setSignupSensitivity(value) { signupDraft.sensitivity = Number(value); signupDraft.ai = interventionFromSensitivity(signupDraft.sensitivity); }
 function setWizardDetail(name, value) { signupAiDetails = { ...signupAiDetails, [name]: value }; renderSignupWizard(); }
 function signupNext() {
   if (signupDraft.step === 0) { const name = document.querySelector("#signup-name").value.trim(), phone = document.querySelector("#signup-phone").value.replace(/\D/g, ""), password = document.querySelector("#signup-password").value; if (!name || phone.length < 7 || password.length < 6) return alert("이름, 전화번호와 6자 이상 비밀번호를 입력해주세요."); Object.assign(signupDraft, { name, phone, password }); }
@@ -709,7 +734,7 @@ function signupBack() { if (signupDraft.step) signupDraft.step -= 1; renderSignu
 async function completeSignup() {
   signupDraft.consent = document.querySelector("#signup-consent")?.checked || false;
   if (signupDraft.ai !== "off" && !signupDraft.consent) return alert("AI 사용 안내를 확인하고 동의하거나, AI 끄기를 선택해주세요.");
-  localStorage.setItem("retone-ai-detail", JSON.stringify({ ...aiCategoryDefaults, ...signupAiDetails }));
+  const sensitivity = { overall: signupDraft.sensitivity, categories: Object.fromEntries(sensitivityKeys.map((key) => [key, signupDraft.sensitivity])), overrides: {} }; saveSensitivity(sensitivity);
   try { const user = await api("/api/auth/signup", { method: "POST", body: JSON.stringify({ name: signupDraft.name, phone: signupDraft.phone, password: signupDraft.password, ai_intervention: signupDraft.ai }) }); signedIn = user.name; signedInId = user.id; aiIntervention = user.ai_intervention || "standard"; sessionStorage.setItem("retone-v2-name", user.name); sessionStorage.setItem("retone-v2-user-id", user.id); sessionStorage.setItem("retone-v2-ai-level", aiIntervention); sessionStorage.setItem("retone-v2-ai-consent", signupDraft.consent || aiIntervention === "off" ? "yes" : ""); signupDraft = null; home(); } catch { alert("이미 가입된 전화번호이거나 입력값을 확인해주세요."); }
 }
 async function finishAdminLogin() {

@@ -270,7 +270,9 @@ async fn clear_user_data(
     data.appointments.clear();
     data.reflections.clear();
     data.insights.clear();
-    Ok(Json(serde_json::json!({"ok":true,"ai_cache_preserved":true})))
+    Ok(Json(
+        serde_json::json!({"ok":true,"ai_cache_preserved":true}),
+    ))
 }
 async fn clear_single_user(
     State(app): State<App>,
@@ -282,16 +284,51 @@ async fn clear_single_user(
     if input.password != password || input.two_factor != two_factor {
         return Err(StatusCode::UNAUTHORIZED);
     }
-    let mut tx = app.db.begin().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    sqlx::query("DELETE FROM retone_v2.messages WHERE sender_id=$1").bind(user_id).execute(&mut *tx).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    sqlx::query("DELETE FROM retone_v2.agreements WHERE assignee_id=$1").bind(user_id).execute(&mut *tx).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    sqlx::query("DELETE FROM retone_v2.appointments WHERE created_by=$1").bind(user_id).execute(&mut *tx).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    sqlx::query("UPDATE retone_v2.rooms SET created_by=NULL WHERE created_by=$1").bind(user_id).execute(&mut *tx).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    sqlx::query("DELETE FROM retone_v2.room_members WHERE user_id=$1").bind(user_id).execute(&mut *tx).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    let deleted = sqlx::query("DELETE FROM retone_v2.users WHERE id=$1").bind(user_id).execute(&mut *tx).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?.rows_affected();
-    tx.commit().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    if deleted == 0 { return Err(StatusCode::NOT_FOUND); }
-    Ok(Json(serde_json::json!({"ok":true,"ai_cache_preserved":true})))
+    let mut tx = app
+        .db
+        .begin()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    sqlx::query("DELETE FROM retone_v2.messages WHERE sender_id=$1")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    sqlx::query("DELETE FROM retone_v2.agreements WHERE assignee_id=$1")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    sqlx::query("DELETE FROM retone_v2.appointments WHERE created_by=$1")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    sqlx::query("UPDATE retone_v2.rooms SET created_by=NULL WHERE created_by=$1")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    sqlx::query("DELETE FROM retone_v2.room_members WHERE user_id=$1")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let deleted = sqlx::query("DELETE FROM retone_v2.users WHERE id=$1")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .rows_affected();
+    tx.commit()
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if deleted == 0 {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    Ok(Json(
+        serde_json::json!({"ok":true,"ai_cache_preserved":true}),
+    ))
 }
 async fn users(State(app): State<App>) -> Result<Json<Vec<PublicUser>>, StatusCode> {
     let rows=sqlx::query_as::<_,(Uuid,String,Option<String>,String)>("SELECT id,name,avatar_url,ai_intervention FROM retone_v2.users WHERE deleted_at IS NULL ORDER BY created_at").fetch_all(&app.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;
