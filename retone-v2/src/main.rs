@@ -272,6 +272,27 @@ async fn clear_user_data(
     data.insights.clear();
     Ok(Json(serde_json::json!({"ok":true,"ai_cache_preserved":true})))
 }
+async fn clear_single_user(
+    State(app): State<App>,
+    Path(user_id): Path<Uuid>,
+    Json(input): Json<AdminLogin>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let password = env::var("RETONE_ADMIN_PASSWORD").unwrap_or_else(|_| "3612asdf!!".into());
+    let two_factor = env::var("RETONE_ADMIN_2FA").unwrap_or_else(|_| "7812".into());
+    if input.password != password || input.two_factor != two_factor {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    let mut tx = app.db.begin().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    sqlx::query("DELETE FROM retone_v2.messages WHERE sender_id=$1").bind(user_id).execute(&mut *tx).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    sqlx::query("DELETE FROM retone_v2.agreements WHERE assignee_id=$1").bind(user_id).execute(&mut *tx).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    sqlx::query("DELETE FROM retone_v2.appointments WHERE created_by=$1").bind(user_id).execute(&mut *tx).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    sqlx::query("UPDATE retone_v2.rooms SET created_by=NULL WHERE created_by=$1").bind(user_id).execute(&mut *tx).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    sqlx::query("DELETE FROM retone_v2.room_members WHERE user_id=$1").bind(user_id).execute(&mut *tx).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let deleted = sqlx::query("DELETE FROM retone_v2.users WHERE id=$1").bind(user_id).execute(&mut *tx).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?.rows_affected();
+    tx.commit().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if deleted == 0 { return Err(StatusCode::NOT_FOUND); }
+    Ok(Json(serde_json::json!({"ok":true,"ai_cache_preserved":true})))
+}
 async fn users(State(app): State<App>) -> Result<Json<Vec<PublicUser>>, StatusCode> {
     let rows=sqlx::query_as::<_,(Uuid,String,Option<String>,String)>("SELECT id,name,avatar_url,ai_intervention FROM retone_v2.users WHERE deleted_at IS NULL ORDER BY created_at").fetch_all(&app.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(
@@ -1078,6 +1099,7 @@ async fn main() {
         .route("/api/users", get(users))
         .route("/api/admin/reset-v2", post(reset_v2))
         .route("/api/admin/clear-user-data", post(clear_user_data))
+        .route("/api/admin/users/{id}/clear", post(clear_single_user))
         .route("/api/users/{id}", delete(delete_account))
         .route("/api/users/{id}/preferences", patch(update_preferences))
         .route("/api/ai/check", post(ai_check))
