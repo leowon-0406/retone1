@@ -135,7 +135,10 @@ struct PhoneCheck {
     phone: String,
 }
 #[derive(Deserialize)]
-struct ImageInput { data_url: String }
+struct ImageInput {
+    data_url: String,
+    override_warning: Option<bool>,
+}
 #[derive(Deserialize)]
 struct AdminLogin {
     password: String,
@@ -414,22 +417,41 @@ async fn update_preferences(
     let row=sqlx::query_as::<_,(Uuid,String,Option<String>,String)>("UPDATE retone_v2.users SET ai_intervention=$1 WHERE id=$2 AND deleted_at IS NULL RETURNING id,name,avatar_url,ai_intervention").bind(&level).bind(id).fetch_optional(&app.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?.ok_or(StatusCode::NOT_FOUND)?;
     Ok(Json(user_out(row.0, row.1, row.2, row.3)))
 }
-async fn moderate_image(data_url: &str) -> Result<bool, StatusCode> {
-    if !data_url.starts_with("data:image/") || data_url.len() > 2_800_000 { return Err(StatusCode::BAD_REQUEST); }
+async fn moderate_image(data_url: &str) -> Result<serde_json::Value, StatusCode> {
+    if !data_url.starts_with("data:image/") || data_url.len() > 2_800_000 {
+        return Err(StatusCode::BAD_REQUEST);
+    }
     let key = env::var("OPENAI_API_KEY").map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
     let response = reqwest::Client::new().post("https://api.openai.com/v1/moderations").bearer_auth(key).json(&serde_json::json!({"model":"omni-moderation-latest","input":[{"type":"image_url","image_url":{"url":data_url}}]})).send().await.map_err(|_| StatusCode::BAD_GATEWAY)?;
-    if !response.status().is_success() { return Err(StatusCode::BAD_GATEWAY); }
-    let body = response.json::<serde_json::Value>().await.map_err(|_| StatusCode::BAD_GATEWAY)?;
-    Ok(!body["results"][0]["flagged"].as_bool().unwrap_or(true))
+    if !response.status().is_success() {
+        return Err(StatusCode::BAD_GATEWAY);
+    }
+    let body = response
+        .json::<serde_json::Value>()
+        .await
+        .map_err(|_| StatusCode::BAD_GATEWAY)?;
+    Ok(body["results"][0].clone())
 }
 async fn check_image(Json(input): Json<ImageInput>) -> Result<Json<serde_json::Value>, StatusCode> {
-    let allowed = moderate_image(&input.data_url).await?;
-    Ok(Json(serde_json::json!({"allowed":allowed})))
+    let result = moderate_image(&input.data_url).await?;
+    let flagged = result["flagged"].as_bool().unwrap_or(true);
+    let sexual = result["categories"]["sexual"].as_bool().unwrap_or(false) || result["categories"]["sexual/minors"].as_bool().unwrap_or(false);
+    Ok(Json(serde_json::json!({"flagged":flagged,"sexual":sexual})))
 }
-async fn update_avatar(State(app): State<App>, Path(id): Path<Uuid>, Json(input): Json<ImageInput>) -> Result<Json<PublicUser>, StatusCode> {
-    if !moderate_image(&input.data_url).await? { return Err(StatusCode::UNPROCESSABLE_ENTITY); }
+async fn update_avatar(
+    State(app): State<App>,
+    Path(id): Path<Uuid>,
+    Json(input): Json<ImageInput>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let result = moderate_image(&input.data_url).await?;
+    let flagged = result["flagged"].as_bool().unwrap_or(true);
+    let sexual = result["categories"]["sexual"].as_bool().unwrap_or(false) || result["categories"]["sexual/minors"].as_bool().unwrap_or(false);
+    if flagged && !input.override_warning.unwrap_or(false) {
+        return Ok(Json(serde_json::json!({"saved":false,"flagged":true,"sexual":sexual})));
+    }
     let row = sqlx::query_as::<_,(Uuid,String,Option<String>,String)>("UPDATE retone_v2.users SET avatar_url=$1 WHERE id=$2 AND deleted_at IS NULL RETURNING id,name,avatar_url,ai_intervention").bind(input.data_url).bind(id).fetch_optional(&app.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?.ok_or(StatusCode::NOT_FOUND)?;
-    Ok(Json(user_out(row.0,row.1,row.2,row.3)))
+    let user = user_out(row.0, row.1, row.2, row.3);
+    Ok(Json(serde_json::json!({"saved":true,"avatar_url":user.avatar_url})))
 }
 async fn ai_check(State(app): State<App>, Json(input): Json<AiCheck>) -> Json<serde_json::Value> {
     let text = input.text.trim();

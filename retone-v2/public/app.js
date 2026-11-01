@@ -30,11 +30,12 @@ const aiCategoryDefaults = {
   "확인 결과 재사용": "켜기",
   "말맞춤 카드": "약속 대화만",
   "대화 흐름 요약": "갈등 있을 때",
+  "이미지 안전 안내": "필요할 때",
 };
-const sensitivityKeys = ["강한 공격 표현", "비꼼·압박 표현", "출처 확인 제안", "표현 바꾸기", "입력 중 선검사", "감정 도움 AI", "확인 결과 재사용", "말맞춤 카드", "대화 흐름 요약"];
+const sensitivityKeys = ["강한 공격 표현", "비꼼·압박 표현", "출처 확인 제안", "표현 바꾸기", "입력 중 선검사", "감정 도움 AI", "확인 결과 재사용", "말맞춤 카드", "대화 흐름 요약", "이미지 안전 안내"];
 function sensitivityState() { try { const saved = JSON.parse(localStorage.getItem("retone-ai-sensitivity") || "{}"); return { overall: Number.isFinite(saved.overall) ? saved.overall : 50, categories: Object.fromEntries(sensitivityKeys.map((key) => [key, Number.isFinite(saved.categories?.[key]) ? saved.categories[key] : 50])), overrides: saved.overrides || {} }; } catch { return { overall: 50, categories: Object.fromEntries(sensitivityKeys.map((key) => [key, 50])), overrides: {} }; } }
 function saveSensitivity(state) { localStorage.setItem("retone-ai-sensitivity", JSON.stringify(state)); }
-function sensitivityWord(name, value) { if (value <= 0) return "끄기"; if (["입력 중 선검사", "확인 결과 재사용"].includes(name)) return "켜기"; if (["표현 바꾸기", "감정 도움 AI"].includes(name)) return value >= 75 ? "항상" : "필요할 때"; if (name === "말맞춤 카드") return value >= 75 ? "넓게" : "약속 대화만"; if (name === "대화 흐름 요약") return value >= 75 ? "항상" : "갈등 있을 때"; if (name === "비꼼·압박 표현") return value < 35 ? "가볍게" : value < 70 ? "균형 있게" : "민감하게"; if (name === "출처 확인 제안") return value < 35 ? "중요 정보만" : value < 70 ? "균형 있게" : "민감하게"; return value < 35 ? "강한 표현만" : value < 70 ? "균형 있게" : "민감하게"; }
+function sensitivityWord(name, value) { if (value <= 0) return "끄기"; if (["입력 중 선검사", "확인 결과 재사용"].includes(name)) return "켜기"; if (name === "이미지 안전 안내") return value >= 70 ? "민감하게" : "필요할 때"; if (["표현 바꾸기", "감정 도움 AI"].includes(name)) return value >= 75 ? "항상" : "필요할 때"; if (name === "말맞춤 카드") return value >= 75 ? "넓게" : "약속 대화만"; if (name === "대화 흐름 요약") return value >= 75 ? "항상" : "갈등 있을 때"; if (name === "비꼼·압박 표현") return value < 35 ? "가볍게" : value < 70 ? "균형 있게" : "민감하게"; if (name === "출처 확인 제안") return value < 35 ? "중요 정보만" : value < 70 ? "균형 있게" : "민감하게"; return value < 35 ? "강한 표현만" : value < 70 ? "균형 있게" : "민감하게"; }
 const aiDetails = () => { const state = sensitivityState(); return Object.fromEntries(sensitivityKeys.map((key) => [key, sensitivityWord(key, state.categories[key])])); };
 const sensitivityLabel = (value) => value <= 20 ? "매우 가볍게" : value <= 40 ? "가볍게" : value <= 60 ? "보통" : value <= 80 ? "꼼꼼하게" : "매우 꼼꼼하게";
 const interventionFromSensitivity = (value) => value <= 0 ? "off" : value <= 33 ? "light" : value <= 66 ? "standard" : "careful";
@@ -189,9 +190,10 @@ const aiCategories = [
   ["확인 결과 재사용", "같은 문장의 이전 확인 결과를 재사용해 API 사용을 줄여요.", ["끄기", "켜기"]],
   ["말맞춤 카드", "약속·시간을 정하는 대화에서 일정 정리 카드를 제안해요.", ["끄기", "약속 대화만", "넓게"]],
   ["대화 흐름 요약", "10개마다 실행하지만, 이어지는 주제는 최근 대화 흐름으로 함께 정리해요.", ["끄기", "갈등 있을 때", "항상"]],
+  ["이미지 안전 안내", "사진 전송 전 선정성·불쾌감 가능성을 안내해요. 경고 후에도 직접 선택해 보낼 수 있어요.", ["끄기", "필요할 때", "민감하게"]],
 ];
 const aiGroups = [
-  ["대화 안전", "상대가 상처받을 수 있는 표현을 어느 정도까지 살펴볼지 정해요.", ["강한 공격 표현", "비꼼·압박 표현"]],
+  ["대화 안전", "상대가 상처받을 수 있는 표현과 사진을 어느 정도까지 살펴볼지 정해요.", ["강한 공격 표현", "비꼼·압박 표현", "이미지 안전 안내"]],
   ["정보와 표현", "출처 확인과 말 다듬기 도움을 설정해요.", ["출처 확인 제안", "표현 바꾸기"]],
   ["빠른 사용", "AI가 작동하는 방식과 도움 기능을 정해요.", ["입력 중 선검사", "감정 도움 AI", "확인 결과 재사용", "말맞춤 카드", "대화 흐름 요약"]],
 ];
@@ -246,7 +248,8 @@ function logout() {
   start();
 }
 function readImage(file) { return new Promise((resolve, reject) => { if (!file?.type.startsWith("image/") || file.size > 2_000_000) return reject(new Error("사진 파일만 2MB 이하로 선택해주세요.")); const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = reject; reader.readAsDataURL(file); }); }
-async function setAvatar(input) { const file = input.files[0]; if (!file) return; try { popup(`<div class="ai-check info"><span>프로필 사진 확인</span><h2>사진을 안전하게 확인 중이에요</h2><p>선정적이거나 불쾌감을 줄 수 있는 이미지는 프로필로 등록하지 않아요.</p></div>`); const dataUrl = await readImage(file); const user = await api(`/api/users/${signedInId}/avatar`, { method: "POST", body: JSON.stringify({ data_url: dataUrl }) }); localStorage.setItem("retone-avatar", user.avatar_url); closePopup(); settings(); } catch { closePopup(); popup(`<div class="ai-check warn"><h2>사진을 등록하지 못했어요</h2><p>안전 점검을 통과하지 못했거나, 2MB 이하의 이미지 파일이 아니에요.</p><button onclick="closePopup()">확인</button></div>`); } }
+async function saveAvatar(dataUrl, overrideWarning = false) { const out = await api(`/api/users/${signedInId}/avatar`, { method: "POST", body: JSON.stringify({ data_url: dataUrl, override_warning: overrideWarning }) }); if (!out.saved) { const legal = out.sexual ? "선정적 이미지로 보일 수 있어 법률·플랫폼 규정 문제가 생길 수 있어요. Re:Tone은 법적 판단을 하지 않으며, 선택과 책임은 사용자에게 있어요." : "불쾌감이나 유해 가능성이 있는 이미지로 보일 수 있어요."; const token = encodeURIComponent(dataUrl); return popup(`<div class="ai-check warn"><span>프로필 사진 안내</span><h2>이 사진은 이렇게 보일 수 있어요</h2><p>${legal}</p><div class="modal-actions"><button class="quiet" onclick="closePopup()">다른 사진 고르기</button><button onclick="saveAvatar(decodeURIComponent('${token}'),true)">그래도 등록</button></div></div>`); } localStorage.setItem("retone-avatar", out.avatar_url); closePopup(); settings(); }
+async function setAvatar(input) { const file = input.files[0]; if (!file) return; try { popup(`<div class="ai-check info"><span>프로필 사진 확인</span><h2>사진을 안전하게 확인 중이에요</h2><p>필요한 경우에만 안내를 띄우고, 최종 선택은 내가 해요.</p></div>`); const dataUrl = await readImage(file); if (aiDetails()["이미지 안전 안내"] === "끄기") return saveAvatar(dataUrl, true); await saveAvatar(dataUrl); } catch { closePopup(); popup(`<div class="ai-check warn"><h2>사진을 등록하지 못했어요</h2><p>2MB 이하의 이미지 파일인지, AI 안전 점검 연결 상태를 확인해주세요.</p><button onclick="closePopup()">확인</button></div>`); } }
 function view(m) {
   return `<article class="bubble ${m.mine ? "mine" : ""}" ${m.mine ? "" : `onclick="inspectMessage(${JSON.stringify(m.body)})"`}><div class="meta">${esc(m.sender)}${m.intent ? ` · <span class="intent-tag">${esc(m.intent)}</span>` : ""}</div>${m.image_url ? `<img class="chat-image" src="${m.image_url}" alt="보낸 사진">` : ""}${m.body ? `<span>${esc(m.body)}</span>` : ""}${m.mine && m.unread ? `<span class="read">${m.unread}</span>` : ""}${m.mine ? `<button class="delete-message" title="메시지 삭제" onclick="removeMessage('${m.id}')">×</button>` : ""}</article>`;
 }
@@ -424,16 +427,15 @@ async function send(event) {
     await sendApproved();
   }
 }
+async function sendImageNow(dataUrl) { await api(`/api/rooms/${roomId}/messages`, { method: "POST", body: JSON.stringify({ sender: signedIn, sender_id: signedInId, body: "사진을 보냈어요.", image_url: dataUrl }) }); openRoom(roomId); }
 async function sendImage(input) {
   const file = input.files[0];
   if (!file || !roomId) return;
   try {
     setAiStatus("사진을 안전하게 확인 중이에요…", true);
     const dataUrl = await readImage(file);
-    const check = await api("/api/images/check", { method: "POST", body: JSON.stringify({ data_url: dataUrl }) });
-    if (!check.allowed) { popup(`<div class="ai-check warn"><span>사진 전송 안내</span><h2>이 사진은 전송하지 않았어요</h2><p>선정적이거나 불쾌감을 줄 수 있는 이미지로 보일 수 있어요. 다른 사진을 선택해 주세요.</p><button onclick="closePopup()">확인</button></div>`); return; }
-    await api(`/api/rooms/${roomId}/messages`, { method: "POST", body: JSON.stringify({ sender: signedIn, sender_id: signedInId, body: "사진을 보냈어요.", image_url: dataUrl }) });
-    openRoom(roomId);
+    if (aiDetails()["이미지 안전 안내"] !== "끄기") { const check = await api("/api/images/check", { method: "POST", body: JSON.stringify({ data_url: dataUrl }) }); if (check.flagged) { const legal = check.sexual ? "선정적 이미지로 보일 수 있어 법률·플랫폼 규정 문제가 생길 수 있어요. Re:Tone은 법적 판단을 하지 않으며, 최종 선택과 책임은 사용자에게 있어요." : "상대에게 불쾌감이나 유해한 이미지로 보일 수 있어요."; const token = encodeURIComponent(dataUrl); popup(`<div class="ai-check warn"><span>사진 전송 안내</span><h2>이 사진은 이렇게 보일 수 있어요</h2><p>${legal}</p><div class="modal-actions"><button class="quiet" onclick="closePopup()">다른 사진 고르기</button><button onclick="closePopup();sendImageNow(decodeURIComponent('${token}'))">그래도 보내기</button></div></div>`); return; } }
+    await sendImageNow(dataUrl);
   } catch { popup(`<div class="ai-check warn"><h2>사진을 전송하지 못했어요</h2><p>2MB 이하의 이미지인지, AI 안전 점검 연결 상태를 확인해주세요.</p><button onclick="closePopup()">확인</button></div>`); }
   finally { setAiStatus(""); input.value = ""; }
 }
