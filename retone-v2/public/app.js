@@ -41,6 +41,7 @@ const aiDetails = () => { const state = sensitivityState(); return Object.fromEn
 const sensitivityLabel = (value) => value <= 20 ? "매우 가볍게" : value <= 40 ? "가볍게" : value <= 60 ? "보통" : value <= 80 ? "꼼꼼하게" : "매우 꼼꼼하게";
 const interventionFromSensitivity = (value) => value <= 0 ? "off" : value <= 33 ? "light" : value <= 66 ? "standard" : "careful";
 const roomPreferenceKey = (kind, id) => `retone-${kind}-${signedInId || "guest"}-${id}`;
+const roomRule = (id) => localStorage.getItem(roomPreferenceKey("rule", id)) || "균형 있게";
 const isRoomMuted = (id) => localStorage.getItem(roomPreferenceKey("muted", id)) === "1";
 const hasLeftRoom = (id) => localStorage.getItem(roomPreferenceKey("left", id)) === "1";
 const esc = (s) =>
@@ -118,9 +119,10 @@ async function friends() {
 function roomSettings() {
   const muted = isRoomMuted(roomId);
   popup(
-    `<h2>채팅방 설정</h2><p>대화방 알림과 참여 상태를 관리할 수 있어요.</p><button onclick="toggleRoomMute()">${muted ? "이 채팅방 알림 켜기" : "이 채팅방 알림 끄기"}</button><button class="danger-action" onclick="leaveRoom()">채팅방 나가기</button>`,
+    `<h2>채팅방 설정</h2><p>이 방에서 AI가 돕는 정도를 간단히 정해요.</p><div class="choice-stack"><button onclick="setRoomRule('최소 개입')">최소 개입 · 강한 표현만</button><button onclick="setRoomRule('균형 있게')">균형 있게 · 필요한 순간만</button><button onclick="setRoomRule('꼼꼼하게')">꼼꼼하게 · 말투와 약속도</button></div><button onclick="toggleRoomMute()">${muted ? "이 채팅방 알림 켜기" : "이 채팅방 알림 끄기"}</button><button class="danger-action" onclick="leaveRoom()">채팅방 나가기</button>`,
   );
 }
+function setRoomRule(rule) { localStorage.setItem(roomPreferenceKey("rule", roomId), rule); closePopup(); openRoom(roomId); }
 function toggleRoomMute() {
   const key = roomPreferenceKey("muted", roomId);
   if (isRoomMuted(roomId)) localStorage.removeItem(key); else localStorage.setItem(key, "1");
