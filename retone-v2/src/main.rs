@@ -1,7 +1,7 @@
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use axum::{
     Json, Router,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     routing::{delete, get, patch, post},
 };
@@ -129,6 +129,10 @@ struct Credentials {
     ai_intervention: Option<String>,
 }
 #[derive(Deserialize)]
+struct PhoneCheck {
+    phone: String,
+}
+#[derive(Deserialize)]
 struct AdminLogin {
     password: String,
     two_factor: String,
@@ -210,6 +214,8 @@ async fn signup(
     if name.is_empty()
         || input.phone.chars().filter(|c| c.is_ascii_digit()).count() < 7
         || input.password.len() < 6
+        || !input.password.chars().any(|c| c.is_ascii_alphabetic())
+        || !input.password.chars().any(|c| !c.is_ascii_alphanumeric())
     {
         return Err(StatusCode::BAD_REQUEST);
     }
@@ -225,6 +231,23 @@ async fn signup(
         return Err(StatusCode::CONFLICT);
     };
     Ok(Json(user_out(id, name.to_string(), None, level)))
+}
+async fn phone_available(
+    State(app): State<App>,
+    Query(input): Query<PhoneCheck>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let digits = input.phone.chars().filter(|c| c.is_ascii_digit()).count();
+    if digits < 7 {
+        return Ok(Json(serde_json::json!({"available": false, "ready": false})));
+    }
+    let exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM retone_v2.users WHERE phone_hash=$1 AND deleted_at IS NULL)",
+    )
+    .bind(phone_hash(&input.phone))
+    .fetch_one(&app.db)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(serde_json::json!({"available": !exists, "ready": true})))
 }
 async fn login(
     State(app): State<App>,
@@ -1131,6 +1154,7 @@ async fn main() {
     let router = Router::new()
         .route("/api/health", get(health))
         .route("/api/auth/signup", post(signup))
+        .route("/api/auth/phone-available", get(phone_available))
         .route("/api/auth/login", post(login))
         .route("/api/auth/admin-login", post(admin_login))
         .route("/api/users", get(users))
