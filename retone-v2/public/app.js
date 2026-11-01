@@ -7,6 +7,7 @@ let signedInId = sessionStorage.getItem("retone-v2-user-id") || "";
 let aiIntervention = sessionStorage.getItem("retone-v2-ai-level") || "standard";
 let pendingSend = null;
 let signupAiDetails = null;
+let selectedIntent = "";
 let aiPrefetch = { text: "", result: null, promise: null, timer: null };
 let aiSavedResults = (() => {
   try {
@@ -76,7 +77,8 @@ async function openRoom(id) {
   roomId = id;
   const room = data.rooms.find((r) => r.id === id),
     messages = await api(`/api/rooms/${id}/messages`);
-  app.innerHTML = `<main class="layout">${rail()}<section class="chat"><header class="head"><button onclick="home()">←</button><div><h1>${esc(room.name)}</h1><span>참여자 ${room.members}명 · ${isRoomMuted(id) ? "알림 끔" : "연결됨"}</span></div><div class="chat-actions"><button title="친구 초대" onclick="inviteFriends()">＋</button><button title="AI 도움받기" onclick="openAiHelp()">✦</button><button title="채팅방 설정" onclick="roomSettings()">⋯</button><button title="공동 확인" onclick="newAgreement()">✓</button></div></header><section class="messages" id="messages">${messages.map(view).join("")}${data.agreements
+  const reflections = (data.reflections || []).filter((item) => item.room_id === id);
+  app.innerHTML = `<main class="layout">${rail()}<section class="chat"><header class="head"><button onclick="home()">←</button><div><h1>${esc(room.name)}</h1><span>참여자 ${room.members}명 · ${isRoomMuted(id) ? "알림 끔" : "연결됨"}</span></div><div class="chat-actions"><button title="친구 초대" onclick="inviteFriends()">＋</button><button title="AI 도움받기" onclick="openAiHelp()">✦</button><button title="회고 카드" onclick="newReflection()">↻</button><button title="채팅방 설정" onclick="roomSettings()">⋯</button><button title="공동 확인" onclick="newAgreement()">✓</button></div></header><section class="messages" id="messages">${toneCard(messages)}${messages.map(view).join("")}${reflections.map(viewReflection).join("")}${data.agreements
     .slice(0, 1)
     .map(
       (a) =>
@@ -84,7 +86,7 @@ async function openRoom(id) {
     )
     .join(
       "",
-    )}</section><form class="sendbar" onsubmit="send(event)"><input id="text" placeholder="메시지를 입력하세요" autocomplete="off" oninput="queueAiCheck(this.value)"><span id="ai-status" class="ai-status"></span><button>↑</button></form></section></main>`;
+    )}</section><form class="sendbar" onsubmit="send(event)"><button type="button" class="intent-button" title="의도 표시" onclick="chooseIntent()">${selectedIntent ? "◎" : "＋"}</button><input id="text" placeholder="메시지를 입력하세요" autocomplete="off" oninput="queueAiCheck(this.value)"><span id="ai-status" class="ai-status"></span><button>↑</button></form></section></main>`;
   document.querySelector("#messages").scrollTop = 999999;
 }
 async function friends() {
@@ -207,8 +209,27 @@ function setAvatar(input) {
   reader.readAsDataURL(file);
 }
 function view(m) {
-  return `<article class="bubble ${m.mine ? "mine" : ""}" ${m.mine ? "" : `onclick="inspectMessage(${JSON.stringify(m.body)})"`}><div class="meta">${esc(m.sender)}</div>${esc(m.body)}${m.mine && m.unread ? `<span class="read">${m.unread}</span>` : ""}${m.mine ? `<button class="delete-message" title="메시지 삭제" onclick="removeMessage('${m.id}')">×</button>` : ""}</article>`;
+  return `<article class="bubble ${m.mine ? "mine" : ""}" ${m.mine ? "" : `onclick="inspectMessage(${JSON.stringify(m.body)})"`}><div class="meta">${esc(m.sender)}${m.intent ? ` · <span class="intent-tag">${esc(m.intent)}</span>` : ""}</div>${esc(m.body)}${m.mine && m.unread ? `<span class="read">${m.unread}</span>` : ""}${m.mine ? `<button class="delete-message" title="메시지 삭제" onclick="removeMessage('${m.id}')">×</button>` : ""}</article>`;
 }
+function toneCard(messages) {
+  const joined = messages.map((message) => message.body).join(" ");
+  const tense = /(시발|씨발|병신|꺼져|죽어|닥쳐|최악|짜증|한심|왜이래|뭐하냐)/.test(joined);
+  const careful = /(근데|아니|왜|서운|답답|미안|오해)/.test(joined);
+  const tone = tense ? ["조심스러움", "최근 대화에 강한 표현이 있었어요. 누가 문제인지 정하지 않고, 서로의 의도를 한 번 확인해 볼까요?"] : careful ? ["오해 가능성", "조금 다른 뜻으로 읽힐 수 있는 대화예요. 필요하면 의도 확인이나 갈등 전환 카드를 열어 보세요."] : ["편안함", "현재 대화는 비교적 편안하게 이어지고 있어요."];
+  return `<button class="tone-card ${tense ? "careful" : ""}" onclick="openConflictGuide()"><span>대화 온도 · ${tone[0]}</span><b>${tone[1]}</b><small>누구를 평가하지 않는 대화 흐름 안내 · 눌러서 함께 정리하기</small></button>`;
+}
+function openConflictGuide() {
+  popup(`<div class="ai-check info"><span>갈등 전환 모드</span><h2>지금 우리에게 필요한 건 무엇일까요?</h2><p>누가 맞는지보다, 다음 대화를 어떻게 이어갈지 고를 수 있어요.</p><div class="choice-stack"><button onclick="chooseConflictPath('사실 정리')">사실 정리 · 무엇이 있었는지 차분히 보기</button><button onclick="chooseConflictPath('감정 먼저')">감정 먼저 · 서운했던 점을 말하기</button><button onclick="chooseConflictPath('다음 행동')">다음 행동 · 해결할 일을 정하기</button></div></div>`);
+}
+function chooseConflictPath(path) {
+  const copy = {"사실 정리":"서로 기억하는 사실을 짧게 적어볼까요?", "감정 먼저":"‘나는 …해서 서운했어’처럼 내 감정부터 말해볼까요?", "다음 행동":"지금 할 수 있는 작은 다음 행동을 정해볼까요?"}[path];
+  popup(`<div class="ai-check info"><span>${path}</span><h2>${copy}</h2><p>필요하다면 이 내용을 공동 확인 카드로 바로 남길 수 있어요.</p><button onclick="closePopup();newAgreement()">공동 확인으로 만들기</button><button class="quiet" onclick="closePopup()">채팅으로 돌아가기</button></div>`);
+}
+function chooseIntent() {
+  popup(`<div class="ai-check info"><span>의도 확인</span><h2>이 메시지를 어떤 마음으로 보내나요?</h2><p>상대가 내 말을 추측하지 않도록, 선택한 의도를 메시지에 함께 표시해요.</p><div class="choice-stack">${["진지한 요청", "가벼운 농담", "서운한 마음", "재촉이 아닌 확인"].map((intent) => `<button onclick="setIntent('${intent}')">${intent}</button>`).join("")}</div><button class="quiet" onclick="setIntent('')">의도 없이 보내기</button></div>`);
+}
+function setIntent(intent) { selectedIntent = intent; closePopup(); const button = document.querySelector(".intent-button"); if (button) button.textContent = intent ? "◎" : "＋"; }
+function viewReflection(item) { return `<article class="reflection-card"><span>↻ 약속 회고</span><b>${esc(item.title)}</b><p><strong>계속할 점</strong> ${esc(item.keep || "아직 작성하지 않았어요")}</p><p><strong>다음에는</strong> ${esc(item.next || "아직 작성하지 않았어요")}</p></article>`; }
 function inspectMessage(text) {
   popup(
     `<div class="ai-check info"><span>상대 메시지</span><h2>이 메시지를 함께 살펴볼까요?</h2><p>Re:Tone은 진실·거짓을 판정하지 않고, 확인에 필요한 단서를 제안해요.</p><button onclick="factCheck(${JSON.stringify(text)})">사실여부 확인 도움받기</button></div>`,
@@ -328,7 +349,7 @@ async function send(event) {
   const input = document.querySelector("#text"),
     body = input.value.trim();
   if (!body) return;
-  pendingSend = { body, room: roomId };
+  pendingSend = { body, room: roomId, intent: selectedIntent };
   input.value = "";
   input.disabled = true;
   const saved = aiIntervention !== "off" && savedAiResult(body);
@@ -412,8 +433,9 @@ async function sendApproved() {
   setAiStatus("");
   await api(`/api/rooms/${next.room}/messages`, {
     method: "POST",
-    body: JSON.stringify({ sender: signedIn, sender_id: signedInId, body: next.body }),
+    body: JSON.stringify({ sender: signedIn, sender_id: signedInId, body: next.body, intent: next.intent }),
   });
+  selectedIntent = "";
   openRoom(next.room);
 }
 function editPendingSend() {
@@ -550,6 +572,17 @@ async function saveAppointment() {
   });
   closePopup();
   home();
+}
+function newReflection() {
+  popup(`<h2>약속 회고 카드</h2><p>회의나 공동 확인이 끝난 뒤, 다음 대화를 더 좋게 만들 수 있어요.</p><input id="reflection-title" placeholder="무엇을 함께 돌아볼까요?"><input id="reflection-keep" placeholder="계속할 점을 입력해주세요"><input id="reflection-next" placeholder="다음에는 어떻게 할지 입력해주세요"><button onclick="saveReflection()">회고 카드 남기기</button>`);
+}
+async function saveReflection() {
+  const title = document.querySelector("#reflection-title").value.trim();
+  if (!title) return alert("돌아볼 내용을 입력해주세요.");
+  await api("/api/reflections", { method: "POST", body: JSON.stringify({ room_id: roomId, title, keep: document.querySelector("#reflection-keep").value.trim(), next: document.querySelector("#reflection-next").value.trim() }) });
+  closePopup();
+  data = await api("/api/bootstrap");
+  openRoom(roomId);
 }
 function showAiPolicy() {
   popup(

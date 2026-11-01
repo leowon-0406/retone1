@@ -35,6 +35,7 @@ struct Message {
     body: String,
     created: i64,
     unread: u8,
+    intent: Option<String>,
 }
 #[derive(Clone, Serialize)]
 struct Agreement {
@@ -51,12 +52,21 @@ struct Appointment {
     date: String,
     place: String,
 }
+#[derive(Clone, Serialize)]
+struct Reflection {
+    id: String,
+    room_id: String,
+    title: String,
+    keep: String,
+    next: String,
+}
 #[derive(Clone)]
 struct Data {
     rooms: Vec<Room>,
     messages: Vec<Message>,
     agreements: Vec<Agreement>,
     appointments: Vec<Appointment>,
+    reflections: Vec<Reflection>,
 }
 #[derive(Clone)]
 struct App {
@@ -68,6 +78,7 @@ struct Send {
     sender: String,
     sender_id: Option<String>,
     body: String,
+    intent: Option<String>,
 }
 #[derive(Deserialize)]
 struct NewRoom {
@@ -88,6 +99,13 @@ struct NewAppointment {
     room_id: Option<String>,
     date: String,
     place: String,
+}
+#[derive(Deserialize)]
+struct NewReflection {
+    room_id: String,
+    title: String,
+    keep: String,
+    next: String,
 }
 #[derive(Deserialize)]
 struct Credentials {
@@ -693,6 +711,7 @@ async fn bootstrap(State(app): State<App>) -> Json<DataOut> {
         rooms: d.rooms.clone(),
         agreements: d.agreements.clone(),
         appointments: d.appointments.clone(),
+        reflections: d.reflections.clone(),
     })
 }
 #[derive(Serialize)]
@@ -700,6 +719,7 @@ struct DataOut {
     rooms: Vec<Room>,
     agreements: Vec<Agreement>,
     appointments: Vec<Appointment>,
+    reflections: Vec<Reflection>,
 }
 async fn messages(State(app): State<App>, Path(id): Path<String>) -> Json<Vec<Message>> {
     let d = app.data.read().await;
@@ -728,6 +748,7 @@ async fn send(
         body: input.body.trim().to_string(),
         created: Utc::now().timestamp_millis(),
         unread: 2,
+        intent: input.intent.filter(|value| !value.trim().is_empty()),
     };
     d.messages.push(message.clone());
     if let Some(room) = d.rooms.iter_mut().find(|r| r.id == id) {
@@ -819,6 +840,23 @@ async fn create_appointment(
         .push(appointment.clone());
     Ok(Json(appointment))
 }
+async fn create_reflection(
+    State(app): State<App>,
+    Json(input): Json<NewReflection>,
+) -> Result<Json<Reflection>, StatusCode> {
+    if input.room_id.trim().is_empty() || input.title.trim().is_empty() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let reflection = Reflection {
+        id: Uuid::new_v4().to_string(),
+        room_id: input.room_id,
+        title: input.title.trim().chars().take(80).collect(),
+        keep: input.keep.trim().chars().take(120).collect(),
+        next: input.next.trim().chars().take(120).collect(),
+    };
+    app.data.write().await.reflections.push(reflection.clone());
+    Ok(Json(reflection))
+}
 
 async fn prepare_storage() -> Option<PgPool> {
     let url = env::var("DATABASE_URL").ok()?;
@@ -844,6 +882,7 @@ async fn main() {
             messages: vec![],
             agreements: vec![],
             appointments: vec![],
+            reflections: vec![],
         })),
     };
     let router = Router::new()
@@ -862,6 +901,7 @@ async fn main() {
         .route("/api/rooms", post(create_room))
         .route("/api/agreements", post(create_agreement))
         .route("/api/appointments", post(create_appointment))
+        .route("/api/reflections", post(create_reflection))
         .route("/api/rooms/{id}/messages", get(messages).post(send))
         .route(
             "/api/rooms/{room_id}/messages/{message_id}",
