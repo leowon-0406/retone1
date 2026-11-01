@@ -73,6 +73,7 @@ struct Send {
 struct NewRoom {
     name: String,
     creator_id: Option<String>,
+    invitee_ids: Option<Vec<String>>,
 }
 #[derive(Deserialize)]
 struct NewAgreement {
@@ -258,6 +259,12 @@ async fn ai_check(State(app): State<App>, Json(input): Json<AiCheck>) -> Json<se
         .and_then(|items| items.get("출처 확인 제안"))
         .map(String::as_str)
         .unwrap_or("중요한 정보만");
+    let attack_level = input
+        .details
+        .as_ref()
+        .and_then(|items| items.get("강한 공격 표현"))
+        .map(String::as_str)
+        .unwrap_or("필요한 경우만");
     let pass = [
         "ㅋㅋ",
         "ㅋㅋㅋ",
@@ -301,6 +308,12 @@ async fn ai_check(State(app): State<App>, Json(input): Json<AiCheck>) -> Json<se
         "좋다",
         "화이팅",
         "파이팅",
+        "ㅠㅠ", "ㅜㅜ", "ㅠㅠㅠ", "ㅜㅜㅜ", "ㅇ", "ㅇㅇㅇ", "ㄱㅊ", "ㄱㅅㄱㅅ",
+        "ㄴㄴㄴ", "ㅇㅋㅇㅋ", "오키", "오키오키", "알겠어", "알겠습니다", "넵",
+        "넹넹", "예", "그래", "그럼", "그렇구나", "아하", "오호", "헉헉", "와우",
+        "ㅋㅋㅋㅋㅋㅋ", "ㅋㅋㅋㅋㅋㅋㅋ", "ㅎㅎㅎㅎㅎ", "ㅃㅃ", "바이", "안녕히가세요",
+        "잘부탁해", "잘부탁드립니다", "수고하셨습니다", "고마워요", "감사합니다",
+        "죄송합니다", "미안해", "미안미안", "괜춘", "좋네", "좋아요", "완전좋아", "ㅇㅁㅇ", "ㄷㄷ", "ㄷㄷㄷ",
         "오",
         "오오",
         "와",
@@ -372,13 +385,19 @@ async fn ai_check(State(app): State<App>, Json(input): Json<AiCheck>) -> Json<se
         "shit",
         "bitch",
         "asshole",
+        "시발놈", "씨발놈", "시발년", "씨발년", "ㅅㅂㄴ", "ㅅㅂㄴㄱ", "개같네", "개같다",
+        "개지랄", "개좆", "좆같", "존나게", "좃", "ㅈ같", "병신아", "병신같", "ㅂㅅ같",
+        "븅신", "븅", "개병신", "등신", "찐따", "호구", "애미", "애비", "느금마", "니애미",
+        "니엄마", "니애비", "뒤질", "죽을래", "죽여", "죽여버", "살인", "패버", "쳐맞", "처맞",
+        "닥치고", "꺼지", "꺼져라", "엿이나", "씹새", "씹년", "씹놈", "씨발아", "ㅆㅂㄴ",
+        "ㄱㅅㄲ", "fuckyou", "motherfucker", "fucking", "wtf", "killyourself",
     ];
     if level == "off" || text.is_empty() || pass.iter().any(|p| text == *p || normalized == *p) {
         return Json(
             serde_json::json!({"verdict":"PASS","suggestion":null,"info":{"level":"none","note":null,"queries":[]},"source":"fast"}),
         );
     }
-    if bad.iter().any(|p| normalized.contains(p)) {
+    if attack_level != "꺼짐" && bad.iter().any(|p| normalized.contains(p)) {
         let matched = bad
             .iter()
             .find(|p| normalized.contains(**p))
@@ -436,7 +455,7 @@ async fn ai_check(State(app): State<App>, Json(input): Json<AiCheck>) -> Json<se
     }
     let hash = format!(
         "{:x}",
-        Sha256::digest(format!("v2:{level}:{normalized}").as_bytes())
+        Sha256::digest(format!("v3:{level}:{attack_level}:{sarcasm_level}:{source_level}:{normalized}").as_bytes())
     );
     if let Ok(Some((verdict,suggestion,info_level,info_note,info_queries)))=sqlx::query_as::<_,(String,Option<String>,String,Option<String>,Vec<String>)>("SELECT verdict,suggestion,info_level,info_note,info_queries FROM retone_v2.ai_cache WHERE message_hash=$1").bind(&hash).fetch_optional(&app.db).await{return Json(serde_json::json!({"verdict":verdict,"suggestion":suggestion,"info":{"level":info_level,"note":info_note,"queries":info_queries},"source":"cache"}));}
     let Some(key) = env::var("OPENAI_API_KEY").ok() else {
@@ -633,7 +652,7 @@ async fn create_room(
     let room = Room {
         id: Uuid::new_v4().to_string(),
         name: name.chars().take(30).collect(),
-        members: 1,
+        members: 1 + input.invitee_ids.unwrap_or_default().len().min(99) as u8,
         unread: 0,
         pinned: false,
         last: "새 대화를 시작해 보세요.".into(),

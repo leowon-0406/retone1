@@ -15,6 +15,9 @@ let aiSavedResults = (() => {
   }
 })();
 const aiDetails = () => JSON.parse(localStorage.getItem("retone-ai-detail") || "{}");
+const roomPreferenceKey = (kind, id) => `retone-${kind}-${signedInId || "guest"}-${id}`;
+const isRoomMuted = (id) => localStorage.getItem(roomPreferenceKey("muted", id)) === "1";
+const hasLeftRoom = (id) => localStorage.getItem(roomPreferenceKey("left", id)) === "1";
 const esc = (s) =>
   String(s || "").replace(
     /[&<>]/g,
@@ -52,7 +55,7 @@ async function home() {
   data = await api("/api/bootstrap");
   roomId = null;
   const rooms = data.rooms.filter(
-    (r) => !["science", "friends"].includes(r.id),
+    (r) => !["science", "friends"].includes(r.id) && !hasLeftRoom(r.id),
   );
   app.innerHTML = `<main class="layout">${rail()}<section class="page"><header class="head"><h1>채팅</h1><button class="new-room" onclick="newRoom()">＋ 새 대화</button></header><div class="content"><div class="intro"><h2>${esc(signedIn)}님, 반가워요.</h2><p>친구를 초대해 첫 대화를 시작해 보세요.</p></div><div class="dash"><section class="focus"><b>오늘의 공동 확인</b><span>채팅방에서 함께 확인할 일을 만들어 보세요.</span></section><section class="focus schedule"><b>다음 약속 <button onclick="newAppointment()">＋</button></b><span>친구들과 약속을 정하면 여기에 보여요.</span></section></div><div class="rooms">${rooms.length ? rooms.map((r) => `<button class="room" onclick="openRoom('${r.id}')"><span class="avatar">${esc(r.name[0])}</span><span class="copy"><b>${r.pinned ? "📌 " : ""}${esc(r.name)}</b><span>${esc(r.last)}</span></span>${r.unread ? `<span class="badge">${r.unread}</span>` : ""}</button>`).join("") : `<button class="empty-chat" onclick="newRoom()"><b>아직 대화가 없어요</b><span>친구를 초대하거나 단체 채팅을 만들어 보세요. ＋</span></button>`}</div></div></section></main>`;
 }
@@ -60,7 +63,7 @@ async function openRoom(id) {
   roomId = id;
   const room = data.rooms.find((r) => r.id === id),
     messages = await api(`/api/rooms/${id}/messages`);
-  app.innerHTML = `<main class="layout">${rail()}<section class="chat"><header class="head"><button onclick="home()">←</button><div><h1>${esc(room.name)}</h1><span>참여자 ${room.members}명 · 연결됨</span></div><button onclick="newAgreement()">✓</button></header><section class="messages" id="messages">${messages.map(view).join("")}${data.agreements
+  app.innerHTML = `<main class="layout">${rail()}<section class="chat"><header class="head"><button onclick="home()">←</button><div><h1>${esc(room.name)}</h1><span>참여자 ${room.members}명 · ${isRoomMuted(id) ? "알림 끔" : "연결됨"}</span></div><div class="chat-actions"><button title="친구 초대" onclick="inviteFriends()">＋</button><button title="AI 도움받기" onclick="openAiHelp()">✦</button><button title="채팅방 설정" onclick="roomSettings()">⋯</button><button title="공동 확인" onclick="newAgreement()">✓</button></div></header><section class="messages" id="messages">${messages.map(view).join("")}${data.agreements
     .slice(0, 1)
     .map(
       (a) =>
@@ -74,17 +77,27 @@ async function openRoom(id) {
 async function friends() {
   const users = await api("/api/users");
   const list = users.filter((u) => u.id !== signedInId);
-  app.innerHTML = `<main class="layout">${rail()}<section class="page"><header class="head"><h1>친구</h1><button class="new-room" onclick="home()">채팅 목록</button></header><div class="content"><div class="intro"><h2>Re:Tone 친구</h2><p>이 앱에 가입한 친구를 눌러 바로 대화를 시작해요.</p></div><div class="rooms">${list.length ? list.map((u) => `<button class="room" onclick="startDirect('${esc(u.name)}')"><span class="avatar">${esc(u.name[0])}</span><span class="copy"><b>${esc(u.name)}</b><span>눌러서 1:1 대화 시작</span></span><span>›</span></button>`).join("") : `<div class="empty-chat"><b>아직 가입한 친구가 없어요</b><span>친구가 가입하면 이곳에 자동으로 나타나요.</span></div>`}</div></div></section></main>`;
+  app.innerHTML = `<main class="layout">${rail()}<section class="page"><header class="head"><h1>친구</h1><button class="new-room" onclick="home()">채팅 목록</button></header><div class="content"><div class="intro"><h2>Re:Tone 친구</h2><p>이 앱에 가입한 친구를 눌러 바로 대화를 시작해요.</p></div><div class="rooms">${list.length ? list.map((u) => `<button class="room" onclick="startDirect('${esc(u.name)}','${u.id}')"><span class="avatar">${esc(u.name[0])}</span><span class="copy"><b>${esc(u.name)}</b><span>눌러서 1:1 대화 시작</span></span><span>›</span></button>`).join("") : `<div class="empty-chat"><b>아직 가입한 친구가 없어요</b><span>친구가 가입하면 이곳에 자동으로 나타나요.</span></div>`}</div></div></section></main>`;
 }
 function roomSettings() {
+  const muted = isRoomMuted(roomId);
   popup(
-    `<h2>채팅방 설정</h2><p>대화방 알림과 참여 상태를 관리할 수 있어요.</p><button onclick="localStorage.setItem('retone-muted-'+roomId,'1');closePopup()">이 채팅방 알림 끄기</button><button onclick="if(confirm('채팅방에서 나갈까요?')){closePopup();home()}">채팅방 나가기</button>`,
+    `<h2>채팅방 설정</h2><p>대화방 알림과 참여 상태를 관리할 수 있어요.</p><button onclick="toggleRoomMute()">${muted ? "이 채팅방 알림 켜기" : "이 채팅방 알림 끄기"}</button><button class="danger-action" onclick="leaveRoom()">채팅방 나가기</button>`,
   );
 }
-async function startDirect(name) {
+function toggleRoomMute() {
+  const key = roomPreferenceKey("muted", roomId);
+  if (isRoomMuted(roomId)) localStorage.removeItem(key); else localStorage.setItem(key, "1");
+  closePopup(); openRoom(roomId);
+}
+function leaveRoom() {
+  if (!confirm("채팅방을 나갈까요? 나간 뒤 목록에서 이 방은 보이지 않아요.")) return;
+  localStorage.setItem(roomPreferenceKey("left", roomId), "1"); closePopup(); home();
+}
+async function startDirect(name, inviteeId = "") {
   const room = await api("/api/rooms", {
     method: "POST",
-    body: JSON.stringify({ name, creator_id: signedInId }),
+    body: JSON.stringify({ name, creator_id: signedInId, invitee_ids: inviteeId ? [inviteeId] : [] }),
   });
   data = await api("/api/bootstrap");
   openRoom(room.id);
@@ -209,7 +222,7 @@ function queueAiCheck(value) {
     text,
     result: null,
     promise: null,
-    timer: setTimeout(() => runAiCheck(text), 320),
+    timer: setTimeout(() => runAiCheck(text), 180),
   };
   setAiStatus("AI 확인 준비 중", true);
 }
@@ -424,15 +437,29 @@ function popup(inner) {
 function closePopup() {
   document.querySelector(".modal")?.remove();
 }
-function newRoom() {
-  popup(
-    `<h2>새 단체 채팅</h2><p>팀·친구와 함께할 대화 공간을 만들어요.</p><input id="roomName" placeholder="예: 과학 수행평가 조"><button onclick="saveRoom()">채팅방 만들기</button>`,
-  );
+async function newRoom() {
+  const users = (await api("/api/users")).filter((user) => user.id !== signedInId);
+  popup(`<h2>새 단체 채팅</h2><p>방 이름을 정하고, 가입한 친구를 바로 초대할 수 있어요.</p><input id="roomName" placeholder="예: 과학 수행평가 조"><div class="invite-list">${users.length ? users.map((user) => `<label><input type="checkbox" class="invite-user" value="${user.id}"> <b>${esc(user.name)}</b> 초대</label>`).join("") : "<small>가입한 다른 친구가 아직 없어요.</small>"}</div><button onclick="saveRoom()">채팅방 만들기</button>`);
+}
+function selectedInvitees() {
+  return [...document.querySelectorAll(".invite-user:checked")].map((input) => input.value);
+}
+async function inviteFriends() {
+  const users = (await api("/api/users")).filter((user) => user.id !== signedInId);
+  popup(`<h2>친구 초대</h2><p>친구를 고르면 참여 안내가 표시돼요.</p><div class="invite-list">${users.length ? users.map((user) => `<label><input type="checkbox" class="invite-user" value="${user.id}"> <b>${esc(user.name)}</b></label>`).join("") : "<small>초대할 가입 친구가 없어요.</small>"}</div><button onclick="confirmInviteFriends()">선택한 친구 초대</button>`);
+}
+async function confirmInviteFriends() {
+  const inviteeIds = selectedInvitees();
+  if (!inviteeIds.length) return alert("초대할 친구를 한 명 이상 골라 주세요.");
+  const room = data.rooms.find((item) => item.id === roomId);
+  if (room) room.members += inviteeIds.length;
+  closePopup();
+  openRoom(roomId);
 }
 async function saveRoom() {
   const name = document.querySelector("#roomName").value.trim();
   if (!name) return;
-  await api("/api/rooms", { method: "POST", body: JSON.stringify({ name, creator_id: signedInId }) });
+  await api("/api/rooms", { method: "POST", body: JSON.stringify({ name, creator_id: signedInId, invitee_ids: selectedInvitees() }) });
   closePopup();
   home();
 }
