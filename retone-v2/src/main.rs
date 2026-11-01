@@ -435,7 +435,10 @@ async fn moderate_image(data_url: &str) -> Result<serde_json::Value, StatusCode>
 async fn check_image(Json(input): Json<ImageInput>) -> Result<Json<serde_json::Value>, StatusCode> {
     let result = moderate_image(&input.data_url).await?;
     let flagged = result["flagged"].as_bool().unwrap_or(true);
-    let sexual = result["categories"]["sexual"].as_bool().unwrap_or(false) || result["categories"]["sexual/minors"].as_bool().unwrap_or(false);
+    let sexual = result["categories"]["sexual"].as_bool().unwrap_or(false)
+        || result["categories"]["sexual/minors"]
+            .as_bool()
+            .unwrap_or(false);
     Ok(Json(serde_json::json!({"flagged":flagged,"sexual":sexual})))
 }
 async fn update_avatar(
@@ -445,13 +448,20 @@ async fn update_avatar(
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let result = moderate_image(&input.data_url).await?;
     let flagged = result["flagged"].as_bool().unwrap_or(true);
-    let sexual = result["categories"]["sexual"].as_bool().unwrap_or(false) || result["categories"]["sexual/minors"].as_bool().unwrap_or(false);
+    let sexual = result["categories"]["sexual"].as_bool().unwrap_or(false)
+        || result["categories"]["sexual/minors"]
+            .as_bool()
+            .unwrap_or(false);
     if flagged && !input.override_warning.unwrap_or(false) {
-        return Ok(Json(serde_json::json!({"saved":false,"flagged":true,"sexual":sexual})));
+        return Ok(Json(
+            serde_json::json!({"saved":false,"flagged":true,"sexual":sexual}),
+        ));
     }
     let row = sqlx::query_as::<_,(Uuid,String,Option<String>,String)>("UPDATE retone_v2.users SET avatar_url=$1 WHERE id=$2 AND deleted_at IS NULL RETURNING id,name,avatar_url,ai_intervention").bind(input.data_url).bind(id).fetch_optional(&app.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?.ok_or(StatusCode::NOT_FOUND)?;
     let user = user_out(row.0, row.1, row.2, row.3);
-    Ok(Json(serde_json::json!({"saved":true,"avatar_url":user.avatar_url})))
+    Ok(Json(
+        serde_json::json!({"saved":true,"avatar_url":user.avatar_url}),
+    ))
 }
 async fn ai_check(State(app): State<App>, Json(input): Json<AiCheck>) -> Json<serde_json::Value> {
     let text = input.text.trim();

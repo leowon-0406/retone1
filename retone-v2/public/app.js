@@ -32,10 +32,10 @@ const aiCategoryDefaults = {
   "대화 흐름 요약": "갈등 있을 때",
   "이미지 안전 안내": "필요할 때",
 };
-const sensitivityKeys = ["강한 공격 표현", "비꼼·압박 표현", "출처 확인 제안", "표현 바꾸기", "입력 중 선검사", "감정 도움 AI", "확인 결과 재사용", "말맞춤 카드", "대화 흐름 요약", "이미지 안전 안내"];
+const sensitivityKeys = ["강한 공격 표현", "비꼼·압박 표현", "출처 확인 제안", "표현 바꾸기", "입력 중 선검사", "감정 도움 AI", "확인 결과 재사용", "말맞춤 카드", "대화 흐름 요약", "이미지 안전 안내", "대화 온도 타임라인", "대화 복구 문장"];
 function sensitivityState() { try { const saved = JSON.parse(localStorage.getItem("retone-ai-sensitivity") || "{}"); return { overall: Number.isFinite(saved.overall) ? saved.overall : 50, categories: Object.fromEntries(sensitivityKeys.map((key) => [key, Number.isFinite(saved.categories?.[key]) ? saved.categories[key] : 50])), overrides: saved.overrides || {} }; } catch { return { overall: 50, categories: Object.fromEntries(sensitivityKeys.map((key) => [key, 50])), overrides: {} }; } }
 function saveSensitivity(state) { localStorage.setItem("retone-ai-sensitivity", JSON.stringify(state)); }
-function sensitivityWord(name, value) { if (value <= 0) return "끄기"; if (["입력 중 선검사", "확인 결과 재사용"].includes(name)) return "켜기"; if (name === "이미지 안전 안내") return value >= 70 ? "민감하게" : "필요할 때"; if (["표현 바꾸기", "감정 도움 AI"].includes(name)) return value >= 75 ? "항상" : "필요할 때"; if (name === "말맞춤 카드") return value >= 75 ? "넓게" : "약속 대화만"; if (name === "대화 흐름 요약") return value >= 75 ? "항상" : "갈등 있을 때"; if (name === "비꼼·압박 표현") return value < 35 ? "가볍게" : value < 70 ? "균형 있게" : "민감하게"; if (name === "출처 확인 제안") return value < 35 ? "중요 정보만" : value < 70 ? "균형 있게" : "민감하게"; return value < 35 ? "강한 표현만" : value < 70 ? "균형 있게" : "민감하게"; }
+function sensitivityWord(name, value) { if (value <= 0) return "끄기"; if (["입력 중 선검사", "확인 결과 재사용"].includes(name)) return "켜기"; if (["이미지 안전 안내", "대화 온도 타임라인", "대화 복구 문장"].includes(name)) return value >= 70 ? "민감하게" : "필요할 때"; if (["표현 바꾸기", "감정 도움 AI"].includes(name)) return value >= 75 ? "항상" : "필요할 때"; if (name === "말맞춤 카드") return value >= 75 ? "넓게" : "약속 대화만"; if (name === "대화 흐름 요약") return value >= 75 ? "항상" : "갈등 있을 때"; if (name === "비꼼·압박 표현") return value < 35 ? "가볍게" : value < 70 ? "균형 있게" : "민감하게"; if (name === "출처 확인 제안") return value < 35 ? "중요 정보만" : value < 70 ? "균형 있게" : "민감하게"; return value < 35 ? "강한 표현만" : value < 70 ? "균형 있게" : "민감하게"; }
 const aiDetails = () => { const state = sensitivityState(); return Object.fromEntries(sensitivityKeys.map((key) => [key, sensitivityWord(key, state.categories[key])])); };
 const sensitivityLabel = (value) => value <= 20 ? "매우 가볍게" : value <= 40 ? "가볍게" : value <= 60 ? "보통" : value <= 80 ? "꼼꼼하게" : "매우 꼼꼼하게";
 const interventionFromSensitivity = (value) => value <= 0 ? "off" : value <= 33 ? "light" : value <= 66 ? "standard" : "careful";
@@ -92,7 +92,7 @@ async function openRoom(id) {
   const reflections = (data.reflections || []).filter((item) => item.room_id === id);
   const appointments = (data.appointments || []).filter((item) => item.room_id === id);
   const insights = (data.insights || []).filter((item) => item.room_id === id && (item.has_conflict || aiDetails()["대화 흐름 요약"] === "항상"));
-  app.innerHTML = `<main class="layout">${rail()}<section class="chat"><header class="head"><button onclick="home()">←</button><div><h1>${esc(room.name)}</h1><span>참여자 ${room.members}명 · ${isRoomMuted(id) ? "알림 끔" : "연결됨"}</span></div><div class="chat-actions"><button title="친구 초대" onclick="inviteFriends()">＋</button><button title="AI 도움받기" onclick="openAiHelp()">✦</button><button title="회고 카드" onclick="newReflection()">↻</button><button title="채팅방 설정" onclick="roomSettings()">⋯</button><button title="공동 확인" onclick="newAgreement()">✓</button></div></header><section class="messages" id="messages">${toneCard(messages)}${insights.map(viewInsight).join("")}${messages.map(view).join("")}${alignmentCard(messages)}${appointments.map(viewAppointment).join("")}${reflections.map(viewReflection).join("")}${data.agreements
+  app.innerHTML = `<main class="layout">${rail()}<section class="chat"><header class="head"><button onclick="home()">←</button><div><h1>${esc(room.name)}</h1><span>참여자 ${room.members}명 · ${isRoomMuted(id) ? "알림 끔" : "연결됨"}</span></div><div class="chat-actions"><button title="친구 초대" onclick="inviteFriends()">＋</button><button title="AI 도움받기" onclick="openAiHelp()">✦</button><button title="회고 카드" onclick="newReflection()">↻</button><button title="채팅방 설정" onclick="roomSettings()">⋯</button><button title="공동 확인" onclick="newAgreement()">✓</button></div></header><section class="messages" id="messages">${emotionTimeline(messages)}${toneCard(messages)}${insights.map(viewInsight).join("")}${messages.map(view).join("")}${alignmentCard(messages)}${appointments.map(viewAppointment).join("")}${reflections.map(viewReflection).join("")}${data.agreements
     .slice(0, 1)
     .map(
       (a) =>
@@ -191,11 +191,13 @@ const aiCategories = [
   ["말맞춤 카드", "약속·시간을 정하는 대화에서 일정 정리 카드를 제안해요.", ["끄기", "약속 대화만", "넓게"]],
   ["대화 흐름 요약", "10개마다 실행하지만, 이어지는 주제는 최근 대화 흐름으로 함께 정리해요.", ["끄기", "갈등 있을 때", "항상"]],
   ["이미지 안전 안내", "사진 전송 전 선정성·불쾌감 가능성을 안내해요. 경고 후에도 직접 선택해 보낼 수 있어요.", ["끄기", "필요할 때", "민감하게"]],
+  ["대화 온도 타임라인", "대화의 분위기 흐름을 작게 보여줘요. 알림이나 판단은 하지 않아요.", ["끄기", "필요할 때", "민감하게"]],
+  ["대화 복구 문장", "대화가 거칠어질 때만 조용히 보낼 문장 예시를 제안해요.", ["끄기", "필요할 때", "민감하게"]],
 ];
 const aiGroups = [
   ["대화 안전", "상대가 상처받을 수 있는 표현과 사진을 어느 정도까지 살펴볼지 정해요.", ["강한 공격 표현", "비꼼·압박 표현", "이미지 안전 안내"]],
   ["정보와 표현", "출처 확인과 말 다듬기 도움을 설정해요.", ["출처 확인 제안", "표현 바꾸기"]],
-  ["빠른 사용", "AI가 작동하는 방식과 도움 기능을 정해요.", ["입력 중 선검사", "감정 도움 AI", "확인 결과 재사용", "말맞춤 카드", "대화 흐름 요약"]],
+  ["빠른 사용", "AI가 작동하는 방식과 도움 기능을 정해요.", ["입력 중 선검사", "감정 도움 AI", "확인 결과 재사용", "말맞춤 카드", "대화 흐름 요약", "대화 온도 타임라인", "대화 복구 문장"]],
 ];
 function renderDetailedAiSettings() {
   const root = document.querySelector(".ai-toggles");
@@ -260,6 +262,18 @@ function toneCard(messages) {
   const tone = tense ? ["조심스러움", "최근 대화에 강한 표현이 있었어요. 누가 문제인지 정하지 않고, 서로의 의도를 한 번 확인해 볼까요?"] : careful ? ["오해 가능성", "조금 다른 뜻으로 읽힐 수 있는 대화예요. 필요하면 의도 확인이나 갈등 전환 카드를 열어 보세요."] : ["편안함", "현재 대화는 비교적 편안하게 이어지고 있어요."];
   return `<button class="tone-card ${tense ? "careful" : ""}" onclick="openConflictGuide()"><span>대화 온도 · ${tone[0]}</span><b>${tone[1]}</b><small>누구를 평가하지 않는 대화 흐름 안내 · 눌러서 함께 정리하기</small></button>`;
 }
+function emotionTimeline(messages) {
+  if (aiDetails()["대화 온도 타임라인"] === "끄기" || messages.length < 3) return "";
+  const recent = messages.slice(-8);
+  const score = (text) => /(고마워|좋아|괜찮|미안|축하|ㅎㅎ|ㅋㅋ|도와|수고)/.test(text) ? 1 : /(시발|씨발|병신|꺼져|죽어|닥쳐|짜증|최악|한심|왜이래|뭐하냐)/.test(text) ? -2 : /(근데|아니|왜|서운|답답|오해)/.test(text) ? -1 : 0;
+  const points = recent.map((m) => score(m.body || ""));
+  const average = points.reduce((sum, value) => sum + value, 0) / points.length;
+  const label = average <= -1 ? "조금 조심스러움" : average >= .5 ? "편안함" : "차분함";
+  const recovery = average <= -1 && aiDetails()["대화 복구 문장"] !== "끄기" && !localStorage.getItem(`retone-recovery-dismissed-${roomId}`) ? `<button onclick="fillRecoveryMessage()">부드럽게 이어가기</button><i onclick="dismissRecoveryMessage()">×</i>` : "";
+  return `<section class="emotion-timeline" title="최근 메시지의 단어 흐름을 단순히 요약한 표시예요. 누구의 감정이나 잘잘못을 판단하지 않아요."><span>대화 온도 · ${label}</span><div>${points.map((point) => `<i class="${point < 0 ? "low" : point > 0 ? "high" : "mid"}"></i>`).join("")}</div>${recovery}</section>`;
+}
+function fillRecoveryMessage() { const input = document.querySelector("#text"); if (input) { input.value = "내 의도는 비난이 아니었어. 잠깐 정리하고 다시 이야기해도 될까?"; input.focus(); } }
+function dismissRecoveryMessage() { localStorage.setItem(`retone-recovery-dismissed-${roomId}`, "1"); openRoom(roomId); }
 function openConflictGuide() {
   popup(`<div class="ai-check info"><span>갈등 전환 모드</span><h2>지금 우리에게 필요한 건 무엇일까요?</h2><p>누가 맞는지보다, 다음 대화를 어떻게 이어갈지 고를 수 있어요.</p><div class="choice-stack"><button onclick="chooseConflictPath('사실 정리')">사실 정리 · 무엇이 있었는지 차분히 보기</button><button onclick="chooseConflictPath('감정 먼저')">감정 먼저 · 서운했던 점을 말하기</button><button onclick="chooseConflictPath('다음 행동')">다음 행동 · 해결할 일을 정하기</button></div></div>`);
 }
