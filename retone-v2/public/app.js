@@ -13,6 +13,7 @@ let signupDraft = null;
 let signupPhoneTimer = null;
 let selectedIntent = "";
 let aiPrefetch = { text: "", result: null, promise: null, timer: null };
+let roomPollTimer = null;
 let aiSavedResults = (() => {
   try {
     return JSON.parse(localStorage.getItem("retone-ai-results-v1") || "{}");
@@ -77,6 +78,7 @@ function rail() {
   return `<aside class="rail"><div class="brand">Re:<i>Tone</i></div><p>더 나은 대화를 위한<br>새로운 작업 공간</p><nav><button class="${nav === "chat" ? "active" : ""}" onclick="nav='chat';home()">채팅</button><button class="${nav === "friends" ? "active" : ""}" onclick="nav='friends';friends()">친구</button><button onclick="settings()">설정</button></nav><small>${esc(signedIn || "Re:Tone")} · v2</small></aside>`;
 }
 async function home() {
+  stopRoomPolling();
   data = await api("/api/bootstrap");
   roomId = null;
   const rooms = data.rooms.filter(
@@ -85,6 +87,7 @@ async function home() {
   app.innerHTML = `<main class="layout">${rail()}<section class="page"><header class="head"><h1>채팅</h1><button class="new-room" onclick="newRoom()">＋ 새 대화</button></header><div class="content"><div class="intro"><h2>${esc(signedIn)}님, 반가워요.</h2><p>친구를 초대해 첫 대화를 시작해 보세요.</p></div><div class="dash"><section class="focus"><b>오늘의 공동 확인</b><span>채팅방에서 함께 확인할 일을 만들어 보세요.</span></section><section class="focus schedule"><b>다음 약속 <button onclick="newAppointment()">＋</button></b><span>친구들과 약속을 정하면 여기에 보여요.</span></section></div><div class="rooms">${rooms.length ? rooms.map((r) => `<button class="room" onclick="openRoom('${r.id}')"><span class="avatar">${esc(r.name[0])}</span><span class="copy"><b>${r.pinned ? "📌 " : ""}${esc(r.name)}</b><span>${esc(r.last)}</span></span>${r.unread ? `<span class="badge">${r.unread}</span>` : ""}</button>`).join("") : `<button class="empty-chat" onclick="newRoom()"><b>아직 대화가 없어요</b><span>친구를 초대하거나 단체 채팅을 만들어 보세요. ＋</span></button>`}</div></div></section></main>`;
 }
 async function openRoom(id) {
+  stopRoomPolling();
   roomId = id;
   const room = data.rooms.find((r) => r.id === id),
     messages = await api(`/api/rooms/${id}/messages`);
@@ -102,8 +105,12 @@ async function openRoom(id) {
       "",
     )}</section><form class="sendbar" onsubmit="send(event)"><button type="button" class="intent-button" title="의도 표시" onclick="chooseIntent()">${selectedIntent ? "◎" : "＋"}</button><label class="image-upload" title="사진 보내기">▧<input hidden type="file" accept="image/*" onchange="sendImage(this)"></label><input id="text" placeholder="메시지를 입력하세요" autocomplete="off" oninput="queueAiCheck(this.value)"><span id="ai-status" class="ai-status"></span><button>↑</button></form></section></main>`;
   document.querySelector("#messages").scrollTop = 999999;
+  startRoomPolling(id, messages.length);
 }
+function stopRoomPolling() { if (roomPollTimer) { clearInterval(roomPollTimer); roomPollTimer = null; } }
+function startRoomPolling(id, initialCount) { roomPollTimer = setInterval(async () => { if (roomId !== id || document.hidden) return; try { const latest = await api(`/api/rooms/${id}/messages`); if (latest.length !== initialCount) openRoom(id); } catch {} }, 3500); }
 async function friends() {
+  stopRoomPolling();
   const users = await api("/api/users");
   const list = users.filter((u) => u.id !== signedInId);
   app.innerHTML = `<main class="layout">${rail()}<section class="page"><header class="head"><h1>친구</h1><button class="new-room" onclick="home()">채팅 목록</button></header><div class="content"><div class="intro"><h2>Re:Tone 친구</h2><p>이 앱에 가입한 친구를 눌러 바로 대화를 시작해요.</p></div><div class="rooms">${list.length ? list.map((u) => `<button class="room" onclick="startDirect('${esc(u.name)}','${u.id}')"><span class="avatar">${u.avatar_url ? `<img src="${u.avatar_url}" alt="">` : esc(u.name[0])}</span><span class="copy"><b>${esc(u.name)}</b><span>눌러서 1:1 대화 시작</span></span><span>›</span></button>`).join("") : `<div class="empty-chat"><b>아직 가입한 친구가 없어요</b><span>친구가 가입하면 이곳에 자동으로 나타나요.</span></div>`}</div></div></section></main>`;
@@ -132,6 +139,7 @@ async function startDirect(name, inviteeId = "") {
   openRoom(room.id);
 }
 function settings() {
+  stopRoomPolling();
   nav = "settings";
   if (isAdmin) {
     app.innerHTML = `<main class="layout">${rail()}<section class="page"><header class="head"><h1>관리자</h1></header><div class="content"><div class="intro"><h2>Re:Tone 관리자 계정</h2><p>사용자별 계정과 데이터를 관리하는 공간이에요.</p></div><section class="admin-panel"><b>관리자 로그인 완료</b><span>일반 사용자 대화에는 관리자 권한이 자동으로 개입하지 않아요.</span></section><section class="admin-users"><div><b>가입 사용자</b><span>초기화할 계정을 개별로 선택하세요.</span></div><div id="admin-users-list" class="admin-users-list"><small>사용자 목록을 불러오는 중…</small></div></section><button class="room" onclick="logout()"><span class="avatar">↪</span><span class="copy"><b>로그아웃</b><span>관리자 세션을 안전하게 종료해요.</span></span></button></div></section></main>`;
@@ -241,6 +249,7 @@ async function setAiIntervention(level) {
   settings();
 }
 function logout() {
+  stopRoomPolling();
   ["retone-v2-name", "retone-v2-user-id", "retone-v2-ai-level", "retone-v2-admin"].forEach((k) =>
     sessionStorage.removeItem(k),
   );
