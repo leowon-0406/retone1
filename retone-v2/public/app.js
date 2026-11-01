@@ -129,7 +129,7 @@ async function startDirect(name, inviteeId = "") {
 function settings() {
   nav = "settings";
   if (isAdmin) {
-    app.innerHTML = `<main class="layout">${rail()}<section class="page"><header class="head"><h1>관리자</h1></header><div class="content"><div class="intro"><h2>Re:Tone 관리자 계정</h2><p>서비스 운영과 AI 제안 문의를 확인하는 공간이에요.</p></div><section class="admin-panel"><b>관리자 로그인 완료</b><span>일반 사용자 대화에는 관리자 권한이 자동으로 개입하지 않아요.</span></section><button class="room" onclick="logout()"><span class="avatar">↪</span><span class="copy"><b>로그아웃</b><span>관리자 세션을 안전하게 종료해요.</span></span></button></div></section></main>`;
+    app.innerHTML = `<main class="layout">${rail()}<section class="page"><header class="head"><h1>관리자</h1></header><div class="content"><div class="intro"><h2>Re:Tone 관리자 계정</h2><p>서비스 운영과 AI 제안 문의를 확인하는 공간이에요.</p></div><section class="admin-panel"><b>관리자 로그인 완료</b><span>일반 사용자 대화에는 관리자 권한이 자동으로 개입하지 않아요.</span></section><section class="admin-danger"><b>사용자 데이터 초기화</b><p>계정·채팅·약속·회고·AI 문의를 삭제합니다. AI 단어 확인 결과 캐시는 유지됩니다.</p><button onclick="openAdminClear()">사용자 데이터 초기화</button></section><button class="room" onclick="logout()"><span class="avatar">↪</span><span class="copy"><b>로그아웃</b><span>관리자 세션을 안전하게 종료해요.</span></span></button></div></section></main>`;
     return;
   }
   const avatar = localStorage.getItem("retone-avatar");
@@ -159,6 +159,20 @@ function settings() {
       "",
     )}</div><div class="ai-toggles">${toggles.map((t, i) => `<label><input type="checkbox" ${i < 6 ? "checked" : ""}>${t}</label>`).join("")}</div></section><button class="room" onclick="logout()"><span class="avatar">↪</span><span class="copy"><b>로그아웃</b><span>이 기기에서 안전하게 로그아웃해요.</span></span></button></div></div></section></main>`;
   renderDetailedAiSettings();
+}
+function openAdminClear() {
+  popup(`<div class="ai-check warn"><span>관리자 작업</span><h2>사용자 데이터를 초기화할까요?</h2><p>계정·채팅·약속·회고·AI 문의가 삭제됩니다. AI 단어 확인 캐시는 유지됩니다.</p><input id="admin-clear-password" type="password" placeholder="관리자 비밀번호를 입력해주세요"><input id="admin-clear-two-factor" type="password" inputmode="numeric" placeholder="2차 인증 코드를 입력해주세요"><button class="danger-action" onclick="clearUserData()">초기화 실행</button></div>`);
+}
+async function clearUserData() {
+  const password = document.querySelector("#admin-clear-password").value;
+  const two_factor = document.querySelector("#admin-clear-two-factor").value;
+  if (!password || !two_factor) return alert("관리자 비밀번호와 2차 인증 코드를 모두 입력해주세요.");
+  try {
+    const result = await api("/api/admin/clear-user-data", { method: "POST", body: JSON.stringify({ password, two_factor }) });
+    if (!result.ok) throw new Error();
+    closePopup(); data = await api("/api/bootstrap");
+    popup(`<div class="ai-check info"><h2>초기화가 완료됐어요.</h2><p>사용자·계정·채팅·약속 정보는 삭제했고, AI 단어 확인 캐시는 유지했어요.</p><button onclick="closePopup();settings()">확인</button></div>`);
+  } catch { alert("초기화하지 못했어요. 관리자 인증 정보 또는 서버 배포 상태를 확인해주세요."); }
 }
 const aiCategories = [
   ["강한 공격 표현", "욕설·위협·강한 비하 표현을 살펴봐요.", ["끄기", "강한 표현만", "균형 있게", "민감하게"]],
