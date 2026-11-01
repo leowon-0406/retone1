@@ -6,6 +6,7 @@ let signedIn = sessionStorage.getItem("retone-v2-name") || "";
 let signedInId = sessionStorage.getItem("retone-v2-user-id") || "";
 let aiIntervention = sessionStorage.getItem("retone-v2-ai-level") || "standard";
 let pendingSend = null;
+let signupAiDetails = null;
 let aiPrefetch = { text: "", result: null, promise: null, timer: null };
 let aiSavedResults = (() => {
   try {
@@ -569,9 +570,18 @@ function authForm(mode) {
   document
     .querySelectorAll(".auth-tabs button")
     .forEach((b, i) => b.classList.toggle("selected", (i === 1) === join));
-  const categorySetup = aiCategories.map(([name, , options]) => `<label class="auth-ai-category">${name}<select class="auth-ai-detail" data-name="${name}">${options.map((option) => `<option ${option === aiCategoryDefaults[name] ? "selected" : ""}>${option}</option>`).join("")}</select></label>`).join("");
+  if (join && !signupAiDetails) signupAiDetails = { ...aiDetails() };
+  const signupCard = (name) => {
+    const [, desc, options] = aiCategories.find(([title]) => title === name);
+    return `<article class="signup-ai-category"><b>${name}</b><small>${desc}</small><div>${options.map((option) => `<button type="button" class="${signupAiDetails[name] === option ? "selected" : ""}" onclick="setSignupAiDetail(this,'${name}','${option}')">${option}</button>`).join("")}</div></article>`;
+  };
+  const categorySetup = `<details class="auth-ai-details" open><summary>항목별 AI 민감도 설정</summary><p>각 항목에서 AI가 어느 정도까지 도울지 정해요. 가입 후에도 바꿀 수 있어요.</p>${aiGroups.map(([title, , names]) => `<section class="signup-ai-group"><b>${title}</b>${names.map(signupCard).join("")}</section>`).join("")}</details>`;
   document.querySelector("#auth-form").innerHTML =
-    `<label>이름<input id="auth-name" placeholder="이름을 입력하세요"></label><label>전화번호<input id="auth-phone" inputmode="numeric" placeholder="전화번호를 입력하세요"></label><label>비밀번호<input id="auth-password" type="password" placeholder="비밀번호를 입력하세요"></label>${join ? `<label>AI 개입 정도<select id="auth-ai-level"><option value="light">가볍게 · 강한 욕설만</option><option value="standard" selected>균형 있게 · 말투와 중요한 정보</option><option value="careful">꼼꼼하게 · 더 세심한 확인</option><option value="off">AI 끄기</option></select></label><details class="auth-ai-details"><summary>항목별 AI 개입 수준 정하기</summary><p>가입 후 설정에서 언제든 바꿀 수 있어요.</p>${categorySetup}</details><button type="button" class="ai-policy-link" onclick="showAiPolicy()">AI가 개입하는 이유와 사용 범위 보기</button><label class="consent"><input id="auth-ai-consent" type="checkbox"> AI 사용 안내를 읽었고, 선택한 범위의 점검에 동의해요.</label><p class="auth-hint">동의하지 않아도 AI 끄기를 선택해 가입할 수 있고, 설정에서 언제든 변경할 수 있어요.</p>` : ""}<button class="auth-submit" onclick="finishAuth('${mode}')">${join ? "회원가입하고 시작하기" : "로그인"}</button>${join ? '<p class="auth-hint">같은 전화번호가 있으면 확인 절차가 안내돼요.</p>' : ""}`;
+    `<label>이름<input id="auth-name" placeholder="이름을 입력하세요"></label><label>전화번호<input id="auth-phone" inputmode="numeric" placeholder="전화번호를 입력하세요"></label><label>비밀번호<input id="auth-password" type="password" placeholder="비밀번호를 입력하세요"></label>${join ? `<label>AI 개입 정도<select id="auth-ai-level"><option value="light">가볍게 · 강한 욕설만</option><option value="standard" selected>균형 있게 · 말투와 중요한 정보</option><option value="careful">꼼꼼하게 · 더 세심한 확인</option><option value="off">AI 끄기</option></select></label>${categorySetup}<button type="button" class="ai-policy-link" onclick="showAiPolicy()">AI가 개입하는 이유와 사용 범위 보기</button><label class="consent"><input id="auth-ai-consent" type="checkbox"> AI 사용 안내를 읽었고, 선택한 범위의 점검에 동의해요.</label><p class="auth-hint">동의하지 않아도 AI 끄기를 선택해 가입할 수 있고, 설정에서 언제든 변경할 수 있어요.</p>` : ""}<button class="auth-submit" onclick="finishAuth('${mode}')">${join ? "회원가입하고 시작하기" : "로그인"}</button>${join ? '<p class="auth-hint">같은 전화번호가 있으면 확인 절차가 안내돼요.</p>' : ""}`;
+}
+function setSignupAiDetail(button, name, value) {
+  signupAiDetails = { ...(signupAiDetails || aiDetails()), [name]: value };
+  button.closest(".signup-ai-category").querySelectorAll("button").forEach((item) => item.classList.toggle("selected", item === button));
 }
 async function finishAuth(mode) {
   const name = document.querySelector("#auth-name").value.trim(),
@@ -586,8 +596,7 @@ async function finishAuth(mode) {
       "AI 사용 안내를 확인하고 동의하거나, AI 끄기를 선택해 주세요.",
     );
   if (mode === "signup") {
-    const details = Object.fromEntries([...document.querySelectorAll(".auth-ai-detail")].map((select) => [select.dataset.name, select.value]));
-    localStorage.setItem("retone-ai-detail", JSON.stringify({ ...aiCategoryDefaults, ...details }));
+    localStorage.setItem("retone-ai-detail", JSON.stringify({ ...aiCategoryDefaults, ...signupAiDetails }));
   }
   try {
     const user = await api(

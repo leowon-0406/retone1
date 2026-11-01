@@ -227,7 +227,15 @@ async fn delete_account(
     Path(id): Path<Uuid>,
     Json(input): Json<DeleteCredentials>,
 ) -> Result<StatusCode, StatusCode> {
-    let row=sqlx::query_as::<_,(String,)>("SELECT password_hash FROM retone_v2.users WHERE id=$1 AND name=$2 AND deleted_at IS NULL").bind(id).bind(input.name.trim()).fetch_optional(&app.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?.ok_or(StatusCode::UNAUTHORIZED)?;
+    let row = sqlx::query_as::<_, (String,)>(
+        "SELECT password_hash FROM retone_v2.users WHERE id=$1 AND name=$2 AND deleted_at IS NULL",
+    )
+    .bind(id)
+    .bind(input.name.trim())
+    .fetch_optional(&app.db)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    .ok_or(StatusCode::UNAUTHORIZED)?;
     let parsed = PasswordHash::new(&row.0).map_err(|_| StatusCode::UNAUTHORIZED)?;
     Argon2::default()
         .verify_password(input.password.as_bytes(), &parsed)
