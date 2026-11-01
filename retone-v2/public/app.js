@@ -4,6 +4,7 @@ let data = null,
   nav = "chat";
 let signedIn = sessionStorage.getItem("retone-v2-name") || "";
 let signedInId = sessionStorage.getItem("retone-v2-user-id") || "";
+let isAdmin = sessionStorage.getItem("retone-v2-admin") === "yes";
 let aiIntervention = sessionStorage.getItem("retone-v2-ai-level") || "standard";
 let pendingSend = null;
 let signupAiDetails = null;
@@ -119,6 +120,10 @@ async function startDirect(name, inviteeId = "") {
 }
 function settings() {
   nav = "settings";
+  if (isAdmin) {
+    app.innerHTML = `<main class="layout">${rail()}<section class="page"><header class="head"><h1>관리자</h1></header><div class="content"><div class="intro"><h2>Re:Tone 관리자 계정</h2><p>서비스 운영과 AI 제안 문의를 확인하는 공간이에요.</p></div><section class="admin-panel"><b>관리자 로그인 완료</b><span>일반 사용자 대화에는 관리자 권한이 자동으로 개입하지 않아요.</span></section><button class="room" onclick="logout()"><span class="avatar">↪</span><span class="copy"><b>로그아웃</b><span>관리자 세션을 안전하게 종료해요.</span></span></button></div></section></main>`;
+    return;
+  }
   const avatar = localStorage.getItem("retone-avatar");
   const levels = {
     off: ["AI 끄기", "AI 점검을 사용하지 않아요"],
@@ -191,11 +196,12 @@ async function setAiIntervention(level) {
   settings();
 }
 function logout() {
-  ["retone-v2-name", "retone-v2-user-id", "retone-v2-ai-level"].forEach((k) =>
+  ["retone-v2-name", "retone-v2-user-id", "retone-v2-ai-level", "retone-v2-admin"].forEach((k) =>
     sessionStorage.removeItem(k),
   );
   signedIn = "";
   signedInId = "";
+  isAdmin = false;
   start();
 }
 function setAvatar(input) {
@@ -603,6 +609,10 @@ function authForm(mode) {
   document
     .querySelectorAll(".auth-tabs button")
     .forEach((b, i) => b.classList.toggle("selected", (i === 1) === join));
+  if (mode === "admin") {
+    document.querySelector("#auth-form").innerHTML = `<div class="admin-auth"><span>관리자 전용</span><h2>관리자 로그인</h2><p>비밀번호와 2차 인증 코드를 모두 입력해주세요.</p><label>관리자 비밀번호<input id="admin-password" type="password" placeholder="관리자 비밀번호를 입력해주세요"></label><label>2차 인증 코드<input id="admin-two-factor" inputmode="numeric" type="password" placeholder="2차 인증 코드를 입력해주세요"></label><button class="auth-submit" onclick="finishAdminLogin()">관리자 로그인</button><button type="button" class="admin-back" onclick="authForm('login')">일반 로그인으로 돌아가기</button></div>`;
+    return;
+  }
   if (join && !signupAiDetails) signupAiDetails = { ...aiDetails() };
   const signupCard = (name) => {
     const [, desc, options] = aiCategories.find(([title]) => title === name);
@@ -610,7 +620,18 @@ function authForm(mode) {
   };
   const categorySetup = `<details class="auth-ai-details" open><summary>항목별 AI 민감도 설정</summary><p>각 항목에서 AI가 어느 정도까지 도울지 정해요. 가입 후에도 바꿀 수 있어요.</p>${aiGroups.map(([title, , names]) => `<section class="signup-ai-group"><b>${title}</b>${names.map(signupCard).join("")}</section>`).join("")}</details>`;
   document.querySelector("#auth-form").innerHTML =
-    `<label>이름<input id="auth-name" placeholder="이름을 입력하세요"></label><label>전화번호<input id="auth-phone" inputmode="numeric" placeholder="전화번호를 입력하세요"></label><label>비밀번호<input id="auth-password" type="password" placeholder="비밀번호를 입력하세요"></label>${join ? `<label>AI 개입 정도<select id="auth-ai-level"><option value="light">가볍게 · 강한 욕설만</option><option value="standard" selected>균형 있게 · 말투와 중요한 정보</option><option value="careful">꼼꼼하게 · 더 세심한 확인</option><option value="off">AI 끄기</option></select></label>${categorySetup}<button type="button" class="ai-policy-link" onclick="showAiPolicy()">AI가 개입하는 이유와 사용 범위 보기</button><label class="consent"><input id="auth-ai-consent" type="checkbox"> AI 사용 안내를 읽었고, 선택한 범위의 점검에 동의해요.</label><p class="auth-hint">동의하지 않아도 AI 끄기를 선택해 가입할 수 있고, 설정에서 언제든 변경할 수 있어요.</p>` : ""}<button class="auth-submit" onclick="finishAuth('${mode}')">${join ? "회원가입하고 시작하기" : "로그인"}</button>${join ? '<p class="auth-hint">같은 전화번호가 있으면 확인 절차가 안내돼요.</p>' : ""}`;
+    `<label>이름<input id="auth-name" placeholder="이름을 입력하세요"></label><label>전화번호<input id="auth-phone" inputmode="numeric" placeholder="전화번호를 입력하세요"></label><label>비밀번호<input id="auth-password" type="password" placeholder="비밀번호를 입력하세요"></label>${join ? `<label>AI 개입 정도<select id="auth-ai-level"><option value="light">가볍게 · 강한 욕설만</option><option value="standard" selected>균형 있게 · 말투와 중요한 정보</option><option value="careful">꼼꼼하게 · 더 세심한 확인</option><option value="off">AI 끄기</option></select></label>${categorySetup}<button type="button" class="ai-policy-link" onclick="showAiPolicy()">AI가 개입하는 이유와 사용 범위 보기</button><label class="consent"><input id="auth-ai-consent" type="checkbox"> AI 사용 안내를 읽었고, 선택한 범위의 점검에 동의해요.</label><p class="auth-hint">동의하지 않아도 AI 끄기를 선택해 가입할 수 있고, 설정에서 언제든 변경할 수 있어요.</p>` : ""}<button class="auth-submit" onclick="finishAuth('${mode}')">${join ? "회원가입하고 시작하기" : "로그인"}</button>${join ? '<p class="auth-hint">같은 전화번호가 있으면 확인 절차가 안내돼요.</p>' : '<button type="button" class="admin-login-link" onclick="authForm(\'admin\')">관리자 로그인</button>'}`;
+}
+async function finishAdminLogin() {
+  const password = document.querySelector("#admin-password").value;
+  const two_factor = document.querySelector("#admin-two-factor").value;
+  if (!password || !two_factor) return alert("비밀번호와 2차 인증 코드를 모두 입력해주세요.");
+  try {
+    const user = await api("/api/auth/admin-login", { method: "POST", body: JSON.stringify({ password, two_factor }) });
+    signedIn = user.name; signedInId = user.id; aiIntervention = "off"; isAdmin = true;
+    sessionStorage.setItem("retone-v2-name", user.name); sessionStorage.setItem("retone-v2-user-id", user.id); sessionStorage.setItem("retone-v2-ai-level", "off"); sessionStorage.setItem("retone-v2-admin", "yes");
+    settings();
+  } catch { alert("관리자 비밀번호 또는 2차 인증 코드가 맞지 않아요."); }
 }
 function setSignupAiDetail(button, name, value) {
   signupAiDetails = { ...(signupAiDetails || aiDetails()), [name]: value };

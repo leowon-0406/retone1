@@ -115,6 +115,11 @@ struct Credentials {
     ai_intervention: Option<String>,
 }
 #[derive(Deserialize)]
+struct AdminLogin {
+    password: String,
+    two_factor: String,
+}
+#[derive(Deserialize)]
 struct DeleteCredentials {
     name: String,
     password: String,
@@ -216,6 +221,19 @@ async fn login(
         .verify_password(input.password.as_bytes(), &parsed)
         .map_err(|_| StatusCode::UNAUTHORIZED)?;
     Ok(Json(user_out(row.0, row.1, row.2, row.4)))
+}
+async fn admin_login(Json(input): Json<AdminLogin>) -> Result<Json<PublicUser>, StatusCode> {
+    let password = env::var("RETONE_ADMIN_PASSWORD").unwrap_or_else(|_| "3612asdf!!".into());
+    let two_factor = env::var("RETONE_ADMIN_2FA").unwrap_or_else(|_| "7812".into());
+    if input.password != password || input.two_factor != two_factor {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    Ok(Json(PublicUser {
+        id: "admin".into(),
+        name: "Re:Tone 관리자".into(),
+        avatar_url: None,
+        ai_intervention: "off".into(),
+    }))
 }
 async fn users(State(app): State<App>) -> Result<Json<Vec<PublicUser>>, StatusCode> {
     let rows=sqlx::query_as::<_,(Uuid,String,Option<String>,String)>("SELECT id,name,avatar_url,ai_intervention FROM retone_v2.users WHERE deleted_at IS NULL ORDER BY created_at").fetch_all(&app.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -889,6 +907,7 @@ async fn main() {
         .route("/api/health", get(health))
         .route("/api/auth/signup", post(signup))
         .route("/api/auth/login", post(login))
+        .route("/api/auth/admin-login", post(admin_login))
         .route("/api/users", get(users))
         .route("/api/admin/reset-v2", post(reset_v2))
         .route("/api/users/{id}", delete(delete_account))
