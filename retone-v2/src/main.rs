@@ -308,12 +308,51 @@ async fn ai_check(State(app): State<App>, Json(input): Json<AiCheck>) -> Json<se
         "좋다",
         "화이팅",
         "파이팅",
-        "ㅠㅠ", "ㅜㅜ", "ㅠㅠㅠ", "ㅜㅜㅜ", "ㅇ", "ㅇㅇㅇ", "ㄱㅊ", "ㄱㅅㄱㅅ",
-        "ㄴㄴㄴ", "ㅇㅋㅇㅋ", "오키", "오키오키", "알겠어", "알겠습니다", "넵",
-        "넹넹", "예", "그래", "그럼", "그렇구나", "아하", "오호", "헉헉", "와우",
-        "ㅋㅋㅋㅋㅋㅋ", "ㅋㅋㅋㅋㅋㅋㅋ", "ㅎㅎㅎㅎㅎ", "ㅃㅃ", "바이", "안녕히가세요",
-        "잘부탁해", "잘부탁드립니다", "수고하셨습니다", "고마워요", "감사합니다",
-        "죄송합니다", "미안해", "미안미안", "괜춘", "좋네", "좋아요", "완전좋아", "ㅇㅁㅇ", "ㄷㄷ", "ㄷㄷㄷ",
+        "ㅠㅠ",
+        "ㅜㅜ",
+        "ㅠㅠㅠ",
+        "ㅜㅜㅜ",
+        "ㅇ",
+        "ㅇㅇㅇ",
+        "ㄱㅊ",
+        "ㄱㅅㄱㅅ",
+        "ㄴㄴㄴ",
+        "ㅇㅋㅇㅋ",
+        "오키",
+        "오키오키",
+        "알겠어",
+        "알겠습니다",
+        "넵",
+        "넹넹",
+        "예",
+        "그래",
+        "그럼",
+        "그렇구나",
+        "아하",
+        "오호",
+        "헉헉",
+        "와우",
+        "ㅋㅋㅋㅋㅋㅋ",
+        "ㅋㅋㅋㅋㅋㅋㅋ",
+        "ㅎㅎㅎㅎㅎ",
+        "ㅃㅃ",
+        "바이",
+        "안녕히가세요",
+        "잘부탁해",
+        "잘부탁드립니다",
+        "수고하셨습니다",
+        "고마워요",
+        "감사합니다",
+        "죄송합니다",
+        "미안해",
+        "미안미안",
+        "괜춘",
+        "좋네",
+        "좋아요",
+        "완전좋아",
+        "ㅇㅁㅇ",
+        "ㄷㄷ",
+        "ㄷㄷㄷ",
         "오",
         "오오",
         "와",
@@ -385,19 +424,65 @@ async fn ai_check(State(app): State<App>, Json(input): Json<AiCheck>) -> Json<se
         "shit",
         "bitch",
         "asshole",
-        "시발놈", "씨발놈", "시발년", "씨발년", "ㅅㅂㄴ", "ㅅㅂㄴㄱ", "개같네", "개같다",
-        "개지랄", "개좆", "좆같", "존나게", "좃", "ㅈ같", "병신아", "병신같", "ㅂㅅ같",
-        "븅신", "븅", "개병신", "등신", "찐따", "호구", "애미", "애비", "느금마", "니애미",
-        "니엄마", "니애비", "뒤질", "죽을래", "죽여", "죽여버", "살인", "패버", "쳐맞", "처맞",
-        "닥치고", "꺼지", "꺼져라", "엿이나", "씹새", "씹년", "씹놈", "씨발아", "ㅆㅂㄴ",
-        "ㄱㅅㄲ", "fuckyou", "motherfucker", "fucking", "wtf", "killyourself",
+        "시발놈",
+        "씨발놈",
+        "시발년",
+        "씨발년",
+        "ㅅㅂㄴ",
+        "ㅅㅂㄴㄱ",
+        "개같네",
+        "개같다",
+        "개지랄",
+        "개좆",
+        "좆같",
+        "존나게",
+        "좃",
+        "ㅈ같",
+        "병신아",
+        "병신같",
+        "ㅂㅅ같",
+        "븅신",
+        "븅",
+        "개병신",
+        "등신",
+        "찐따",
+        "호구",
+        "애미",
+        "애비",
+        "느금마",
+        "니애미",
+        "니엄마",
+        "니애비",
+        "뒤질",
+        "죽을래",
+        "죽여",
+        "죽여버",
+        "살인",
+        "패버",
+        "쳐맞",
+        "처맞",
+        "닥치고",
+        "꺼지",
+        "꺼져라",
+        "엿이나",
+        "씹새",
+        "씹년",
+        "씹놈",
+        "씨발아",
+        "ㅆㅂㄴ",
+        "ㄱㅅㄲ",
+        "fuckyou",
+        "motherfucker",
+        "fucking",
+        "wtf",
+        "killyourself",
     ];
     if level == "off" || text.is_empty() || pass.iter().any(|p| text == *p || normalized == *p) {
         return Json(
             serde_json::json!({"verdict":"PASS","suggestion":null,"info":{"level":"none","note":null,"queries":[]},"source":"fast"}),
         );
     }
-    if attack_level != "꺼짐" && bad.iter().any(|p| normalized.contains(p)) {
+    if attack_level != "꺼짐" && attack_level != "끄기" && bad.iter().any(|p| normalized.contains(p)) {
         let matched = bad
             .iter()
             .find(|p| normalized.contains(**p))
@@ -455,7 +540,10 @@ async fn ai_check(State(app): State<App>, Json(input): Json<AiCheck>) -> Json<se
     }
     let hash = format!(
         "{:x}",
-        Sha256::digest(format!("v3:{level}:{attack_level}:{sarcasm_level}:{source_level}:{normalized}").as_bytes())
+        Sha256::digest(
+            format!("v3:{level}:{attack_level}:{sarcasm_level}:{source_level}:{normalized}")
+                .as_bytes()
+        )
     );
     if let Ok(Some((verdict,suggestion,info_level,info_note,info_queries)))=sqlx::query_as::<_,(String,Option<String>,String,Option<String>,Vec<String>)>("SELECT verdict,suggestion,info_level,info_note,info_queries FROM retone_v2.ai_cache WHERE message_hash=$1").bind(&hash).fetch_optional(&app.db).await{return Json(serde_json::json!({"verdict":verdict,"suggestion":suggestion,"info":{"level":info_level,"note":info_note,"queries":info_queries},"source":"cache"}));}
     let Some(key) = env::var("OPENAI_API_KEY").ok() else {
@@ -464,7 +552,7 @@ async fn ai_check(State(app): State<App>, Json(input): Json<AiCheck>) -> Json<se
         );
     };
     let prompt = format!(
-        "너는 Re:Tone의 대화 거울이다. 판정자·검열자·사실확인 기관이 아니다. 현재 문장을 오직 '이렇게 들릴 수도 있어요'라는 제안으로만 비춘다.\n1) 심한 욕설·위협·명백한 조롱뿐 아니라, 비꼼·냉소·돌려 말하는 압박·상대를 작게 만드는 표현도 알아차린다. 친한 사이의 가벼운 농담은 WARN하지 않는다.\n2) WARN일 때 suggestion은 반드시 이 문장에 맞춰 두 문장으로 쓴다. 첫 문장은 실제 문제 지점(단어·어조·비꼼)을 따옴표로 구체적으로 짚고 왜 상대가 압박·비난·조롱으로 느낄 수 있는지 설명한다. 둘째 문장은 원래 의도를 살린 짧은 대체 표현을 제안한다.\n3) 출처 확인 민감도는 {source_level}이다. 꺼짐이면 정보 확인을 절대 제안하지 않는다. 중요한 정보만이면 건강·안전·법·돈·정치·재난·통계·속보성 주장만, 민감하게면 출처 없는 사실 주장도 info.level=check로 제안한다. 진실·거짓은 절대 판단하지 않는다.\n4) 현재 개입 강도는 {level}이다. standard는 뚜렷한 경우만, careful은 비꼼·오해 가능성까지 조금 더 꼼꼼히 본다.\n5) JSON만 출력: {{\"verdict\":\"PASS|WARN\",\"suggestion\":string|null,\"info\":{{\"level\":\"none|check\",\"note\":string|null,\"queries\":[string]}}}}. queries는 확인할 검색어 0~2개.\n문장: {text}"
+        "너는 Re:Tone의 대화 거울이다. 판정자·검열자·사실확인 기관이 아니다. 현재 문장을 오직 '이렇게 들릴 수도 있어요'라는 제안으로만 비춘다.\n1) 비꼼·압박 개입 수준은 {sarcasm_level}이다. 끄기이면 비꼼만으로 WARN하지 않는다. 친한 사이의 가벼운 농담은 WARN하지 않는다.\n2) WARN일 때 suggestion은 반드시 이 문장에 맞춰 두 문장으로 쓴다. 첫 문장은 실제 문제 지점(단어·어조·비꼼)을 따옴표로 구체적으로 짚고 왜 상대가 압박·비난·조롱으로 느낄 수 있는지 설명한다. 둘째 문장은 원래 의도를 살린 짧은 대체 표현을 제안한다.\n3) 출처 확인 개입 수준은 {source_level}이다. 끄기이면 정보 확인을 절대 제안하지 않는다. 중요 정보만이면 건강·안전·법·돈·정치·재난·통계·속보성 주장만, 균형 있게면 중요한 출처 없는 사실 주장도, 민감하게면 대부분의 출처 없는 사실 주장도 info.level=check로 제안한다. 진실·거짓은 절대 판단하지 않는다.\n4) 전체 개입 강도는 {level}이다. standard는 뚜렷한 경우만, careful은 비꼼·오해 가능성까지 조금 더 꼼꼼히 본다.\n5) JSON만 출력: {{\"verdict\":\"PASS|WARN\",\"suggestion\":string|null,\"info\":{{\"level\":\"none|check\",\"note\":string|null,\"queries\":[string]}}}}. queries는 확인할 검색어 0~2개.\n문장: {text}"
     );
     let res = reqwest::Client::new()
         .post("https://api.openai.com/v1/responses")
@@ -485,7 +573,7 @@ async fn ai_check(State(app): State<App>, Json(input): Json<AiCheck>) -> Json<se
         .unwrap_or_else(|_| serde_json::json!({"verdict":"PASS","suggestion":null,"info":{"level":"none","note":null,"queries":[]}}));
     let verdict = parsed["verdict"].as_str().unwrap_or("PASS");
     let suggestion = parsed["suggestion"].as_str();
-    let info_level = if source_level == "꺼짐" {
+    let info_level = if source_level == "꺼짐" || source_level == "끄기" {
         "none"
     } else {
         parsed["info"]["level"].as_str().unwrap_or("none")
