@@ -79,7 +79,7 @@ async function openRoom(id) {
   const room = data.rooms.find((r) => r.id === id),
     messages = await api(`/api/rooms/${id}/messages`);
   const reflections = (data.reflections || []).filter((item) => item.room_id === id);
-  app.innerHTML = `<main class="layout">${rail()}<section class="chat"><header class="head"><button onclick="home()">←</button><div><h1>${esc(room.name)}</h1><span>참여자 ${room.members}명 · ${isRoomMuted(id) ? "알림 끔" : "연결됨"}</span></div><div class="chat-actions"><button title="친구 초대" onclick="inviteFriends()">＋</button><button title="AI 도움받기" onclick="openAiHelp()">✦</button><button title="회고 카드" onclick="newReflection()">↻</button><button title="채팅방 설정" onclick="roomSettings()">⋯</button><button title="공동 확인" onclick="newAgreement()">✓</button></div></header><section class="messages" id="messages">${toneCard(messages)}${messages.map(view).join("")}${reflections.map(viewReflection).join("")}${data.agreements
+  app.innerHTML = `<main class="layout">${rail()}<section class="chat"><header class="head"><button onclick="home()">←</button><div><h1>${esc(room.name)}</h1><span>참여자 ${room.members}명 · ${isRoomMuted(id) ? "알림 끔" : "연결됨"}</span></div><div class="chat-actions"><button title="친구 초대" onclick="inviteFriends()">＋</button><button title="AI 도움받기" onclick="openAiHelp()">✦</button><button title="회고 카드" onclick="newReflection()">↻</button><button title="채팅방 설정" onclick="roomSettings()">⋯</button><button title="공동 확인" onclick="newAgreement()">✓</button></div></header><section class="messages" id="messages">${toneCard(messages)}${messages.map(view).join("")}${alignmentCard(messages)}${reflections.map(viewReflection).join("")}${data.agreements
     .slice(0, 1)
     .map(
       (a) =>
@@ -236,6 +236,21 @@ function chooseIntent() {
 }
 function setIntent(intent) { selectedIntent = intent; closePopup(); const button = document.querySelector(".intent-button"); if (button) button.textContent = intent ? "◎" : "＋"; }
 function viewReflection(item) { return `<article class="reflection-card"><span>↻ 약속 회고</span><b>${esc(item.title)}</b><p><strong>계속할 점</strong> ${esc(item.keep || "아직 작성하지 않았어요")}</p><p><strong>다음에는</strong> ${esc(item.next || "아직 작성하지 않았어요")}</p></article>`; }
+function alignmentCard(messages) {
+  const message = [...messages].reverse().find((item) => item.alignment_hint && localStorage.getItem(`retone-alignment-dismissed-${item.id}`) !== "1");
+  if (!message) return "";
+  return `<article class="alignment-card"><span>✦ 말맞춤 제안</span><b>약속을 정하는 대화 같아요.</b><p>‘${esc(message.body)}’에 대해 시간·장소·할 일을 함께 맞춰볼까요?</p><div><button onclick="openAlignmentCard('${message.id}')">말맞춤 카드 만들기</button><button class="quiet" onclick="dismissAlignment('${message.id}')">나중에</button></div></article>`;
+}
+function dismissAlignment(id) { localStorage.setItem(`retone-alignment-dismissed-${id}`, "1"); openRoom(roomId); }
+function openAlignmentCard(id) {
+  popup(`<div class="ai-check info"><span>말맞춤 카드</span><h2>약속을 함께 맞춰볼까요?</h2><p>상대의 의도를 추측하지 않고, 시간·장소·목적을 한 번에 정리해요.</p><input id="alignment-title" placeholder="무엇을 할지 입력해주세요"><input id="alignment-date" type="datetime-local"><input id="alignment-place" placeholder="장소 또는 온라인 링크를 입력해주세요"><button onclick="saveAlignmentCard('${id}')">약속 카드 만들기</button></div>`);
+}
+async function saveAlignmentCard(messageId) {
+  const title = document.querySelector("#alignment-title").value.trim(), date = document.querySelector("#alignment-date").value;
+  if (!title || !date) return alert("무엇을 할지와 시간을 입력해주세요.");
+  await api("/api/appointments", { method: "POST", body: JSON.stringify({ title, room_id: roomId, date: date.replace("T", " "), place: document.querySelector("#alignment-place").value.trim() }) });
+  localStorage.setItem(`retone-alignment-dismissed-${messageId}`, "1"); closePopup(); data = await api("/api/bootstrap"); openRoom(roomId);
+}
 function inspectMessage(text) {
   popup(
     `<div class="ai-check info"><span>상대 메시지</span><h2>이 메시지를 함께 살펴볼까요?</h2><p>Re:Tone은 진실·거짓을 판정하지 않고, 확인에 필요한 단서를 제안해요.</p><button onclick="factCheck(${JSON.stringify(text)})">사실여부 확인 도움받기</button></div>`,

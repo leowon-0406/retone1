@@ -36,6 +36,7 @@ struct Message {
     created: i64,
     unread: u8,
     intent: Option<String>,
+    alignment_hint: bool,
 }
 #[derive(Clone, Serialize)]
 struct Agreement {
@@ -749,6 +750,15 @@ async fn messages(State(app): State<App>, Path(id): Path<String>) -> Json<Vec<Me
             .collect(),
     )
 }
+fn looks_like_alignment(text: &str) -> bool {
+    let normalized = text.replace(' ', "").to_lowercase();
+    let schedule_words = [
+        "이따가", "언제", "몇시", "몇시에", "만날", "약속", "회의", "보이스톡", "시간돼",
+        "시간되", "가능해", "가능하", "할거야", "할거니", "할래", "일정",
+    ];
+    schedule_words.iter().any(|word| normalized.contains(word))
+        && (text.contains('?') || normalized.contains("이따가") || normalized.contains("약속"))
+}
 async fn send(
     State(app): State<App>,
     Path(id): Path<String>,
@@ -767,6 +777,7 @@ async fn send(
         created: Utc::now().timestamp_millis(),
         unread: 2,
         intent: input.intent.filter(|value| !value.trim().is_empty()),
+        alignment_hint: looks_like_alignment(input.body.trim()),
     };
     d.messages.push(message.clone());
     if let Some(room) = d.rooms.iter_mut().find(|r| r.id == id) {
