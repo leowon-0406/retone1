@@ -9,6 +9,7 @@ use chrono::Utc;
 use password_hash::SaltString;
 use rand_core::OsRng;
 use serde::{Deserialize, Serialize};
+use sha1::Sha1;
 use sha2::{Digest, Sha256};
 use sqlx::{PgPool, postgres::PgPoolOptions};
 use std::{collections::HashMap, env, net::SocketAddr, sync::Arc};
@@ -437,6 +438,39 @@ async fn moderate_image(data_url: &str) -> Result<serde_json::Value, StatusCode>
         .map_err(|_| StatusCode::BAD_GATEWAY)?;
     Ok(body["results"][0].clone())
 }
+async fn upload_to_cloudinary(data_url: &str, folder: &str) -> Result<String, StatusCode> {
+    let cloud = env::var("CLOUDINARY_CLOUD_NAME").map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    let api_key = env::var("CLOUDINARY_API_KEY").map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    let secret = env::var("CLOUDINARY_API_SECRET").map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    let timestamp = Utc::now().timestamp().to_string();
+    let signature = format!(
+        "{:x}",
+        Sha1::digest(format!("folder={folder}&timestamp={timestamp}{secret}").as_bytes())
+    );
+    let response = reqwest::Client::new()
+        .post(format!(
+            "https://api.cloudinary.com/v1_1/{cloud}/image/upload"
+        ))
+        .form(&[
+            ("file", data_url),
+            ("api_key", api_key.as_str()),
+            ("timestamp", timestamp.as_str()),
+            ("folder", folder),
+            ("signature", signature.as_str()),
+        ])
+        .send()
+        .await
+        .map_err(|_| StatusCode::BAD_GATEWAY)?;
+    if !response.status().is_success() {
+        return Err(StatusCode::BAD_GATEWAY);
+    }
+    response
+        .json::<serde_json::Value>()
+        .await
+        .ok()
+        .and_then(|value| value["secure_url"].as_str().map(str::to_string))
+        .ok_or(StatusCode::BAD_GATEWAY)
+}
 async fn check_image(Json(input): Json<ImageInput>) -> Result<Json<serde_json::Value>, StatusCode> {
     let result = moderate_image(&input.data_url).await?;
     let flagged = result["flagged"].as_bool().unwrap_or(true);
@@ -462,7 +496,8 @@ async fn update_avatar(
             serde_json::json!({"saved":false,"flagged":true,"sexual":sexual}),
         ));
     }
-    let row = sqlx::query_as::<_,(Uuid,String,Option<String>,String)>("UPDATE retone_v2.users SET avatar_url=$1 WHERE id=$2 AND deleted_at IS NULL RETURNING id,name,avatar_url,ai_intervention").bind(input.data_url).bind(id).fetch_optional(&app.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?.ok_or(StatusCode::NOT_FOUND)?;
+    let image_url = upload_to_cloudinary(&input.data_url, "retone/avatars").await?;
+    let row = sqlx::query_as::<_,(Uuid,String,Option<String>,String)>("UPDATE retone_v2.users SET avatar_url=$1 WHERE id=$2 AND deleted_at IS NULL RETURNING id,name,avatar_url,ai_intervention").bind(image_url).bind(id).fetch_optional(&app.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?.ok_or(StatusCode::NOT_FOUND)?;
     let user = user_out(row.0, row.1, row.2, row.3);
     Ok(Json(
         serde_json::json!({"saved":true,"avatar_url":user.avatar_url}),
@@ -1046,6 +1081,10 @@ async fn send(
     if !member {
         return Err(StatusCode::FORBIDDEN);
     }
+    let image_url = match input.image_url.as_deref() {
+        Some(data_url) => Some(upload_to_cloudinary(data_url, "retone/messages").await?),
+        None => None,
+    };
     let message = Message {
         id: Uuid::new_v4().to_string(),
         room_id: id.clone(),
@@ -1057,7 +1096,7 @@ async fn send(
         unread: 0,
         intent: input.intent.filter(|value| !value.trim().is_empty()),
         alignment_hint: looks_like_alignment(input.body.trim()),
-        image_url: input.image_url.clone(),
+        image_url,
     };
     sqlx::query("INSERT INTO retone_v2.messages(id,room_id,sender_id,body,intent,image_url) VALUES($1,$2,$3,$4,$5,$6)")
         .bind(Uuid::parse_str(&message.id).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?)
