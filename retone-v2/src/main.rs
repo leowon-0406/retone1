@@ -250,6 +250,28 @@ async fn admin_login(Json(input): Json<AdminLogin>) -> Result<Json<PublicUser>, 
         ai_intervention: "off".into(),
     }))
 }
+async fn clear_user_data(
+    State(app): State<App>,
+    Json(input): Json<AdminLogin>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let password = env::var("RETONE_ADMIN_PASSWORD").unwrap_or_else(|_| "3612asdf!!".into());
+    let two_factor = env::var("RETONE_ADMIN_2FA").unwrap_or_else(|_| "7812".into());
+    if input.password != password || input.two_factor != two_factor {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    sqlx::query("TRUNCATE TABLE retone_v2.ai_reports,retone_v2.appointments,retone_v2.agreements,retone_v2.messages,retone_v2.room_members,retone_v2.rooms,retone_v2.users RESTART IDENTITY CASCADE")
+        .execute(&app.db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let mut data = app.data.write().await;
+    data.rooms.clear();
+    data.messages.clear();
+    data.agreements.clear();
+    data.appointments.clear();
+    data.reflections.clear();
+    data.insights.clear();
+    Ok(Json(serde_json::json!({"ok":true,"ai_cache_preserved":true})))
+}
 async fn users(State(app): State<App>) -> Result<Json<Vec<PublicUser>>, StatusCode> {
     let rows=sqlx::query_as::<_,(Uuid,String,Option<String>,String)>("SELECT id,name,avatar_url,ai_intervention FROM retone_v2.users WHERE deleted_at IS NULL ORDER BY created_at").fetch_all(&app.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(
@@ -1055,6 +1077,7 @@ async fn main() {
         .route("/api/auth/admin-login", post(admin_login))
         .route("/api/users", get(users))
         .route("/api/admin/reset-v2", post(reset_v2))
+        .route("/api/admin/clear-user-data", post(clear_user_data))
         .route("/api/users/{id}", delete(delete_account))
         .route("/api/users/{id}/preferences", patch(update_preferences))
         .route("/api/ai/check", post(ai_check))
