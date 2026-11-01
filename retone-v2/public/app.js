@@ -7,6 +7,7 @@ let signedInId = sessionStorage.getItem("retone-v2-user-id") || "";
 let isAdmin = sessionStorage.getItem("retone-v2-admin") === "yes";
 let aiIntervention = sessionStorage.getItem("retone-v2-ai-level") || "standard";
 let pendingSend = null;
+let currentRoomMessages = [];
 let signupAiDetails = null;
 let signupDraft = null;
 let selectedIntent = "";
@@ -43,7 +44,8 @@ const esc = (s) =>
   );
 const aiCacheKey = (text) => `${aiIntervention}|${JSON.stringify(aiDetails())}|${text.trim().toLowerCase()}`;
 function savedAiResult(text) {
-  return aiSavedResults[aiCacheKey(text)] || null;
+  const result = aiSavedResults[aiCacheKey(text)] || null;
+  return result && (result.verdict === "PASS" || result.verdict === "WARN") ? result : null;
 }
 function rememberAiResult(text, result) {
   const key = aiCacheKey(text);
@@ -81,6 +83,7 @@ async function openRoom(id) {
   roomId = id;
   const room = data.rooms.find((r) => r.id === id),
     messages = await api(`/api/rooms/${id}/messages`);
+  currentRoomMessages = messages;
   const reflections = (data.reflections || []).filter((item) => item.room_id === id);
   const appointments = (data.appointments || []).filter((item) => item.room_id === id);
   const insights = (data.insights || []).filter((item) => item.room_id === id && (item.has_conflict || aiDetails()["대화 흐름 요약"] === "항상"));
@@ -399,6 +402,7 @@ async function send(event) {
   }
 }
 function showCheckResult(result) {
+  if (!result || (result.verdict !== "PASS" && result.verdict !== "WARN")) { sendApproved(); return; }
   if (pendingSend) pendingSend.result = result;
   const info = result.info || { level: "none", queries: [] };
   const suggestion = result.suggestion
@@ -431,7 +435,7 @@ async function rewritePending() {
   try {
     const out = await api("/api/ai/rewrite", {
       method: "POST",
-      body: JSON.stringify({ text: pendingSend.body }),
+      body: JSON.stringify({ text: pendingSend.body, context: currentRoomMessages.slice(-12).map((message) => `${message.sender}: ${message.body}`) }),
     });
     if (out.suggestion) {
       pendingSend.body = out.suggestion;
@@ -460,13 +464,21 @@ async function reportAiResult() {
 async function sendApproved() {
   if (!pendingSend) return;
   const next = pendingSend;
-  pendingSend = null;
   closePopup();
   setAiStatus("");
-  await api(`/api/rooms/${next.room}/messages`, {
-    method: "POST",
-    body: JSON.stringify({ sender: signedIn, sender_id: signedInId, body: next.body, intent: next.intent }),
-  });
+  try {
+    await api(`/api/rooms/${next.room}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ sender: signedIn, sender_id: signedInId, body: next.body, intent: next.intent }),
+    });
+  } catch {
+    removePendingBubble();
+    const input = document.querySelector("#text");
+    if (input) { input.disabled = false; input.placeholder = "메시지를 입력하세요"; }
+    popup(`<div class="ai-check warn"><span>전송되지 않았어요</span><h2>메시지를 보내지 못했어요.</h2><p>인터넷 연결 또는 서버 상태를 확인한 뒤 다시 시도해주세요. 메시지 내용은 유지돼요.</p><div class="modal-actions"><button class="quiet" onclick="editPendingSend()">내용 다시 보기</button><button onclick="sendApproved()">다시 보내기</button></div></div>`);
+    return;
+  }
+  pendingSend = null;
   selectedIntent = "";
   openRoom(next.room);
   if (aiDetails()["대화 흐름 요약"] !== "끄기") api(`/api/rooms/${next.room}/insight`, { method: "POST" }).then(async () => {
@@ -495,7 +507,7 @@ async function removeMessage(id) {
 function popup(inner) {
   document.body.insertAdjacentHTML(
     "beforeend",
-    `<div class="modal" onclick="if(event.target===this)this.remove()"><section>${inner}</section></div>`,
+    `<div class="modal" onclick="if(event.target===this){if(pendingSend){editPendingSend()}else this.remove()}"><section>${inner}</section></div>`,
   );
 }
 function closePopup() {
@@ -536,7 +548,7 @@ async function saveAgreement() {
 function popup(inner) {
   document.body.insertAdjacentHTML(
     "beforeend",
-    `<div class="modal" onclick="if(event.target===this)this.remove()"><section>${inner}</section></div>`,
+    `<div class="modal" onclick="if(event.target===this){if(pendingSend){editPendingSend()}else this.remove()}"><section>${inner}</section></div>`,
   );
 }
 function closePopup() {
@@ -622,7 +634,7 @@ async function saveReflection() {
 }
 function showAiPolicy() {
   popup(
-    `<div class="ai-policy"><span>Re:Tone AI 안내 · 2026.10</span><h2>내 대화를 돕기 위한 AI 사용</h2><p><b>왜 개입하나요?</b><br>강한 욕설·위협 표현, 오해될 수 있는 말투, 출처 확인이 중요한 건강·안전·법·금융·재난·속보성 주장을 알리기 위해서예요.</p><p><b>무엇을 보내나요?</b><br>사전에 없는 문장에 한해, 지금 입력한 메시지 한 개만 AI 점검에 사용해요. 다른 채팅방 내용·전화번호·비밀번호·프로필은 보내지 않아요.</p><p><b>무엇을 하지 않나요?</b><br>사실을 거짓이라고 단정하거나, AI가 대신 전송하거나, 경고만으로 메시지를 막지 않아요. 최종 전송은 항상 내가 선택해요.</p><p><b>내가 조절할 수 있는 것</b><br>AI 끄기, 강한 표현만 확인, 균형 있게 확인, 꼼꼼한 확인을 설정에서 언제든 바꿀 수 있어요.</p><small>AI 점검 결과는 같은 문장을 빠르게 처리하기 위해 보관될 수 있으며, 설정에서 AI를 끄면 이후 점검을 멈춰요.</small><button onclick="closePopup()">확인했어요</button></div>`,
+    `<div class="ai-policy"><span>Re:Tone AI 안내 · 2026.10</span><h2>내 대화를 돕기 위한 AI 사용</h2><p><b>왜 개입하나요?</b><br>강한 욕설·위협 표현, 오해될 수 있는 말투, 출처 확인이 중요한 건강·안전·법·금융·재난·속보성 주장을 알리기 위해서예요.</p><p><b>무엇을 보내나요?</b><br>사전에 없는 문장에 한해, 지금 입력한 메시지 한 개만 AI 점검에 사용해요. 다만 내가 ‘표현 바꾸기’를 누른 경우에만, 더 자연스러운 제안을 위해 같은 채팅방의 최근 대화 일부를 함께 참고해요. 다른 채팅방·전화번호·비밀번호·프로필은 보내지 않아요.</p><p><b>무엇을 하지 않나요?</b><br>사실을 거짓이라고 단정하거나, AI가 대신 전송하거나, 경고만으로 메시지를 막지 않아요. 최종 전송은 항상 내가 선택해요.</p><p><b>내가 조절할 수 있는 것</b><br>AI 끄기, 강한 표현만 확인, 균형 있게 확인, 꼼꼼한 확인을 설정에서 언제든 바꿀 수 있어요.</p><small>AI 점검 결과는 같은 문장을 빠르게 처리하기 위해 보관될 수 있으며, 설정에서 AI를 끄면 이후 점검을 멈춰요.</small><button onclick="closePopup()">확인했어요</button></div>`,
   );
 }
 function start() {

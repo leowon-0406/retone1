@@ -147,6 +147,7 @@ struct AiCheck {
 #[derive(Deserialize)]
 struct RewriteRequest {
     text: String,
+    context: Option<Vec<String>>,
 }
 #[derive(Deserialize)]
 struct AiReport {
@@ -673,8 +674,18 @@ async fn ai_rewrite(Json(input): Json<RewriteRequest>) -> Json<serde_json::Value
     let Some(key) = env::var("OPENAI_API_KEY").ok() else {
         return Json(serde_json::json!({"suggestion":""}));
     };
+    let context = input
+        .context
+        .unwrap_or_default()
+        .into_iter()
+        .rev()
+        .take(12)
+        .rev()
+        .map(|line| line.chars().take(300).collect::<String>())
+        .collect::<Vec<_>>()
+        .join("\n");
     let prompt = format!(
-        "다음 채팅을 뜻은 최대한 유지하면서 상대가 덜 공격적으로 들을 수 있는 자연스러운 한국어 한 문장으로 바꿔줘. 판정·설명·따옴표 없이 바꾼 문장만 출력. 원문: {text}"
+        "너는 Re:Tone의 표현 다듬기 도우미다. 아래 같은 채팅방의 최근 맥락을 참고해, 원문의 의도·관계·진행 중인 일을 최대한 살리면서 상대가 덜 공격적으로 들을 자연스러운 한국어 한 문장으로 바꿔라. 맥락에 없는 사실을 만들지 말고, 욕설·비난은 요청이나 감정 표현으로 바꿔라. 판정·설명·따옴표 없이 바꾼 문장만 출력.\n\n최근 맥락:\n{context}\n\n바꿀 원문: {text}"
     );
     let response = reqwest::Client::new()
         .post("https://api.openai.com/v1/responses")
@@ -879,7 +890,12 @@ async fn create_conversation_insight(
         room_id: room_id.clone(),
         checkpoint,
         has_conflict: parsed["has_conflict"].as_bool().unwrap_or(false),
-        topic: parsed["topic"].as_str().unwrap_or("대화 흐름").chars().take(60).collect(),
+        topic: parsed["topic"]
+            .as_str()
+            .unwrap_or("대화 흐름")
+            .chars()
+            .take(60)
+            .collect(),
         summary: parsed["summary"]
             .as_str()
             .unwrap_or("대화 10개를 함께 확인했어요.")
