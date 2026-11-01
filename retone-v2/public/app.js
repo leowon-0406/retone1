@@ -99,13 +99,13 @@ async function openRoom(id) {
     )
     .join(
       "",
-    )}</section><form class="sendbar" onsubmit="send(event)"><button type="button" class="intent-button" title="의도 표시" onclick="chooseIntent()">${selectedIntent ? "◎" : "＋"}</button><input id="text" placeholder="메시지를 입력하세요" autocomplete="off" oninput="queueAiCheck(this.value)"><span id="ai-status" class="ai-status"></span><button>↑</button></form></section></main>`;
+    )}</section><form class="sendbar" onsubmit="send(event)"><button type="button" class="intent-button" title="의도 표시" onclick="chooseIntent()">${selectedIntent ? "◎" : "＋"}</button><label class="image-upload" title="사진 보내기">▧<input hidden type="file" accept="image/*" onchange="sendImage(this)"></label><input id="text" placeholder="메시지를 입력하세요" autocomplete="off" oninput="queueAiCheck(this.value)"><span id="ai-status" class="ai-status"></span><button>↑</button></form></section></main>`;
   document.querySelector("#messages").scrollTop = 999999;
 }
 async function friends() {
   const users = await api("/api/users");
   const list = users.filter((u) => u.id !== signedInId);
-  app.innerHTML = `<main class="layout">${rail()}<section class="page"><header class="head"><h1>친구</h1><button class="new-room" onclick="home()">채팅 목록</button></header><div class="content"><div class="intro"><h2>Re:Tone 친구</h2><p>이 앱에 가입한 친구를 눌러 바로 대화를 시작해요.</p></div><div class="rooms">${list.length ? list.map((u) => `<button class="room" onclick="startDirect('${esc(u.name)}','${u.id}')"><span class="avatar">${esc(u.name[0])}</span><span class="copy"><b>${esc(u.name)}</b><span>눌러서 1:1 대화 시작</span></span><span>›</span></button>`).join("") : `<div class="empty-chat"><b>아직 가입한 친구가 없어요</b><span>친구가 가입하면 이곳에 자동으로 나타나요.</span></div>`}</div></div></section></main>`;
+  app.innerHTML = `<main class="layout">${rail()}<section class="page"><header class="head"><h1>친구</h1><button class="new-room" onclick="home()">채팅 목록</button></header><div class="content"><div class="intro"><h2>Re:Tone 친구</h2><p>이 앱에 가입한 친구를 눌러 바로 대화를 시작해요.</p></div><div class="rooms">${list.length ? list.map((u) => `<button class="room" onclick="startDirect('${esc(u.name)}','${u.id}')"><span class="avatar">${u.avatar_url ? `<img src="${u.avatar_url}" alt="">` : esc(u.name[0])}</span><span class="copy"><b>${esc(u.name)}</b><span>눌러서 1:1 대화 시작</span></span><span>›</span></button>`).join("") : `<div class="empty-chat"><b>아직 가입한 친구가 없어요</b><span>친구가 가입하면 이곳에 자동으로 나타나요.</span></div>`}</div></div></section></main>`;
 }
 function roomSettings() {
   const muted = isRoomMuted(roomId);
@@ -245,18 +245,10 @@ function logout() {
   isAdmin = false;
   start();
 }
-function setAvatar(input) {
-  const file = input.files[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = () => {
-    localStorage.setItem("retone-avatar", reader.result);
-    settings();
-  };
-  reader.readAsDataURL(file);
-}
+function readImage(file) { return new Promise((resolve, reject) => { if (!file?.type.startsWith("image/") || file.size > 2_000_000) return reject(new Error("사진 파일만 2MB 이하로 선택해주세요.")); const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = reject; reader.readAsDataURL(file); }); }
+async function setAvatar(input) { const file = input.files[0]; if (!file) return; try { popup(`<div class="ai-check info"><span>프로필 사진 확인</span><h2>사진을 안전하게 확인 중이에요</h2><p>선정적이거나 불쾌감을 줄 수 있는 이미지는 프로필로 등록하지 않아요.</p></div>`); const dataUrl = await readImage(file); const user = await api(`/api/users/${signedInId}/avatar`, { method: "POST", body: JSON.stringify({ data_url: dataUrl }) }); localStorage.setItem("retone-avatar", user.avatar_url); closePopup(); settings(); } catch { closePopup(); popup(`<div class="ai-check warn"><h2>사진을 등록하지 못했어요</h2><p>안전 점검을 통과하지 못했거나, 2MB 이하의 이미지 파일이 아니에요.</p><button onclick="closePopup()">확인</button></div>`); } }
 function view(m) {
-  return `<article class="bubble ${m.mine ? "mine" : ""}" ${m.mine ? "" : `onclick="inspectMessage(${JSON.stringify(m.body)})"`}><div class="meta">${esc(m.sender)}${m.intent ? ` · <span class="intent-tag">${esc(m.intent)}</span>` : ""}</div>${esc(m.body)}${m.mine && m.unread ? `<span class="read">${m.unread}</span>` : ""}${m.mine ? `<button class="delete-message" title="메시지 삭제" onclick="removeMessage('${m.id}')">×</button>` : ""}</article>`;
+  return `<article class="bubble ${m.mine ? "mine" : ""}" ${m.mine ? "" : `onclick="inspectMessage(${JSON.stringify(m.body)})"`}><div class="meta">${esc(m.sender)}${m.intent ? ` · <span class="intent-tag">${esc(m.intent)}</span>` : ""}</div>${m.image_url ? `<img class="chat-image" src="${m.image_url}" alt="보낸 사진">` : ""}${m.body ? `<span>${esc(m.body)}</span>` : ""}${m.mine && m.unread ? `<span class="read">${m.unread}</span>` : ""}${m.mine ? `<button class="delete-message" title="메시지 삭제" onclick="removeMessage('${m.id}')">×</button>` : ""}</article>`;
 }
 function toneCard(messages) {
   const joined = messages.map((message) => message.body).join(" ");
@@ -431,6 +423,19 @@ async function send(event) {
   } catch {
     await sendApproved();
   }
+}
+async function sendImage(input) {
+  const file = input.files[0];
+  if (!file || !roomId) return;
+  try {
+    setAiStatus("사진을 안전하게 확인 중이에요…", true);
+    const dataUrl = await readImage(file);
+    const check = await api("/api/images/check", { method: "POST", body: JSON.stringify({ data_url: dataUrl }) });
+    if (!check.allowed) { popup(`<div class="ai-check warn"><span>사진 전송 안내</span><h2>이 사진은 전송하지 않았어요</h2><p>선정적이거나 불쾌감을 줄 수 있는 이미지로 보일 수 있어요. 다른 사진을 선택해 주세요.</p><button onclick="closePopup()">확인</button></div>`); return; }
+    await api(`/api/rooms/${roomId}/messages`, { method: "POST", body: JSON.stringify({ sender: signedIn, sender_id: signedInId, body: "사진을 보냈어요.", image_url: dataUrl }) });
+    openRoom(roomId);
+  } catch { popup(`<div class="ai-check warn"><h2>사진을 전송하지 못했어요</h2><p>2MB 이하의 이미지인지, AI 안전 점검 연결 상태를 확인해주세요.</p><button onclick="closePopup()">확인</button></div>`); }
+  finally { setAiStatus(""); input.value = ""; }
 }
 function showCheckResult(result) {
   if (!result || (result.verdict !== "PASS" && result.verdict !== "WARN")) { sendApproved(); return; }

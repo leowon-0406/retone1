@@ -37,6 +37,7 @@ struct Message {
     unread: u8,
     intent: Option<String>,
     alignment_hint: bool,
+    image_url: Option<String>,
 }
 #[derive(Clone, Serialize)]
 struct Agreement {
@@ -93,6 +94,7 @@ struct Send {
     sender_id: Option<String>,
     body: String,
     intent: Option<String>,
+    image_url: Option<String>,
 }
 #[derive(Deserialize)]
 struct NewRoom {
@@ -132,6 +134,8 @@ struct Credentials {
 struct PhoneCheck {
     phone: String,
 }
+#[derive(Deserialize)]
+struct ImageInput { data_url: String }
 #[derive(Deserialize)]
 struct AdminLogin {
     password: String,
@@ -238,7 +242,9 @@ async fn phone_available(
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let digits = input.phone.chars().filter(|c| c.is_ascii_digit()).count();
     if digits < 7 {
-        return Ok(Json(serde_json::json!({"available": false, "ready": false})));
+        return Ok(Json(
+            serde_json::json!({"available": false, "ready": false}),
+        ));
     }
     let exists: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM retone_v2.users WHERE phone_hash=$1 AND deleted_at IS NULL)",
@@ -247,7 +253,9 @@ async fn phone_available(
     .fetch_one(&app.db)
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(serde_json::json!({"available": !exists, "ready": true})))
+    Ok(Json(
+        serde_json::json!({"available": !exists, "ready": true}),
+    ))
 }
 async fn login(
     State(app): State<App>,
@@ -405,6 +413,23 @@ async fn update_preferences(
     let level = ai_level(Some(&input.ai_intervention));
     let row=sqlx::query_as::<_,(Uuid,String,Option<String>,String)>("UPDATE retone_v2.users SET ai_intervention=$1 WHERE id=$2 AND deleted_at IS NULL RETURNING id,name,avatar_url,ai_intervention").bind(&level).bind(id).fetch_optional(&app.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?.ok_or(StatusCode::NOT_FOUND)?;
     Ok(Json(user_out(row.0, row.1, row.2, row.3)))
+}
+async fn moderate_image(data_url: &str) -> Result<bool, StatusCode> {
+    if !data_url.starts_with("data:image/") || data_url.len() > 2_800_000 { return Err(StatusCode::BAD_REQUEST); }
+    let key = env::var("OPENAI_API_KEY").map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
+    let response = reqwest::Client::new().post("https://api.openai.com/v1/moderations").bearer_auth(key).json(&serde_json::json!({"model":"omni-moderation-latest","input":[{"type":"image_url","image_url":{"url":data_url}}]})).send().await.map_err(|_| StatusCode::BAD_GATEWAY)?;
+    if !response.status().is_success() { return Err(StatusCode::BAD_GATEWAY); }
+    let body = response.json::<serde_json::Value>().await.map_err(|_| StatusCode::BAD_GATEWAY)?;
+    Ok(!body["results"][0]["flagged"].as_bool().unwrap_or(true))
+}
+async fn check_image(Json(input): Json<ImageInput>) -> Result<Json<serde_json::Value>, StatusCode> {
+    let allowed = moderate_image(&input.data_url).await?;
+    Ok(Json(serde_json::json!({"allowed":allowed})))
+}
+async fn update_avatar(State(app): State<App>, Path(id): Path<Uuid>, Json(input): Json<ImageInput>) -> Result<Json<PublicUser>, StatusCode> {
+    if !moderate_image(&input.data_url).await? { return Err(StatusCode::UNPROCESSABLE_ENTITY); }
+    let row = sqlx::query_as::<_,(Uuid,String,Option<String>,String)>("UPDATE retone_v2.users SET avatar_url=$1 WHERE id=$2 AND deleted_at IS NULL RETURNING id,name,avatar_url,ai_intervention").bind(input.data_url).bind(id).fetch_optional(&app.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?.ok_or(StatusCode::NOT_FOUND)?;
+    Ok(Json(user_out(row.0,row.1,row.2,row.3)))
 }
 async fn ai_check(State(app): State<App>, Json(input): Json<AiCheck>) -> Json<serde_json::Value> {
     let text = input.text.trim();
@@ -907,7 +932,7 @@ async fn send(
     Path(id): Path<String>,
     Json(input): Json<Send>,
 ) -> Result<Json<Message>, StatusCode> {
-    if input.body.trim().is_empty() {
+    if input.body.trim().is_empty() && input.image_url.is_none() {
         return Err(StatusCode::BAD_REQUEST);
     }
     let mut d = app.data.write().await;
@@ -921,6 +946,7 @@ async fn send(
         unread: 2,
         intent: input.intent.filter(|value| !value.trim().is_empty()),
         alignment_hint: looks_like_alignment(input.body.trim()),
+        image_url: input.image_url,
     };
     d.messages.push(message.clone());
     if let Some(room) = d.rooms.iter_mut().find(|r| r.id == id) {
@@ -1163,6 +1189,8 @@ async fn main() {
         .route("/api/admin/users/{id}/clear", post(clear_single_user))
         .route("/api/users/{id}", delete(delete_account))
         .route("/api/users/{id}/preferences", patch(update_preferences))
+        .route("/api/users/{id}/avatar", post(update_avatar))
+        .route("/api/images/check", post(check_image))
         .route("/api/ai/check", post(ai_check))
         .route("/api/ai/rewrite", post(ai_rewrite))
         .route("/api/ai/support", post(ai_support))
