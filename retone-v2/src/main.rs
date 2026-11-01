@@ -967,7 +967,10 @@ async fn send(
     if input.body.trim().is_empty() && input.image_url.is_none() {
         return Err(StatusCode::BAD_REQUEST);
     }
-    let mut d = app.data.write().await;
+    let sender_id = input
+        .sender_id
+        .as_deref()
+        .and_then(|value| Uuid::parse_str(value).ok());
     let message = Message {
         id: Uuid::new_v4().to_string(),
         room_id: id.clone(),
@@ -975,11 +978,17 @@ async fn send(
         mine: true,
         body: input.body.trim().to_string(),
         created: Utc::now().timestamp_millis(),
-        unread: 2,
+        unread: 0,
         intent: input.intent.filter(|value| !value.trim().is_empty()),
         alignment_hint: looks_like_alignment(input.body.trim()),
-        image_url: input.image_url,
+        image_url: input.image_url.clone(),
     };
+    let room_uuid = Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
+    sqlx::query("INSERT INTO retone_v2.messages(id,room_id,sender_id,body,intent,image_url) VALUES($1,$2,$3,$4,$5,$6)")
+        .bind(Uuid::parse_str(&message.id).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?)
+        .bind(room_uuid).bind(sender_id).bind(&message.body).bind(&message.intent).bind(&message.image_url)
+        .execute(&app.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let mut d = app.data.write().await;
     d.messages.push(message.clone());
     if let Some(room) = d.rooms.iter_mut().find(|r| r.id == id) {
         room.last = message.body.clone();
@@ -1083,6 +1092,18 @@ async fn delete_message(
     State(app): State<App>,
     Path((room_id, message_id)): Path<(String, String)>,
 ) -> StatusCode {
+    let room_uuid = match Uuid::parse_str(&room_id) {
+        Ok(value) => value,
+        Err(_) => return StatusCode::BAD_REQUEST,
+    };
+    let message_uuid = match Uuid::parse_str(&message_id) {
+        Ok(value) => value,
+        Err(_) => return StatusCode::BAD_REQUEST,
+    };
+    let persisted = sqlx::query("UPDATE retone_v2.messages SET deleted_at=NOW() WHERE id=$1 AND room_id=$2 AND deleted_at IS NULL").bind(message_uuid).bind(room_uuid).execute(&app.db).await;
+    if persisted.map(|result| result.rows_affected()).unwrap_or(0) == 0 {
+        return StatusCode::NOT_FOUND;
+    }
     let mut d = app.data.write().await;
     let before = d.messages.len();
     d.messages
@@ -1090,7 +1111,7 @@ async fn delete_message(
     if d.messages.len() < before {
         StatusCode::NO_CONTENT
     } else {
-        StatusCode::NOT_FOUND
+        StatusCode::NO_CONTENT
     }
 }
 async fn create_room(
@@ -1101,15 +1122,37 @@ async fn create_room(
     if name.is_empty() {
         return Err(StatusCode::BAD_REQUEST);
     }
+    let invitees = input.invitee_ids.clone().unwrap_or_default();
     let room = Room {
         id: Uuid::new_v4().to_string(),
         name: name.chars().take(30).collect(),
-        members: 1 + input.invitee_ids.unwrap_or_default().len().min(99) as u8,
+        members: 1 + invitees.len().min(99) as u8,
         unread: 0,
         pinned: false,
         last: "새 대화를 시작해 보세요.".into(),
         updated: Utc::now().timestamp_millis(),
     };
+    let creator = input
+        .creator_id
+        .as_deref()
+        .and_then(|value| Uuid::parse_str(value).ok());
+    let room_uuid = Uuid::parse_str(&room.id).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    sqlx::query("INSERT INTO retone_v2.rooms(id,name,created_by,is_group) VALUES($1,$2,$3,$4)")
+        .bind(room_uuid)
+        .bind(&room.name)
+        .bind(creator)
+        .bind(true)
+        .execute(&app.db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if let Some(user_id) = creator {
+        let _ = sqlx::query("INSERT INTO retone_v2.room_members(room_id,user_id) VALUES($1,$2) ON CONFLICT DO NOTHING").bind(room_uuid).bind(user_id).execute(&app.db).await;
+    }
+    for invitee in invitees {
+        if let Ok(user_id) = Uuid::parse_str(&invitee) {
+            let _ = sqlx::query("INSERT INTO retone_v2.room_members(room_id,user_id) VALUES($1,$2) ON CONFLICT DO NOTHING").bind(room_uuid).bind(user_id).execute(&app.db).await;
+        }
+    }
     app.data.write().await.rooms.push(room.clone());
     Ok(Json(room))
 }
@@ -1194,20 +1237,28 @@ async fn prepare_storage() -> Option<PgPool> {
     }
     Some(pool)
 }
+async fn restore_data(db: &PgPool) -> Data {
+    let rooms = sqlx::query_as::<_, (Uuid, String, i64, String, i64)>("SELECT r.id,r.name,(SELECT COUNT(*) FROM retone_v2.room_members rm WHERE rm.room_id=r.id),COALESCE((SELECT m.body FROM retone_v2.messages m WHERE m.room_id=r.id AND m.deleted_at IS NULL ORDER BY m.created_at DESC LIMIT 1),'새 대화를 시작해 보세요.'),FLOOR(EXTRACT(EPOCH FROM r.created_at)*1000)::BIGINT FROM retone_v2.rooms r ORDER BY r.created_at")
+        .fetch_all(db).await.unwrap_or_default().into_iter().map(|(id,name,members,last,updated)| Room { id:id.to_string(),name,members:members.min(255) as u8,unread:0,pinned:false,last,updated }).collect();
+    let messages = sqlx::query_as::<_, (Uuid, Uuid, Option<String>, String, i64, Option<String>, Option<String>)>("SELECT m.id,m.room_id,u.name,m.body,FLOOR(EXTRACT(EPOCH FROM m.created_at)*1000)::BIGINT,m.intent,m.image_url FROM retone_v2.messages m LEFT JOIN retone_v2.users u ON u.id=m.sender_id WHERE m.deleted_at IS NULL ORDER BY m.created_at")
+        .fetch_all(db).await.unwrap_or_default().into_iter().map(|(id,room_id,sender,body,created,intent,image_url)| { let alignment_hint = looks_like_alignment(&body); Message { id:id.to_string(),room_id:room_id.to_string(),sender:sender.unwrap_or_else(|| "알 수 없는 사용자".into()),mine:false,body,created,unread:0,intent,alignment_hint,image_url } }).collect();
+    Data {
+        rooms,
+        messages,
+        agreements: vec![],
+        appointments: vec![],
+        reflections: vec![],
+        insights: vec![],
+    }
+}
 
 #[tokio::main]
 async fn main() {
     let db = prepare_storage().await.expect("DATABASE_URL is required");
+    let restored = restore_data(&db).await;
     let app_state = App {
         db,
-        data: Arc::new(RwLock::new(Data {
-            rooms: vec![],
-            messages: vec![],
-            agreements: vec![],
-            appointments: vec![],
-            reflections: vec![],
-            insights: vec![],
-        })),
+        data: Arc::new(RwLock::new(restored)),
     };
     let router = Router::new()
         .route("/api/health", get(health))
