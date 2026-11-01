@@ -8,6 +8,7 @@ let isAdmin = sessionStorage.getItem("retone-v2-admin") === "yes";
 let aiIntervention = sessionStorage.getItem("retone-v2-ai-level") || "standard";
 let pendingSend = null;
 let signupAiDetails = null;
+let signupDraft = null;
 let selectedIntent = "";
 let aiPrefetch = { text: "", result: null, promise: null, timer: null };
 let aiSavedResults = (() => {
@@ -25,6 +26,8 @@ const aiCategoryDefaults = {
   "입력 중 선검사": "켜기",
   "감정 도움 AI": "필요할 때",
   "확인 결과 재사용": "켜기",
+  "말맞춤 카드": "약속 대화만",
+  "대화 10개 요약": "갈등 있을 때",
 };
 const aiDetails = () => ({
   ...aiCategoryDefaults,
@@ -79,7 +82,8 @@ async function openRoom(id) {
   const room = data.rooms.find((r) => r.id === id),
     messages = await api(`/api/rooms/${id}/messages`);
   const reflections = (data.reflections || []).filter((item) => item.room_id === id);
-  app.innerHTML = `<main class="layout">${rail()}<section class="chat"><header class="head"><button onclick="home()">←</button><div><h1>${esc(room.name)}</h1><span>참여자 ${room.members}명 · ${isRoomMuted(id) ? "알림 끔" : "연결됨"}</span></div><div class="chat-actions"><button title="친구 초대" onclick="inviteFriends()">＋</button><button title="AI 도움받기" onclick="openAiHelp()">✦</button><button title="회고 카드" onclick="newReflection()">↻</button><button title="채팅방 설정" onclick="roomSettings()">⋯</button><button title="공동 확인" onclick="newAgreement()">✓</button></div></header><section class="messages" id="messages">${toneCard(messages)}${messages.map(view).join("")}${alignmentCard(messages)}${reflections.map(viewReflection).join("")}${data.agreements
+  const insights = (data.insights || []).filter((item) => item.room_id === id && (item.has_conflict || aiDetails()["대화 10개 요약"] === "항상"));
+  app.innerHTML = `<main class="layout">${rail()}<section class="chat"><header class="head"><button onclick="home()">←</button><div><h1>${esc(room.name)}</h1><span>참여자 ${room.members}명 · ${isRoomMuted(id) ? "알림 끔" : "연결됨"}</span></div><div class="chat-actions"><button title="친구 초대" onclick="inviteFriends()">＋</button><button title="AI 도움받기" onclick="openAiHelp()">✦</button><button title="회고 카드" onclick="newReflection()">↻</button><button title="채팅방 설정" onclick="roomSettings()">⋯</button><button title="공동 확인" onclick="newAgreement()">✓</button></div></header><section class="messages" id="messages">${toneCard(messages)}${insights.map(viewInsight).join("")}${messages.map(view).join("")}${alignmentCard(messages)}${reflections.map(viewReflection).join("")}${data.agreements
     .slice(0, 1)
     .map(
       (a) =>
@@ -160,11 +164,13 @@ const aiCategories = [
   ["입력 중 선검사", "입력을 멈췄을 때 미리 확인해 전송 대기를 줄여요.", ["끄기", "켜기"]],
   ["감정 도움 AI", "답답하거나 서운할 때 마음을 정리할 공간을 보여줘요.", ["끄기", "필요할 때", "항상"]],
   ["확인 결과 재사용", "같은 문장의 이전 확인 결과를 재사용해 API 사용을 줄여요.", ["끄기", "켜기"]],
+  ["말맞춤 카드", "약속·시간을 정하는 대화에서 일정 정리 카드를 제안해요.", ["끄기", "약속 대화만", "넓게"]],
+  ["대화 10개 요약", "대화 10개마다 갈등 가능성을 중립적으로 정리해요.", ["끄기", "갈등 있을 때", "항상"]],
 ];
 const aiGroups = [
   ["대화 안전", "상대가 상처받을 수 있는 표현을 어느 정도까지 살펴볼지 정해요.", ["강한 공격 표현", "비꼼·압박 표현"]],
   ["정보와 표현", "출처 확인과 말 다듬기 도움을 설정해요.", ["출처 확인 제안", "표현 바꾸기"]],
-  ["빠른 사용", "AI가 작동하는 방식과 도움 기능을 정해요.", ["입력 중 선검사", "감정 도움 AI", "확인 결과 재사용"]],
+  ["빠른 사용", "AI가 작동하는 방식과 도움 기능을 정해요.", ["입력 중 선검사", "감정 도움 AI", "확인 결과 재사용", "말맞춤 카드", "대화 10개 요약"]],
 ];
 function renderDetailedAiSettings() {
   const root = document.querySelector(".ai-toggles");
@@ -236,7 +242,9 @@ function chooseIntent() {
 }
 function setIntent(intent) { selectedIntent = intent; closePopup(); const button = document.querySelector(".intent-button"); if (button) button.textContent = intent ? "◎" : "＋"; }
 function viewReflection(item) { return `<article class="reflection-card"><span>↻ 약속 회고</span><b>${esc(item.title)}</b><p><strong>계속할 점</strong> ${esc(item.keep || "아직 작성하지 않았어요")}</p><p><strong>다음에는</strong> ${esc(item.next || "아직 작성하지 않았어요")}</p></article>`; }
+function viewInsight(item) { return `<article class="insight-card"><span>✦ 10개 대화 말맞춤</span><b>${esc(item.summary)}</b><p><strong>엇갈린 지점</strong> ${esc(item.reason)}</p><p><strong>이렇게 풀어볼까요?</strong> ${esc(item.suggestion)}</p><button onclick="openConflictGuide()">갈등 전환 모드 열기</button></article>`; }
 function alignmentCard(messages) {
+  if (aiDetails()["말맞춤 카드"] === "끄기") return "";
   const message = [...messages].reverse().find((item) => item.alignment_hint && localStorage.getItem(`retone-alignment-dismissed-${item.id}`) !== "1");
   if (!message) return "";
   return `<article class="alignment-card"><span>✦ 말맞춤 제안</span><b>약속을 정하는 대화 같아요.</b><p>‘${esc(message.body)}’에 대해 시간·장소·할 일을 함께 맞춰볼까요?</p><div><button onclick="openAlignmentCard('${message.id}')">말맞춤 카드 만들기</button><button class="quiet" onclick="dismissAlignment('${message.id}')">나중에</button></div></article>`;
@@ -458,6 +466,10 @@ async function sendApproved() {
   });
   selectedIntent = "";
   openRoom(next.room);
+  if (aiDetails()["대화 10개 요약"] !== "끄기") api(`/api/rooms/${next.room}/insight`, { method: "POST" }).then(async () => {
+    data = await api("/api/bootstrap");
+    if (roomId === next.room) openRoom(next.room);
+  }).catch(() => {});
 }
 function editPendingSend() {
   const body = pendingSend?.body || "";
@@ -616,7 +628,7 @@ function start() {
     signedIn = "";
   }
   if (signedIn) return home();
-  app.innerHTML = `<main class="auth"><section class="auth-showcase"><div class="showcase-brand">Re:<i>Tone</i></div><div class="showcase-copy"><span>TEAM COMMUNICATION, RE:IMAGINED</span><h1>말하기 전에 한 번,<br><em>이해한 뒤에 한 번.</em></h1><p>대화의 온도를 함께 살피고,<br>팀의 중요한 약속을 놓치지 않도록 도와줘요.</p></div><div class="showcase-preview"><div><b>프로젝트 팀 채팅</b><small>AI가 필요한 순간에만 조심스럽게 도와요</small></div><p>“이 부분은 이렇게 정리해 보면 더 잘 전달될 것 같아요.”</p><span>Re:Tone의 제안 · 선택은 언제나 내가</span></div></section><section class="auth-panel"><section class="auth-card"><div class="auth-brand">Re:<i>Tone</i></div><p class="auth-copy">대화와 약속을 더 편안하게 이어가요.</p><div class="auth-tabs"><button class="selected" onclick="authForm('login')">로그인</button><button onclick="authForm('signup')">회원가입</button></div><div id="auth-form"></div><small>더 나은 대화와 함께하는 작업 공간</small></section></section></main>`;
+  app.innerHTML = `<main class="auth"><section class="auth-showcase"><div class="showcase-brand">Re:<i>Tone</i></div><div class="showcase-copy"><span>TEAM COMMUNICATION, RE:IMAGINED</span><h1>말하기 전에 한 번,<br><em>이해한 뒤에 한 번.</em></h1><p>대화의 온도를 함께 살피고,<br>팀의 중요한 약속을 놓치지 않도록 도와줘요.</p></div><div class="showcase-preview"><div><b>프로젝트 팀 채팅</b><small>AI가 필요한 순간에만 조심스럽게 도와요</small></div><p>“이 부분은 이렇게 정리해 보면 더 잘 전달될 것 같아요.”</p><span>Re:Tone의 제안 · 선택은 언제나 내가</span></div></section><section class="auth-panel"><section class="auth-card"><div class="auth-brand">Re:<i>Tone</i></div><p class="auth-copy">대화와 약속을 더 편안하게 이어가요.</p><div class="auth-tabs"><button class="selected" onclick="authForm('login')">로그인</button><button onclick="authForm('signup')">회원가입</button></div><div id="auth-form"><label>이름<input id="auth-name" placeholder="이름을 입력하세요"></label><label>전화번호<input id="auth-phone" inputmode="numeric" placeholder="전화번호를 입력하세요"></label><label>비밀번호<input id="auth-password" type="password" placeholder="비밀번호를 입력하세요"></label><button class="auth-submit" onclick="finishAuth('login')">로그인</button><button type="button" class="admin-login-link" onclick="authForm('admin')">관리자 로그인</button></div><small>더 나은 대화와 함께하는 작업 공간</small></section></section></main>`;
   authForm("login");
 }
 function authForm(mode) {
@@ -624,6 +636,12 @@ function authForm(mode) {
   document
     .querySelectorAll(".auth-tabs button")
     .forEach((b, i) => b.classList.toggle("selected", (i === 1) === join));
+  if (join) {
+    if (!signupAiDetails) signupAiDetails = { ...aiDetails() };
+    if (!signupDraft) signupDraft = { step: 0, name: "", phone: "", password: "", ai: "standard", consent: false };
+    renderSignupWizard();
+    return;
+  }
   if (mode === "admin") {
     document.querySelector("#auth-form").innerHTML = `<div class="admin-auth"><span>관리자 전용</span><h2>관리자 로그인</h2><p>비밀번호와 2차 인증 코드를 모두 입력해주세요.</p><label>관리자 비밀번호<input id="admin-password" type="password" placeholder="관리자 비밀번호를 입력해주세요"></label><label>2차 인증 코드<input id="admin-two-factor" inputmode="numeric" type="password" placeholder="2차 인증 코드를 입력해주세요"></label><button class="auth-submit" onclick="finishAdminLogin()">관리자 로그인</button><button type="button" class="admin-back" onclick="authForm('login')">일반 로그인으로 돌아가기</button></div>`;
     return;
@@ -636,6 +654,33 @@ function authForm(mode) {
   const categorySetup = `<details class="auth-ai-details" open><summary>항목별 AI 민감도 설정</summary><p>각 항목에서 AI가 어느 정도까지 도울지 정해요. 가입 후에도 바꿀 수 있어요.</p>${aiGroups.map(([title, , names]) => `<section class="signup-ai-group"><b>${title}</b>${names.map(signupCard).join("")}</section>`).join("")}</details>`;
   document.querySelector("#auth-form").innerHTML =
     `<label>이름<input id="auth-name" placeholder="이름을 입력하세요"></label><label>전화번호<input id="auth-phone" inputmode="numeric" placeholder="전화번호를 입력하세요"></label><label>비밀번호<input id="auth-password" type="password" placeholder="비밀번호를 입력하세요"></label>${join ? `<label>AI 개입 정도<select id="auth-ai-level"><option value="light">가볍게 · 강한 욕설만</option><option value="standard" selected>균형 있게 · 말투와 중요한 정보</option><option value="careful">꼼꼼하게 · 더 세심한 확인</option><option value="off">AI 끄기</option></select></label>${categorySetup}<button type="button" class="ai-policy-link" onclick="showAiPolicy()">AI가 개입하는 이유와 사용 범위 보기</button><label class="consent"><input id="auth-ai-consent" type="checkbox"> AI 사용 안내를 읽었고, 선택한 범위의 점검에 동의해요.</label><p class="auth-hint">동의하지 않아도 AI 끄기를 선택해 가입할 수 있고, 설정에서 언제든 변경할 수 있어요.</p>` : ""}<button class="auth-submit" onclick="finishAuth('${mode}')">${join ? "회원가입하고 시작하기" : "로그인"}</button>${join ? '<p class="auth-hint">같은 전화번호가 있으면 확인 절차가 안내돼요.</p>' : '<button type="button" class="admin-login-link" onclick="authForm(\'admin\')">관리자 로그인</button>'}`;
+}
+function renderSignupWizard() {
+  const draft = signupDraft;
+  const steps = ["계정", "AI 기본", "대화 안전", "정보·표현", "사용 방식", "확인"];
+  const group = aiGroups[draft.step - 2];
+  const progress = `<div class="signup-progress"><span>${draft.step + 1} / ${steps.length}</span><b>${steps[draft.step]}</b><div><i style="width:${((draft.step + 1) / steps.length) * 100}%"></i></div></div>`;
+  let content = "";
+  if (draft.step === 0) content = `<h2>먼저 계정을 만들어요</h2><p>친구들과 안전하게 대화하기 위한 기본 정보예요.</p><label>이름<input id="signup-name" value="${esc(draft.name)}" placeholder="이름을 입력해주세요"></label><label>전화번호<input id="signup-phone" value="${esc(draft.phone)}" inputmode="numeric" placeholder="전화번호를 입력해주세요"></label><label>비밀번호<input id="signup-password" value="${esc(draft.password)}" type="password" placeholder="6자 이상 비밀번호를 입력해주세요"></label>`;
+  else if (draft.step === 1) content = `<h2>AI가 얼마나 도울까요?</h2><p>전체적인 개입 정도를 먼저 정하고, 다음 화면에서 항목별로 조절해요.</p><div class="wizard-levels">${[["light", "가볍게", "강한 욕설만 빠르게 확인"], ["standard", "균형 있게", "말투와 중요한 정보만 확인"], ["careful", "꼼꼼하게", "오해 가능성까지 살펴보기"], ["off", "AI 끄기", "AI 점검 없이 사용"]].map(([value, title, text]) => `<button class="${draft.ai === value ? "selected" : ""}" onclick="setSignupLevel('${value}')"><b>${title}</b><span>${text}</span></button>`).join("")}</div>`;
+  else if (draft.step >= 2 && draft.step <= 4) content = `<h2>${group[0]}</h2><p>${group[1]}</p><div class="wizard-category-list">${group[2].map((name) => { const [, description, options] = aiCategories.find(([title]) => title === name); return `<article><b>${name}</b><small>${description}</small><div>${options.map((option) => `<button class="${signupAiDetails[name] === option ? "selected" : ""}" onclick="setWizardDetail('${name}','${option}')">${option}</button>`).join("")}</div></article>`; }).join("")}</div>`;
+  else content = `<h2>마지막 확인이에요</h2><p>Re:Tone은 판단하거나 차단하지 않고, 선택한 범위에서만 대화를 돕습니다.</p><button type="button" class="ai-policy-link" onclick="showAiPolicy()">AI가 개입하는 이유와 사용 범위 보기</button><label class="consent"><input id="signup-consent" type="checkbox" ${draft.consent ? "checked" : ""}> AI 사용 안내를 읽었고, 선택한 범위의 점검에 동의해요.</label><p class="auth-hint">AI 끄기를 선택한 경우에는 동의 없이도 가입할 수 있어요.</p>`;
+  const back = draft.step ? `<button class="wizard-back" onclick="signupBack()">이전</button>` : `<button class="wizard-back" onclick="authForm('login')">로그인으로</button>`;
+  const next = draft.step === steps.length - 1 ? `<button class="auth-submit" onclick="completeSignup()">회원가입하고 시작하기</button>` : `<button class="auth-submit" onclick="signupNext()">다음</button>`;
+  document.querySelector("#auth-form").innerHTML = `<section class="signup-wizard">${progress}<div class="wizard-content">${content}</div><div class="wizard-actions">${back}${next}</div></section>`;
+}
+function setSignupLevel(value) { signupDraft.ai = value; renderSignupWizard(); }
+function setWizardDetail(name, value) { signupAiDetails = { ...signupAiDetails, [name]: value }; renderSignupWizard(); }
+function signupNext() {
+  if (signupDraft.step === 0) { const name = document.querySelector("#signup-name").value.trim(), phone = document.querySelector("#signup-phone").value.replace(/\D/g, ""), password = document.querySelector("#signup-password").value; if (!name || phone.length < 7 || password.length < 6) return alert("이름, 전화번호와 6자 이상 비밀번호를 입력해주세요."); Object.assign(signupDraft, { name, phone, password }); }
+  signupDraft.step += 1; renderSignupWizard();
+}
+function signupBack() { if (signupDraft.step) signupDraft.step -= 1; renderSignupWizard(); }
+async function completeSignup() {
+  signupDraft.consent = document.querySelector("#signup-consent")?.checked || false;
+  if (signupDraft.ai !== "off" && !signupDraft.consent) return alert("AI 사용 안내를 확인하고 동의하거나, AI 끄기를 선택해주세요.");
+  localStorage.setItem("retone-ai-detail", JSON.stringify({ ...aiCategoryDefaults, ...signupAiDetails }));
+  try { const user = await api("/api/auth/signup", { method: "POST", body: JSON.stringify({ name: signupDraft.name, phone: signupDraft.phone, password: signupDraft.password, ai_intervention: signupDraft.ai }) }); signedIn = user.name; signedInId = user.id; aiIntervention = user.ai_intervention || "standard"; sessionStorage.setItem("retone-v2-name", user.name); sessionStorage.setItem("retone-v2-user-id", user.id); sessionStorage.setItem("retone-v2-ai-level", aiIntervention); sessionStorage.setItem("retone-v2-ai-consent", signupDraft.consent || aiIntervention === "off" ? "yes" : ""); signupDraft = null; home(); } catch { alert("이미 가입된 전화번호이거나 입력값을 확인해주세요."); }
 }
 async function finishAdminLogin() {
   const password = document.querySelector("#admin-password").value;

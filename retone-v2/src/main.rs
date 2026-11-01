@@ -61,6 +61,16 @@ struct Reflection {
     keep: String,
     next: String,
 }
+#[derive(Clone, Serialize)]
+struct ConversationInsight {
+    id: String,
+    room_id: String,
+    checkpoint: usize,
+    has_conflict: bool,
+    summary: String,
+    reason: String,
+    suggestion: String,
+}
 #[derive(Clone)]
 struct Data {
     rooms: Vec<Room>,
@@ -68,6 +78,7 @@ struct Data {
     agreements: Vec<Agreement>,
     appointments: Vec<Appointment>,
     reflections: Vec<Reflection>,
+    insights: Vec<ConversationInsight>,
 }
 #[derive(Clone)]
 struct App {
@@ -731,6 +742,7 @@ async fn bootstrap(State(app): State<App>) -> Json<DataOut> {
         agreements: d.agreements.clone(),
         appointments: d.appointments.clone(),
         reflections: d.reflections.clone(),
+        insights: d.insights.clone(),
     })
 }
 #[derive(Serialize)]
@@ -739,6 +751,7 @@ struct DataOut {
     agreements: Vec<Agreement>,
     appointments: Vec<Appointment>,
     reflections: Vec<Reflection>,
+    insights: Vec<ConversationInsight>,
 }
 async fn messages(State(app): State<App>, Path(id): Path<String>) -> Json<Vec<Message>> {
     let d = app.data.read().await;
@@ -753,8 +766,22 @@ async fn messages(State(app): State<App>, Path(id): Path<String>) -> Json<Vec<Me
 fn looks_like_alignment(text: &str) -> bool {
     let normalized = text.replace(' ', "").to_lowercase();
     let schedule_words = [
-        "이따가", "언제", "몇시", "몇시에", "만날", "약속", "회의", "보이스톡", "시간돼",
-        "시간되", "가능해", "가능하", "할거야", "할거니", "할래", "일정",
+        "이따가",
+        "언제",
+        "몇시",
+        "몇시에",
+        "만날",
+        "약속",
+        "회의",
+        "보이스톡",
+        "시간돼",
+        "시간되",
+        "가능해",
+        "가능하",
+        "할거야",
+        "할거니",
+        "할래",
+        "일정",
     ];
     schedule_words.iter().any(|word| normalized.contains(word))
         && (text.contains('?') || normalized.contains("이따가") || normalized.contains("약속"))
@@ -785,6 +812,59 @@ async fn send(
         room.updated = message.created;
     }
     Ok(Json(message))
+}
+async fn create_conversation_insight(
+    State(app): State<App>,
+    Path(room_id): Path<String>,
+) -> Json<serde_json::Value> {
+    let (checkpoint, history) = {
+        let d = app.data.read().await;
+        let messages = d
+            .messages
+            .iter()
+            .filter(|message| message.room_id == room_id)
+            .collect::<Vec<_>>();
+        let checkpoint = messages.len() / 10;
+        if checkpoint == 0 || d.insights.iter().any(|item| item.room_id == room_id && item.checkpoint == checkpoint) {
+            return Json(serde_json::json!({"created":false}));
+        }
+        let history = messages
+            .iter()
+            .rev()
+            .take(10)
+            .rev()
+            .map(|message| format!("{}: {}", message.sender, message.body))
+            .collect::<Vec<_>>()
+            .join("\n");
+        (checkpoint, history)
+    };
+    let Some(key) = env::var("OPENAI_API_KEY").ok() else {
+        return Json(serde_json::json!({"created":false}));
+    };
+    let prompt = format!(
+        "너는 Re:Tone의 중립적 대화 정리 도우미다. 아래 최근 10개 메시지에서 갈등·싸움·오해가 명확히 보일 때만 has_conflict=true로 해라. 누구의 잘못인지 판단하거나 비난하지 마라. 갈등이 있다면 reason에는 왜 부딪히는지 한 문장으로, suggestion에는 바로 해볼 수 있는 해소 방법을 한 문장으로 쓴다. 갈등이 없으면 has_conflict=false, reason과 suggestion은 빈 문자열. summary는 1문장 대화 요약. JSON만 출력: {{\"has_conflict\":boolean,\"summary\":string,\"reason\":string,\"suggestion\":string}}\n\n{history}"
+    );
+    let response = reqwest::Client::new()
+        .post("https://api.openai.com/v1/responses")
+        .bearer_auth(key)
+        .json(&serde_json::json!({"model":"gpt-4o-mini","input":prompt,"max_output_tokens":130}))
+        .send()
+        .await;
+    let Ok(response) = response else { return Json(serde_json::json!({"created":false})); };
+    let value = response.json::<serde_json::Value>().await.unwrap_or_default();
+    let text = value["output"][0]["content"][0]["text"].as_str().unwrap_or("{}");
+    let parsed = serde_json::from_str::<serde_json::Value>(text).unwrap_or_default();
+    let insight = ConversationInsight {
+        id: Uuid::new_v4().to_string(),
+        room_id: room_id.clone(),
+        checkpoint,
+        has_conflict: parsed["has_conflict"].as_bool().unwrap_or(false),
+        summary: parsed["summary"].as_str().unwrap_or("대화 10개를 함께 확인했어요.").chars().take(180).collect(),
+        reason: parsed["reason"].as_str().unwrap_or("").chars().take(220).collect(),
+        suggestion: parsed["suggestion"].as_str().unwrap_or("").chars().take(220).collect(),
+    };
+    app.data.write().await.insights.push(insight.clone());
+    Json(serde_json::json!({"created":true,"insight":insight}))
 }
 async fn delete_message(
     State(app): State<App>,
@@ -912,6 +992,7 @@ async fn main() {
             agreements: vec![],
             appointments: vec![],
             reflections: vec![],
+            insights: vec![],
         })),
     };
     let router = Router::new()
@@ -933,6 +1014,7 @@ async fn main() {
         .route("/api/appointments", post(create_appointment))
         .route("/api/reflections", post(create_reflection))
         .route("/api/rooms/{id}/messages", get(messages).post(send))
+        .route("/api/rooms/{id}/insight", post(create_conversation_insight))
         .route(
             "/api/rooms/{room_id}/messages/{message_id}",
             delete(delete_message),
