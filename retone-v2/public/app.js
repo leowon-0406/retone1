@@ -562,7 +562,7 @@ function start() {
     signedIn = "";
   }
   if (signedIn) return home();
-  app.innerHTML = `<main class="auth"><section class="auth-card"><div class="auth-brand">Re:<i>Tone</i></div><p class="auth-copy">말하기 전에 한 번,<br>이해한 뒤에 한 번.</p><div class="auth-tabs"><button class="selected" onclick="authForm('login')">로그인</button><button onclick="authForm('signup')">회원가입</button></div><div id="auth-form"></div><small>더 나은 대화와 함께하는 작업 공간</small></section></main>`;
+  app.innerHTML = `<main class="auth"><section class="auth-showcase"><div class="showcase-brand">Re:<i>Tone</i></div><div class="showcase-copy"><span>TEAM COMMUNICATION, RE:IMAGINED</span><h1>말하기 전에 한 번,<br><em>이해한 뒤에 한 번.</em></h1><p>대화의 온도를 함께 살피고,<br>팀의 중요한 약속을 놓치지 않도록 도와줘요.</p></div><div class="showcase-preview"><div><b>프로젝트 팀 채팅</b><small>AI가 필요한 순간에만 조심스럽게 도와요</small></div><p>“이 부분은 이렇게 정리해 보면 더 잘 전달될 것 같아요.”</p><span>Re:Tone의 제안 · 선택은 언제나 내가</span></div></section><section class="auth-panel"><section class="auth-card"><div class="auth-brand">Re:<i>Tone</i></div><p class="auth-copy">대화와 약속을 더 편안하게 이어가요.</p><div class="auth-tabs"><button class="selected" onclick="authForm('login')">로그인</button><button onclick="authForm('signup')">회원가입</button></div><div id="auth-form"></div><small>더 나은 대화와 함께하는 작업 공간</small></section></section></main>`;
   authForm("login");
 }
 function authForm(mode) {
