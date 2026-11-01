@@ -572,7 +572,7 @@ function editPendingSend() {
 }
 async function removeMessage(id) {
   if (!confirm("이 메시지를 삭제할까요?")) return;
-  await api(`/api/rooms/${roomId}/messages/${id}`, { method: "DELETE" });
+  await api(`/api/rooms/${roomId}/messages/${id}?user_id=${encodeURIComponent(signedInId)}`, { method: "DELETE" });
   openRoom(roomId);
 }
 function popup(inner) {

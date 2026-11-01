@@ -136,7 +136,9 @@ struct PhoneCheck {
     phone: String,
 }
 #[derive(Deserialize)]
-struct SessionQuery { user_id: Option<Uuid> }
+struct SessionQuery {
+    user_id: Option<Uuid>,
+}
 #[derive(Deserialize)]
 struct ImageInput {
     data_url: String,
@@ -915,10 +917,27 @@ async fn bootstrap(State(app): State<App>, Query(session): Query<SessionQuery>) 
     let d = app.data.read().await;
     let mut rooms = d.rooms.clone();
     if let Some(user_id) = session.user_id {
+        if let Ok(member_rows) = sqlx::query_scalar::<_, Uuid>(
+            "SELECT room_id FROM retone_v2.room_members WHERE user_id=$1",
+        )
+        .bind(user_id)
+        .fetch_all(&app.db)
+        .await
+        {
+            let member_rooms = member_rows
+                .into_iter()
+                .map(|id| id.to_string())
+                .collect::<std::collections::HashSet<_>>();
+            rooms.retain(|room| member_rooms.contains(&room.id));
+        } else {
+            rooms.clear();
+        }
         if let Ok(rows) = sqlx::query_as::<_, (Uuid, i64)>("SELECT r.id,COUNT(m.id) FROM retone_v2.rooms r JOIN retone_v2.room_members rm ON rm.room_id=r.id LEFT JOIN retone_v2.messages m ON m.room_id=r.id AND m.deleted_at IS NULL AND m.sender_id<>$1 AND (rm.last_read_at IS NULL OR m.created_at>rm.last_read_at) WHERE rm.user_id=$1 GROUP BY r.id").bind(user_id).fetch_all(&app.db).await {
             let unread = rows.into_iter().map(|(id,count)|(id.to_string(),count.min(255) as u8)).collect::<HashMap<_,_>>();
             rooms.iter_mut().for_each(|room| room.unread = *unread.get(&room.id).unwrap_or(&0));
         }
+    } else {
+        rooms.clear();
     }
     Json(DataOut {
         rooms,
@@ -936,17 +955,48 @@ struct DataOut {
     reflections: Vec<Reflection>,
     insights: Vec<ConversationInsight>,
 }
-async fn messages(State(app): State<App>, Path(id): Path<String>, Query(session): Query<SessionQuery>) -> Json<Vec<Message>> {
-    if let (Ok(room_id), Some(user_id)) = (Uuid::parse_str(&id), session.user_id) { let _ = sqlx::query("UPDATE retone_v2.room_members SET last_read_at=NOW() WHERE room_id=$1 AND user_id=$2").bind(room_id).bind(user_id).execute(&app.db).await; }
+async fn messages(
+    State(app): State<App>,
+    Path(id): Path<String>,
+    Query(session): Query<SessionQuery>,
+) -> Result<Json<Vec<Message>>, StatusCode> {
+    let room_id = Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let user_id = session.user_id.ok_or(StatusCode::UNAUTHORIZED)?;
+    let member = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM retone_v2.room_members WHERE room_id=$1 AND user_id=$2)",
+    )
+    .bind(room_id)
+    .bind(user_id)
+    .fetch_one(&app.db)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if !member {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    let _ = sqlx::query(
+        "UPDATE retone_v2.room_members SET last_read_at=NOW() WHERE room_id=$1 AND user_id=$2",
+    )
+    .bind(room_id)
+    .bind(user_id)
+    .execute(&app.db)
+    .await;
     let d = app.data.read().await;
-    Json(
+    Ok(Json(
         d.messages
             .iter()
             .filter(|m| m.room_id == id)
             .cloned()
-            .map(|mut message| { message.mine = session.user_id.map(|user_id| message.sender_id.as_deref() == Some(user_id.to_string().as_str())).unwrap_or(false); message })
+            .map(|mut message| {
+                message.mine = session
+                    .user_id
+                    .map(|user_id| {
+                        message.sender_id.as_deref() == Some(user_id.to_string().as_str())
+                    })
+                    .unwrap_or(false);
+                message
+            })
             .collect(),
-    )
+    ))
 }
 fn looks_like_alignment(text: &str) -> bool {
     let normalized = text.replace(' ', "").to_lowercase();
@@ -983,11 +1033,24 @@ async fn send(
         .sender_id
         .as_deref()
         .and_then(|value| Uuid::parse_str(value).ok());
+    let room_uuid = Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let sender_id = sender_id.ok_or(StatusCode::UNAUTHORIZED)?;
+    let member = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM retone_v2.room_members WHERE room_id=$1 AND user_id=$2)",
+    )
+    .bind(room_uuid)
+    .bind(sender_id)
+    .fetch_one(&app.db)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if !member {
+        return Err(StatusCode::FORBIDDEN);
+    }
     let message = Message {
         id: Uuid::new_v4().to_string(),
         room_id: id.clone(),
         sender: input.sender,
-        sender_id: sender_id.map(|value| value.to_string()),
+        sender_id: Some(sender_id.to_string()),
         mine: true,
         body: input.body.trim().to_string(),
         created: Utc::now().timestamp_millis(),
@@ -996,7 +1059,6 @@ async fn send(
         alignment_hint: looks_like_alignment(input.body.trim()),
         image_url: input.image_url.clone(),
     };
-    let room_uuid = Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
     sqlx::query("INSERT INTO retone_v2.messages(id,room_id,sender_id,body,intent,image_url) VALUES($1,$2,$3,$4,$5,$6)")
         .bind(Uuid::parse_str(&message.id).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?)
         .bind(room_uuid).bind(sender_id).bind(&message.body).bind(&message.intent).bind(&message.image_url)
@@ -1104,6 +1166,7 @@ async fn create_conversation_insight(
 async fn delete_message(
     State(app): State<App>,
     Path((room_id, message_id)): Path<(String, String)>,
+    Query(session): Query<SessionQuery>,
 ) -> StatusCode {
     let room_uuid = match Uuid::parse_str(&room_id) {
         Ok(value) => value,
@@ -1113,14 +1176,20 @@ async fn delete_message(
         Ok(value) => value,
         Err(_) => return StatusCode::BAD_REQUEST,
     };
-    let persisted = sqlx::query("UPDATE retone_v2.messages SET deleted_at=NOW() WHERE id=$1 AND room_id=$2 AND deleted_at IS NULL").bind(message_uuid).bind(room_uuid).execute(&app.db).await;
+    let Some(user_id) = session.user_id else {
+        return StatusCode::UNAUTHORIZED;
+    };
+    let persisted = sqlx::query("UPDATE retone_v2.messages SET deleted_at=NOW() WHERE id=$1 AND room_id=$2 AND sender_id=$3 AND deleted_at IS NULL").bind(message_uuid).bind(room_uuid).bind(user_id).execute(&app.db).await;
     if persisted.map(|result| result.rows_affected()).unwrap_or(0) == 0 {
         return StatusCode::NOT_FOUND;
     }
     let mut d = app.data.write().await;
     let before = d.messages.len();
-    d.messages
-        .retain(|m| !(m.room_id == room_id && m.id == message_id && m.mine));
+    d.messages.retain(|m| {
+        !(m.room_id == room_id
+            && m.id == message_id
+            && m.sender_id.as_deref() == Some(user_id.to_string().as_str()))
+    });
     if d.messages.len() < before {
         StatusCode::NO_CONTENT
     } else {
