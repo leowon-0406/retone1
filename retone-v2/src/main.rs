@@ -1303,6 +1303,23 @@ async fn create_agreement(
     app.data.write().await.agreements.push(agreement.clone());
     Ok(Json(agreement))
 }
+async fn update_agreement(
+    State(app): State<App>,
+    Path((id, action)): Path<(String, String)>,
+) -> Result<Json<Agreement>, StatusCode> {
+    let mut data = app.data.write().await;
+    let agreement = data
+        .agreements
+        .iter_mut()
+        .find(|item| item.id == id)
+        .ok_or(StatusCode::NOT_FOUND)?;
+    match action.as_str() {
+        "confirm" => agreement.confirmations = agreement.confirmations.saturating_add(1),
+        "revise" => agreement.revisions = agreement.revisions.saturating_add(1),
+        _ => return Err(StatusCode::BAD_REQUEST),
+    }
+    Ok(Json(agreement.clone()))
+}
 async fn create_appointment(
     State(app): State<App>,
     Json(input): Json<NewAppointment>,
@@ -1402,6 +1419,7 @@ async fn main() {
         .route("/api/bootstrap", get(bootstrap))
         .route("/api/rooms", post(create_room))
         .route("/api/agreements", post(create_agreement))
+        .route("/api/agreements/{id}/{action}", post(update_agreement))
         .route("/api/appointments", post(create_appointment))
         .route("/api/reflections", post(create_reflection))
         .route("/api/rooms/{id}/messages", get(messages).post(send))

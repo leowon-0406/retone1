@@ -33,26 +33,110 @@ const aiCategoryDefaults = {
   "대화 흐름 요약": "갈등 있을 때",
   "이미지 안전 안내": "필요할 때",
 };
-const sensitivityKeys = ["강한 공격 표현", "비꼼·압박 표현", "출처 확인 제안", "표현 바꾸기", "입력 중 선검사", "감정 도움 AI", "확인 결과 재사용", "말맞춤 카드", "대화 흐름 요약", "이미지 안전 안내", "대화 온도 타임라인", "대화 복구 문장"];
-function sensitivityState() { try { const saved = JSON.parse(localStorage.getItem("retone-ai-sensitivity") || "{}"); return { overall: Number.isFinite(saved.overall) ? saved.overall : 50, categories: Object.fromEntries(sensitivityKeys.map((key) => [key, Number.isFinite(saved.categories?.[key]) ? saved.categories[key] : 50])), overrides: saved.overrides || {} }; } catch { return { overall: 50, categories: Object.fromEntries(sensitivityKeys.map((key) => [key, 50])), overrides: {} }; } }
-function saveSensitivity(state) { localStorage.setItem("retone-ai-sensitivity", JSON.stringify(state)); }
-function sensitivityWord(name, value) { if (value <= 0) return "끄기"; if (["입력 중 선검사", "확인 결과 재사용"].includes(name)) return "켜기"; if (["이미지 안전 안내", "대화 온도 타임라인", "대화 복구 문장"].includes(name)) return value >= 70 ? "민감하게" : "필요할 때"; if (["표현 바꾸기", "감정 도움 AI"].includes(name)) return value >= 75 ? "항상" : "필요할 때"; if (name === "말맞춤 카드") return value >= 75 ? "넓게" : "약속 대화만"; if (name === "대화 흐름 요약") return value >= 75 ? "항상" : "갈등 있을 때"; if (name === "비꼼·압박 표현") return value < 35 ? "가볍게" : value < 70 ? "균형 있게" : "민감하게"; if (name === "출처 확인 제안") return value < 35 ? "중요 정보만" : value < 70 ? "균형 있게" : "민감하게"; return value < 35 ? "강한 표현만" : value < 70 ? "균형 있게" : "민감하게"; }
-const aiDetails = () => { const state = sensitivityState(); return Object.fromEntries(sensitivityKeys.map((key) => [key, sensitivityWord(key, state.categories[key])])); };
-const sensitivityLabel = (value) => value <= 20 ? "매우 가볍게" : value <= 40 ? "가볍게" : value <= 60 ? "보통" : value <= 80 ? "꼼꼼하게" : "매우 꼼꼼하게";
-const interventionFromSensitivity = (value) => value <= 0 ? "off" : value <= 33 ? "light" : value <= 66 ? "standard" : "careful";
-const roomPreferenceKey = (kind, id) => `retone-${kind}-${signedInId || "guest"}-${id}`;
-const roomRule = (id) => localStorage.getItem(roomPreferenceKey("rule", id)) || "균형 있게";
-const isRoomMuted = (id) => localStorage.getItem(roomPreferenceKey("muted", id)) === "1";
-const hasLeftRoom = (id) => localStorage.getItem(roomPreferenceKey("left", id)) === "1";
+const sensitivityKeys = [
+  "강한 공격 표현",
+  "비꼼·압박 표현",
+  "출처 확인 제안",
+  "표현 바꾸기",
+  "입력 중 선검사",
+  "감정 도움 AI",
+  "확인 결과 재사용",
+  "말맞춤 카드",
+  "대화 흐름 요약",
+  "이미지 안전 안내",
+  "대화 온도 타임라인",
+  "대화 복구 문장",
+];
+function sensitivityState() {
+  try {
+    const saved = JSON.parse(
+      localStorage.getItem("retone-ai-sensitivity") || "{}",
+    );
+    return {
+      overall: Number.isFinite(saved.overall) ? saved.overall : 50,
+      categories: Object.fromEntries(
+        sensitivityKeys.map((key) => [
+          key,
+          Number.isFinite(saved.categories?.[key]) ? saved.categories[key] : 50,
+        ]),
+      ),
+      overrides: saved.overrides || {},
+    };
+  } catch {
+    return {
+      overall: 50,
+      categories: Object.fromEntries(sensitivityKeys.map((key) => [key, 50])),
+      overrides: {},
+    };
+  }
+}
+function saveSensitivity(state) {
+  localStorage.setItem("retone-ai-sensitivity", JSON.stringify(state));
+}
+function sensitivityWord(name, value) {
+  if (value <= 0) return "끄기";
+  if (["입력 중 선검사", "확인 결과 재사용"].includes(name)) return "켜기";
+  if (
+    ["이미지 안전 안내", "대화 온도 타임라인", "대화 복구 문장"].includes(name)
+  )
+    return value >= 70 ? "민감하게" : "필요할 때";
+  if (["표현 바꾸기", "감정 도움 AI"].includes(name))
+    return value >= 75 ? "항상" : "필요할 때";
+  if (name === "말맞춤 카드") return value >= 75 ? "넓게" : "약속 대화만";
+  if (name === "대화 흐름 요약") return value >= 75 ? "항상" : "갈등 있을 때";
+  if (name === "비꼼·압박 표현")
+    return value < 35 ? "가볍게" : value < 70 ? "균형 있게" : "민감하게";
+  if (name === "출처 확인 제안")
+    return value < 35 ? "중요 정보만" : value < 70 ? "균형 있게" : "민감하게";
+  return value < 35 ? "강한 표현만" : value < 70 ? "균형 있게" : "민감하게";
+}
+const aiDetails = () => {
+  const state = sensitivityState();
+  return Object.fromEntries(
+    sensitivityKeys.map((key) => [
+      key,
+      sensitivityWord(key, state.categories[key]),
+    ]),
+  );
+};
+const sensitivityLabel = (value) =>
+  value <= 20
+    ? "매우 가볍게"
+    : value <= 40
+      ? "가볍게"
+      : value <= 60
+        ? "보통"
+        : value <= 80
+          ? "꼼꼼하게"
+          : "매우 꼼꼼하게";
+const interventionFromSensitivity = (value) =>
+  value <= 0
+    ? "off"
+    : value <= 33
+      ? "light"
+      : value <= 66
+        ? "standard"
+        : "careful";
+const roomPreferenceKey = (kind, id) =>
+  `retone-${kind}-${signedInId || "guest"}-${id}`;
+const roomRule = (id) =>
+  localStorage.getItem(roomPreferenceKey("rule", id)) || "균형 있게";
+const isRoomMuted = (id) =>
+  localStorage.getItem(roomPreferenceKey("muted", id)) === "1";
+const hasLeftRoom = (id) =>
+  localStorage.getItem(roomPreferenceKey("left", id)) === "1";
 const esc = (s) =>
   String(s || "").replace(
     /[&<>]/g,
     (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c],
   );
-const aiCacheKey = (text) => `${aiIntervention}|${JSON.stringify(aiDetails())}|${text.trim().toLowerCase()}`;
+const aiCacheKey = (text) =>
+  `${aiIntervention}|${JSON.stringify(aiDetails())}|${text.trim().toLowerCase()}`;
 function savedAiResult(text) {
   const result = aiSavedResults[aiCacheKey(text)] || null;
-  return result && (result.verdict === "PASS" || result.verdict === "WARN") ? result : null;
+  return result && (result.verdict === "PASS" || result.verdict === "WARN")
+    ? result
+    : null;
 }
 function rememberAiResult(text, result) {
   const key = aiCacheKey(text);
@@ -91,16 +175,26 @@ async function openRoom(id) {
   stopRoomPolling();
   roomId = id;
   const room = data.rooms.find((r) => r.id === id),
-    messages = await api(`/api/rooms/${id}/messages?user_id=${encodeURIComponent(signedInId)}`);
+    messages = await api(
+      `/api/rooms/${id}/messages?user_id=${encodeURIComponent(signedInId)}`,
+    );
   currentRoomMessages = messages;
-  const reflections = (data.reflections || []).filter((item) => item.room_id === id);
-  const appointments = (data.appointments || []).filter((item) => item.room_id === id);
-  const insights = (data.insights || []).filter((item) => item.room_id === id && (item.has_conflict || aiDetails()["대화 흐름 요약"] === "항상"));
+  const reflections = (data.reflections || []).filter(
+    (item) => item.room_id === id,
+  );
+  const appointments = (data.appointments || []).filter(
+    (item) => item.room_id === id,
+  );
+  const insights = (data.insights || []).filter(
+    (item) =>
+      item.room_id === id &&
+      (item.has_conflict || aiDetails()["대화 흐름 요약"] === "항상"),
+  );
   app.innerHTML = `<main class="layout">${rail()}<section class="chat"><header class="head"><button onclick="home()">←</button><div><h1>${esc(room.name)}</h1><span>참여자 ${room.members}명 · ${isRoomMuted(id) ? "알림 끔" : "연결됨"}</span></div><div class="chat-actions"><button title="친구 초대" onclick="inviteFriends()">＋</button><button title="AI 도움받기" onclick="openAiHelp()">✦</button><button title="회고 카드" onclick="newReflection()">↻</button><button title="채팅방 설정" onclick="roomSettings()">⋯</button><button title="공동 확인" onclick="newAgreement()">✓</button></div></header><section class="messages" id="messages">${emotionTimeline(messages)}${toneCard(messages)}${insights.map(viewInsight).join("")}${messages.map(view).join("")}${alignmentCard(messages)}${appointments.map(viewAppointment).join("")}${reflections.map(viewReflection).join("")}${data.agreements
     .slice(0, 1)
     .map(
       (a) =>
-        `<article class="agreement"><b>✓ 공동 확인 · ${esc(a.task)}</b><small>담당 ${esc(a.assignee)} · ${esc(a.deadline)}</small></article>`,
+        `<article class="agreement"><b>✓ 공동 확인 · ${esc(a.task)}</b><small>담당 ${esc(a.assignee)} · ${esc(a.deadline)} · 확인 ${a.confirmations} · 보완 ${a.revisions}</small><div><button onclick="answerAgreement('${a.id}','confirm')">확인했어요</button><button class="quiet" onclick="answerAgreement('${a.id}','revise')">보완 요청</button></div></article>`,
     )
     .join(
       "",
@@ -108,8 +202,23 @@ async function openRoom(id) {
   document.querySelector("#messages").scrollTop = 999999;
   startRoomPolling(id, messages.length);
 }
-function stopRoomPolling() { if (roomPollTimer) { clearInterval(roomPollTimer); roomPollTimer = null; } }
-function startRoomPolling(id, initialCount) { roomPollTimer = setInterval(async () => { if (roomId !== id || document.hidden) return; try { const latest = await api(`/api/rooms/${id}/messages?user_id=${encodeURIComponent(signedInId)}`); if (latest.length !== initialCount) openRoom(id); } catch {} }, 3500); }
+function stopRoomPolling() {
+  if (roomPollTimer) {
+    clearInterval(roomPollTimer);
+    roomPollTimer = null;
+  }
+}
+function startRoomPolling(id, initialCount) {
+  roomPollTimer = setInterval(async () => {
+    if (roomId !== id || document.hidden) return;
+    try {
+      const latest = await api(
+        `/api/rooms/${id}/messages?user_id=${encodeURIComponent(signedInId)}`,
+      );
+      if (latest.length !== initialCount) openRoom(id);
+    } catch {}
+  }, 3500);
+}
 async function friends() {
   stopRoomPolling();
   const users = await api("/api/users");
@@ -122,20 +231,33 @@ function roomSettings() {
     `<h2>채팅방 설정</h2><p>이 방에서 AI가 돕는 정도를 간단히 정해요.</p><div class="choice-stack"><button onclick="setRoomRule('최소 개입')">최소 개입 · 강한 표현만</button><button onclick="setRoomRule('균형 있게')">균형 있게 · 필요한 순간만</button><button onclick="setRoomRule('꼼꼼하게')">꼼꼼하게 · 말투와 약속도</button></div><button onclick="toggleRoomMute()">${muted ? "이 채팅방 알림 켜기" : "이 채팅방 알림 끄기"}</button><button class="danger-action" onclick="leaveRoom()">채팅방 나가기</button>`,
   );
 }
-function setRoomRule(rule) { localStorage.setItem(roomPreferenceKey("rule", roomId), rule); closePopup(); openRoom(roomId); }
+function setRoomRule(rule) {
+  localStorage.setItem(roomPreferenceKey("rule", roomId), rule);
+  closePopup();
+  openRoom(roomId);
+}
 function toggleRoomMute() {
   const key = roomPreferenceKey("muted", roomId);
-  if (isRoomMuted(roomId)) localStorage.removeItem(key); else localStorage.setItem(key, "1");
-  closePopup(); openRoom(roomId);
+  if (isRoomMuted(roomId)) localStorage.removeItem(key);
+  else localStorage.setItem(key, "1");
+  closePopup();
+  openRoom(roomId);
 }
 function leaveRoom() {
-  if (!confirm("채팅방을 나갈까요? 나간 뒤 목록에서 이 방은 보이지 않아요.")) return;
-  localStorage.setItem(roomPreferenceKey("left", roomId), "1"); closePopup(); home();
+  if (!confirm("채팅방을 나갈까요? 나간 뒤 목록에서 이 방은 보이지 않아요."))
+    return;
+  localStorage.setItem(roomPreferenceKey("left", roomId), "1");
+  closePopup();
+  home();
 }
 async function startDirect(name, inviteeId = "") {
   const room = await api("/api/rooms", {
     method: "POST",
-    body: JSON.stringify({ name, creator_id: signedInId, invitee_ids: inviteeId ? [inviteeId] : [] }),
+    body: JSON.stringify({
+      name,
+      creator_id: signedInId,
+      invitee_ids: inviteeId ? [inviteeId] : [],
+    }),
   });
   data = await api(`/api/bootstrap?user_id=${encodeURIComponent(signedInId)}`);
   openRoom(room.id);
@@ -177,37 +299,135 @@ function settings() {
   renderDetailedAiSettings();
 }
 async function renderAdminUsers() {
-  const root = document.querySelector("#admin-users-list"); if (!root) return;
-  try { const users = await api("/api/users"); root.innerHTML = users.length ? users.map((user) => `<article><span class="avatar">${esc(user.name[0])}</span><b>${esc(user.name)}</b><button onclick="openAdminUserClear('${user.id}','${encodeURIComponent(user.name)}')">계정 초기화</button></article>`).join("") : `<small>초기화할 가입 사용자가 없어요.</small>`; } catch { root.innerHTML = `<small>사용자 목록을 불러오지 못했어요.</small>`; }
+  const root = document.querySelector("#admin-users-list");
+  if (!root) return;
+  try {
+    const users = await api("/api/users");
+    root.innerHTML = users.length
+      ? users
+          .map(
+            (user) =>
+              `<article><span class="avatar">${esc(user.name[0])}</span><b>${esc(user.name)}</b><button onclick="openAdminUserClear('${user.id}','${encodeURIComponent(user.name)}')">계정 초기화</button></article>`,
+          )
+          .join("")
+      : `<small>초기화할 가입 사용자가 없어요.</small>`;
+  } catch {
+    root.innerHTML = `<small>사용자 목록을 불러오지 못했어요.</small>`;
+  }
 }
 function openAdminUserClear(id, encodedName) {
   const name = decodeURIComponent(encodedName);
-  popup(`<div class="ai-check warn"><span>관리자 작업</span><h2>${esc(name)} 계정을 초기화할까요?</h2><p>이 사용자의 계정과 해당 계정이 만든 채팅·약속 기록을 삭제합니다. AI 단어 확인 결과 캐시는 유지됩니다.</p><input id="admin-clear-password" type="password" placeholder="관리자 비밀번호를 입력해주세요"><input id="admin-clear-two-factor" type="password" inputmode="numeric" placeholder="2차 인증 코드를 입력해주세요"><button class="danger-action" onclick="clearSingleUser('${id}')">이 계정 초기화</button></div>`);
+  popup(
+    `<div class="ai-check warn"><span>관리자 작업</span><h2>${esc(name)} 계정을 초기화할까요?</h2><p>이 사용자의 계정과 해당 계정이 만든 채팅·약속 기록을 삭제합니다. AI 단어 확인 결과 캐시는 유지됩니다.</p><input id="admin-clear-password" type="password" placeholder="관리자 비밀번호를 입력해주세요"><input id="admin-clear-two-factor" type="password" inputmode="numeric" placeholder="2차 인증 코드를 입력해주세요"><button class="danger-action" onclick="clearSingleUser('${id}')">이 계정 초기화</button></div>`,
+  );
 }
 async function clearSingleUser(id) {
   const password = document.querySelector("#admin-clear-password").value;
   const two_factor = document.querySelector("#admin-clear-two-factor").value;
-  if (!password || !two_factor) return alert("관리자 비밀번호와 2차 인증 코드를 모두 입력해주세요.");
-  try { const result = await api(`/api/admin/users/${id}/clear`, { method: "POST", body: JSON.stringify({ password, two_factor }) }); if (!result.ok) throw new Error(); closePopup(); popup(`<div class="ai-check info"><h2>계정 초기화가 완료됐어요.</h2><p>선택한 사용자의 데이터만 삭제했고, AI 단어 확인 캐시는 유지했어요.</p><button onclick="closePopup();settings()">확인</button></div>`); } catch { alert("초기화하지 못했어요. 관리자 인증 정보 또는 서버 배포 상태를 확인해주세요."); }
+  if (!password || !two_factor)
+    return alert("관리자 비밀번호와 2차 인증 코드를 모두 입력해주세요.");
+  try {
+    const result = await api(`/api/admin/users/${id}/clear`, {
+      method: "POST",
+      body: JSON.stringify({ password, two_factor }),
+    });
+    if (!result.ok) throw new Error();
+    closePopup();
+    popup(
+      `<div class="ai-check info"><h2>계정 초기화가 완료됐어요.</h2><p>선택한 사용자의 데이터만 삭제했고, AI 단어 확인 캐시는 유지했어요.</p><button onclick="closePopup();settings()">확인</button></div>`,
+    );
+  } catch {
+    alert(
+      "초기화하지 못했어요. 관리자 인증 정보 또는 서버 배포 상태를 확인해주세요.",
+    );
+  }
 }
 const aiCategories = [
-  ["강한 공격 표현", "욕설·위협·강한 비하 표현을 살펴봐요.", ["끄기", "강한 표현만", "균형 있게", "민감하게"]],
-  ["비꼼·압박 표현", "빈정거림, 조롱, 상대를 몰아붙이는 말투를 살펴봐요.", ["끄기", "가볍게", "균형 있게", "민감하게"]],
-  ["출처 확인 제안", "건강·안전·돈처럼 중요한 정보의 출처를 제안해요.", ["끄기", "중요 정보만", "균형 있게", "민감하게"]],
-  ["표현 바꾸기", "AI가 제안한 문장을 더 부드럽게 바꾸는 버튼을 보여줘요.", ["끄기", "필요할 때", "항상"]],
-  ["입력 중 선검사", "입력을 멈췄을 때 미리 확인해 전송 대기를 줄여요.", ["끄기", "켜기"]],
-  ["감정 도움 AI", "답답하거나 서운할 때 마음을 정리할 공간을 보여줘요.", ["끄기", "필요할 때", "항상"]],
-  ["확인 결과 재사용", "같은 문장의 이전 확인 결과를 재사용해 API 사용을 줄여요.", ["끄기", "켜기"]],
-  ["말맞춤 카드", "약속·시간을 정하는 대화에서 일정 정리 카드를 제안해요.", ["끄기", "약속 대화만", "넓게"]],
-  ["대화 흐름 요약", "10개마다 실행하지만, 이어지는 주제는 최근 대화 흐름으로 함께 정리해요.", ["끄기", "갈등 있을 때", "항상"]],
-  ["이미지 안전 안내", "사진 전송 전 선정성·불쾌감 가능성을 안내해요. 경고 후에도 직접 선택해 보낼 수 있어요.", ["끄기", "필요할 때", "민감하게"]],
-  ["대화 온도 타임라인", "대화의 분위기 흐름을 작게 보여줘요. 알림이나 판단은 하지 않아요.", ["끄기", "필요할 때", "민감하게"]],
-  ["대화 복구 문장", "대화가 거칠어질 때만 조용히 보낼 문장 예시를 제안해요.", ["끄기", "필요할 때", "민감하게"]],
+  [
+    "강한 공격 표현",
+    "욕설·위협·강한 비하 표현을 살펴봐요.",
+    ["끄기", "강한 표현만", "균형 있게", "민감하게"],
+  ],
+  [
+    "비꼼·압박 표현",
+    "빈정거림, 조롱, 상대를 몰아붙이는 말투를 살펴봐요.",
+    ["끄기", "가볍게", "균형 있게", "민감하게"],
+  ],
+  [
+    "출처 확인 제안",
+    "건강·안전·돈처럼 중요한 정보의 출처를 제안해요.",
+    ["끄기", "중요 정보만", "균형 있게", "민감하게"],
+  ],
+  [
+    "표현 바꾸기",
+    "AI가 제안한 문장을 더 부드럽게 바꾸는 버튼을 보여줘요.",
+    ["끄기", "필요할 때", "항상"],
+  ],
+  [
+    "입력 중 선검사",
+    "입력을 멈췄을 때 미리 확인해 전송 대기를 줄여요.",
+    ["끄기", "켜기"],
+  ],
+  [
+    "감정 도움 AI",
+    "답답하거나 서운할 때 마음을 정리할 공간을 보여줘요.",
+    ["끄기", "필요할 때", "항상"],
+  ],
+  [
+    "확인 결과 재사용",
+    "같은 문장의 이전 확인 결과를 재사용해 API 사용을 줄여요.",
+    ["끄기", "켜기"],
+  ],
+  [
+    "말맞춤 카드",
+    "약속·시간을 정하는 대화에서 일정 정리 카드를 제안해요.",
+    ["끄기", "약속 대화만", "넓게"],
+  ],
+  [
+    "대화 흐름 요약",
+    "10개마다 실행하지만, 이어지는 주제는 최근 대화 흐름으로 함께 정리해요.",
+    ["끄기", "갈등 있을 때", "항상"],
+  ],
+  [
+    "이미지 안전 안내",
+    "사진 전송 전 선정성·불쾌감 가능성을 안내해요. 경고 후에도 직접 선택해 보낼 수 있어요.",
+    ["끄기", "필요할 때", "민감하게"],
+  ],
+  [
+    "대화 온도 타임라인",
+    "대화의 분위기 흐름을 작게 보여줘요. 알림이나 판단은 하지 않아요.",
+    ["끄기", "필요할 때", "민감하게"],
+  ],
+  [
+    "대화 복구 문장",
+    "대화가 거칠어질 때만 조용히 보낼 문장 예시를 제안해요.",
+    ["끄기", "필요할 때", "민감하게"],
+  ],
 ];
 const aiGroups = [
-  ["대화 안전", "상대가 상처받을 수 있는 표현과 사진을 어느 정도까지 살펴볼지 정해요.", ["강한 공격 표현", "비꼼·압박 표현", "이미지 안전 안내"]],
-  ["정보와 표현", "출처 확인과 말 다듬기 도움을 설정해요.", ["출처 확인 제안", "표현 바꾸기"]],
-  ["빠른 사용", "AI가 작동하는 방식과 도움 기능을 정해요.", ["입력 중 선검사", "감정 도움 AI", "확인 결과 재사용", "말맞춤 카드", "대화 흐름 요약", "대화 온도 타임라인", "대화 복구 문장"]],
+  [
+    "대화 안전",
+    "상대가 상처받을 수 있는 표현과 사진을 어느 정도까지 살펴볼지 정해요.",
+    ["강한 공격 표현", "비꼼·압박 표현", "이미지 안전 안내"],
+  ],
+  [
+    "정보와 표현",
+    "출처 확인과 말 다듬기 도움을 설정해요.",
+    ["출처 확인 제안", "표현 바꾸기"],
+  ],
+  [
+    "빠른 사용",
+    "AI가 작동하는 방식과 도움 기능을 정해요.",
+    [
+      "입력 중 선검사",
+      "감정 도움 AI",
+      "확인 결과 재사용",
+      "말맞춤 카드",
+      "대화 흐름 요약",
+      "대화 온도 타임라인",
+      "대화 복구 문장",
+    ],
+  ],
 ];
 function renderDetailedAiSettings() {
   const root = document.querySelector(".ai-toggles");
@@ -222,16 +442,83 @@ function renderDetailedAiSettings() {
 }
 function saveAiDetail(name, value) {
   const state = sensitivityState();
-  const map = { "끄기": 0, "가볍게": 25, "강한 표현만": 25, "중요 정보만": 25, "필요할 때": 50, "약속 대화만": 50, "갈등 있을 때": 50, "균형 있게": 50, "켜기": 50, "항상": 80, "넓게": 80, "민감하게": 85 };
-  state.categories[name] = map[value] ?? 50; saveSensitivity(state);
+  const map = {
+    끄기: 0,
+    가볍게: 25,
+    "강한 표현만": 25,
+    "중요 정보만": 25,
+    "필요할 때": 50,
+    "약속 대화만": 50,
+    "갈등 있을 때": 50,
+    "균형 있게": 50,
+    켜기: 50,
+    항상: 80,
+    넓게: 80,
+    민감하게: 85,
+  };
+  state.categories[name] = map[value] ?? 50;
+  saveSensitivity(state);
   renderDetailedAiSettings();
 }
-function previewOverallSensitivity(value, input) { const label = document.querySelector("#overall-sensitivity-label"); if (label) label.textContent = `${sensitivityLabel(Number(value))} · ${value}`; (input || document.querySelector(".overall-sensitivity input")).style.setProperty("--sensitivity", `${value}%`); }
-async function setOverallSensitivity(value) { const state = sensitivityState(), next = Number(value); state.overall = next; sensitivityKeys.forEach((key) => { state.categories[key] = next; }); saveSensitivity(state); aiIntervention = interventionFromSensitivity(next); sessionStorage.setItem("retone-v2-ai-level", aiIntervention); if (signedInId && !isAdmin) { try { await api(`/api/users/${signedInId}/preferences`, { method: "PATCH", body: JSON.stringify({ ai_intervention: aiIntervention }) }); } catch {} } renderDetailedAiSettings(); }
-function toggleTheme(){document.body.classList.toggle('dark');localStorage.setItem('retone-theme',document.body.classList.contains('dark')?'dark':'light');settings()}
-function openDeleteAccount(){popup(`<div class="ai-check warn"><span>계정 삭제</span><h2>정말 탈퇴할까요?</h2><p>계정 삭제 후에는 같은 계정으로 다시 로그인할 수 없어요.</p><input id="delete-name" placeholder="현재 계정의 이름을 입력해주세요"><input id="delete-password" type="password" placeholder="현재 비밀번호를 입력해주세요"><button class="danger-action" onclick="deleteMyAccount()">계정 삭제하기</button></div>`)}
-async function deleteMyAccount(){const name=document.querySelector('#delete-name').value.trim(),password=document.querySelector('#delete-password').value;if(!name||!password)return alert('이름과 비밀번호를 모두 입력해주세요.');try{await api(`/api/users/${signedInId}`,{method:'DELETE',body:JSON.stringify({name,password})});logout()}catch{alert('이름 또는 비밀번호가 맞지 않아요. 현재 계정 정보를 다시 확인해주세요.')}}
-if(localStorage.getItem('retone-theme')==='dark')document.body.classList.add('dark');
+function previewOverallSensitivity(value, input) {
+  const label = document.querySelector("#overall-sensitivity-label");
+  if (label)
+    label.textContent = `${sensitivityLabel(Number(value))} · ${value}`;
+  (
+    input || document.querySelector(".overall-sensitivity input")
+  ).style.setProperty("--sensitivity", `${value}%`);
+}
+async function setOverallSensitivity(value) {
+  const state = sensitivityState(),
+    next = Number(value);
+  state.overall = next;
+  sensitivityKeys.forEach((key) => {
+    state.categories[key] = next;
+  });
+  saveSensitivity(state);
+  aiIntervention = interventionFromSensitivity(next);
+  sessionStorage.setItem("retone-v2-ai-level", aiIntervention);
+  if (signedInId && !isAdmin) {
+    try {
+      await api(`/api/users/${signedInId}/preferences`, {
+        method: "PATCH",
+        body: JSON.stringify({ ai_intervention: aiIntervention }),
+      });
+    } catch {}
+  }
+  renderDetailedAiSettings();
+}
+function toggleTheme() {
+  document.body.classList.toggle("dark");
+  localStorage.setItem(
+    "retone-theme",
+    document.body.classList.contains("dark") ? "dark" : "light",
+  );
+  settings();
+}
+function openDeleteAccount() {
+  popup(
+    `<div class="ai-check warn"><span>계정 삭제</span><h2>정말 탈퇴할까요?</h2><p>계정 삭제 후에는 같은 계정으로 다시 로그인할 수 없어요.</p><input id="delete-name" placeholder="현재 계정의 이름을 입력해주세요"><input id="delete-password" type="password" placeholder="현재 비밀번호를 입력해주세요"><button class="danger-action" onclick="deleteMyAccount()">계정 삭제하기</button></div>`,
+  );
+}
+async function deleteMyAccount() {
+  const name = document.querySelector("#delete-name").value.trim(),
+    password = document.querySelector("#delete-password").value;
+  if (!name || !password) return alert("이름과 비밀번호를 모두 입력해주세요.");
+  try {
+    await api(`/api/users/${signedInId}`, {
+      method: "DELETE",
+      body: JSON.stringify({ name, password }),
+    });
+    logout();
+  } catch {
+    alert(
+      "이름 또는 비밀번호가 맞지 않아요. 현재 계정 정보를 다시 확인해주세요.",
+    );
+  }
+}
+if (localStorage.getItem("retone-theme") === "dark")
+  document.body.classList.add("dark");
 async function setAiIntervention(level) {
   if (!signedInId) return;
   const levelToSensitivity = { off: 0, light: 25, standard: 50, careful: 75 };
@@ -252,69 +539,208 @@ async function setAiIntervention(level) {
 }
 function logout() {
   stopRoomPolling();
-  ["retone-v2-name", "retone-v2-user-id", "retone-v2-ai-level", "retone-v2-admin"].forEach((k) =>
-    sessionStorage.removeItem(k),
-  );
+  [
+    "retone-v2-name",
+    "retone-v2-user-id",
+    "retone-v2-ai-level",
+    "retone-v2-admin",
+  ].forEach((k) => sessionStorage.removeItem(k));
   signedIn = "";
   signedInId = "";
   isAdmin = false;
   start();
 }
-function readImage(file) { return new Promise((resolve, reject) => { if (!file?.type.startsWith("image/") || file.size > 2_000_000) return reject(new Error("사진 파일만 2MB 이하로 선택해주세요.")); const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = reject; reader.readAsDataURL(file); }); }
-async function saveAvatar(dataUrl, overrideWarning = false) { const out = await api(`/api/users/${signedInId}/avatar`, { method: "POST", body: JSON.stringify({ data_url: dataUrl, override_warning: overrideWarning }) }); if (!out.saved) { const legal = out.sexual ? "선정적 이미지로 보일 수 있어 법률·플랫폼 규정 문제가 생길 수 있어요. Re:Tone은 법적 판단을 하지 않으며, 선택과 책임은 사용자에게 있어요." : "불쾌감이나 유해 가능성이 있는 이미지로 보일 수 있어요."; const token = encodeURIComponent(dataUrl); return popup(`<div class="ai-check warn"><span>프로필 사진 안내</span><h2>이 사진은 이렇게 보일 수 있어요</h2><p>${legal}</p><div class="modal-actions"><button class="quiet" onclick="closePopup()">다른 사진 고르기</button><button onclick="saveAvatar(decodeURIComponent('${token}'),true)">그래도 등록</button></div></div>`); } localStorage.setItem("retone-avatar", out.avatar_url); closePopup(); settings(); }
-async function setAvatar(input) { const file = input.files[0]; if (!file) return; try { popup(`<div class="ai-check info"><span>프로필 사진 확인</span><h2>사진을 안전하게 확인 중이에요</h2><p>필요한 경우에만 안내를 띄우고, 최종 선택은 내가 해요.</p></div>`); const dataUrl = await readImage(file); if (aiDetails()["이미지 안전 안내"] === "끄기") return saveAvatar(dataUrl, true); await saveAvatar(dataUrl); } catch { closePopup(); popup(`<div class="ai-check warn"><h2>사진을 등록하지 못했어요</h2><p>2MB 이하의 이미지 파일인지, AI 안전 점검 연결 상태를 확인해주세요.</p><button onclick="closePopup()">확인</button></div>`); } }
+function readImage(file) {
+  return new Promise((resolve, reject) => {
+    if (!file?.type.startsWith("image/") || file.size > 2_000_000)
+      return reject(new Error("사진 파일만 2MB 이하로 선택해주세요."));
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+async function saveAvatar(dataUrl, overrideWarning = false) {
+  const out = await api(`/api/users/${signedInId}/avatar`, {
+    method: "POST",
+    body: JSON.stringify({
+      data_url: dataUrl,
+      override_warning: overrideWarning,
+    }),
+  });
+  if (!out.saved) {
+    const legal = out.sexual
+      ? "선정적 이미지로 보일 수 있어 법률·플랫폼 규정 문제가 생길 수 있어요. Re:Tone은 법적 판단을 하지 않으며, 선택과 책임은 사용자에게 있어요."
+      : "불쾌감이나 유해 가능성이 있는 이미지로 보일 수 있어요.";
+    const token = encodeURIComponent(dataUrl);
+    return popup(
+      `<div class="ai-check warn"><span>프로필 사진 안내</span><h2>이 사진은 이렇게 보일 수 있어요</h2><p>${legal}</p><div class="modal-actions"><button class="quiet" onclick="closePopup()">다른 사진 고르기</button><button onclick="saveAvatar(decodeURIComponent('${token}'),true)">그래도 등록</button></div></div>`,
+    );
+  }
+  localStorage.setItem("retone-avatar", out.avatar_url);
+  closePopup();
+  settings();
+}
+async function setAvatar(input) {
+  const file = input.files[0];
+  if (!file) return;
+  try {
+    popup(
+      `<div class="ai-check info"><span>프로필 사진 확인</span><h2>사진을 안전하게 확인 중이에요</h2><p>필요한 경우에만 안내를 띄우고, 최종 선택은 내가 해요.</p></div>`,
+    );
+    const dataUrl = await readImage(file);
+    if (aiDetails()["이미지 안전 안내"] === "끄기")
+      return saveAvatar(dataUrl, true);
+    await saveAvatar(dataUrl);
+  } catch {
+    closePopup();
+    popup(
+      `<div class="ai-check warn"><h2>사진을 등록하지 못했어요</h2><p>2MB 이하의 이미지 파일인지, AI 안전 점검 연결 상태를 확인해주세요.</p><button onclick="closePopup()">확인</button></div>`,
+    );
+  }
+}
 function view(m) {
   return `<article class="bubble ${m.mine ? "mine" : ""}" ${m.mine ? "" : `onclick="inspectMessage(${JSON.stringify(m.body)})"`}><div class="meta">${esc(m.sender)}${m.intent ? ` · <span class="intent-tag">${esc(m.intent)}</span>` : ""}</div>${m.image_url ? `<img class="chat-image" src="${m.image_url}" alt="보낸 사진">` : ""}${m.body ? `<span>${esc(m.body)}</span>` : ""}${m.mine && m.unread ? `<span class="read">${m.unread}</span>` : ""}${m.mine ? `<button class="delete-message" title="메시지 삭제" onclick="removeMessage('${m.id}')">×</button>` : ""}</article>`;
 }
 function toneCard(messages) {
   const joined = messages.map((message) => message.body).join(" ");
-  const tense = /(시발|씨발|병신|꺼져|죽어|닥쳐|최악|짜증|한심|왜이래|뭐하냐)/.test(joined);
+  const tense =
+    /(시발|씨발|병신|꺼져|죽어|닥쳐|최악|짜증|한심|왜이래|뭐하냐)/.test(joined);
   const careful = /(근데|아니|왜|서운|답답|미안|오해)/.test(joined);
-  const tone = tense ? ["조심스러움", "최근 대화에 강한 표현이 있었어요. 누가 문제인지 정하지 않고, 서로의 의도를 한 번 확인해 볼까요?"] : careful ? ["오해 가능성", "조금 다른 뜻으로 읽힐 수 있는 대화예요. 필요하면 의도 확인이나 갈등 전환 카드를 열어 보세요."] : ["편안함", "현재 대화는 비교적 편안하게 이어지고 있어요."];
+  const tone = tense
+    ? [
+        "조심스러움",
+        "최근 대화에 강한 표현이 있었어요. 누가 문제인지 정하지 않고, 서로의 의도를 한 번 확인해 볼까요?",
+      ]
+    : careful
+      ? [
+          "오해 가능성",
+          "조금 다른 뜻으로 읽힐 수 있는 대화예요. 필요하면 의도 확인이나 갈등 전환 카드를 열어 보세요.",
+        ]
+      : ["편안함", "현재 대화는 비교적 편안하게 이어지고 있어요."];
   return `<button class="tone-card ${tense ? "careful" : ""}" onclick="openConflictGuide()"><span>대화 온도 · ${tone[0]}</span><b>${tone[1]}</b><small>누구를 평가하지 않는 대화 흐름 안내 · 눌러서 함께 정리하기</small></button>`;
 }
 function emotionTimeline(messages) {
-  if (aiDetails()["대화 온도 타임라인"] === "끄기" || messages.length < 3) return "";
+  if (aiDetails()["대화 온도 타임라인"] === "끄기" || messages.length < 3)
+    return "";
   const recent = messages.slice(-8);
-  const score = (text) => /(고마워|좋아|괜찮|미안|축하|ㅎㅎ|ㅋㅋ|도와|수고)/.test(text) ? 1 : /(시발|씨발|병신|꺼져|죽어|닥쳐|짜증|최악|한심|왜이래|뭐하냐)/.test(text) ? -2 : /(근데|아니|왜|서운|답답|오해)/.test(text) ? -1 : 0;
+  const score = (text) =>
+    /(고마워|좋아|괜찮|미안|축하|ㅎㅎ|ㅋㅋ|도와|수고)/.test(text)
+      ? 1
+      : /(시발|씨발|병신|꺼져|죽어|닥쳐|짜증|최악|한심|왜이래|뭐하냐)/.test(
+            text,
+          )
+        ? -2
+        : /(근데|아니|왜|서운|답답|오해)/.test(text)
+          ? -1
+          : 0;
   const points = recent.map((m) => score(m.body || ""));
   const average = points.reduce((sum, value) => sum + value, 0) / points.length;
-  const label = average <= -1 ? "조금 조심스러움" : average >= .5 ? "편안함" : "차분함";
-  const recovery = average <= -1 && aiDetails()["대화 복구 문장"] !== "끄기" && !localStorage.getItem(`retone-recovery-dismissed-${roomId}`) ? `<button onclick="fillRecoveryMessage()">부드럽게 이어가기</button><i onclick="dismissRecoveryMessage()">×</i>` : "";
+  const label =
+    average <= -1 ? "조금 조심스러움" : average >= 0.5 ? "편안함" : "차분함";
+  const recovery =
+    average <= -1 &&
+    aiDetails()["대화 복구 문장"] !== "끄기" &&
+    !localStorage.getItem(`retone-recovery-dismissed-${roomId}`)
+      ? `<button onclick="fillRecoveryMessage()">부드럽게 이어가기</button><i onclick="dismissRecoveryMessage()">×</i>`
+      : "";
   return `<section class="emotion-timeline" title="최근 메시지의 단어 흐름을 단순히 요약한 표시예요. 누구의 감정이나 잘잘못을 판단하지 않아요."><span>대화 온도 · ${label}</span><div>${points.map((point) => `<i class="${point < 0 ? "low" : point > 0 ? "high" : "mid"}"></i>`).join("")}</div>${recovery}</section>`;
 }
-function fillRecoveryMessage() { const input = document.querySelector("#text"); if (input) { input.value = "내 의도는 비난이 아니었어. 잠깐 정리하고 다시 이야기해도 될까?"; input.focus(); } }
-function dismissRecoveryMessage() { localStorage.setItem(`retone-recovery-dismissed-${roomId}`, "1"); openRoom(roomId); }
+function fillRecoveryMessage() {
+  const input = document.querySelector("#text");
+  if (input) {
+    input.value =
+      "내 의도는 비난이 아니었어. 잠깐 정리하고 다시 이야기해도 될까?";
+    input.focus();
+  }
+}
+function dismissRecoveryMessage() {
+  localStorage.setItem(`retone-recovery-dismissed-${roomId}`, "1");
+  openRoom(roomId);
+}
 function openConflictGuide() {
-  popup(`<div class="ai-check info"><span>갈등 전환 모드</span><h2>지금 우리에게 필요한 건 무엇일까요?</h2><p>누가 맞는지보다, 다음 대화를 어떻게 이어갈지 고를 수 있어요.</p><div class="choice-stack"><button onclick="chooseConflictPath('사실 정리')">사실 정리 · 무엇이 있었는지 차분히 보기</button><button onclick="chooseConflictPath('감정 먼저')">감정 먼저 · 서운했던 점을 말하기</button><button onclick="chooseConflictPath('다음 행동')">다음 행동 · 해결할 일을 정하기</button></div></div>`);
+  popup(
+    `<div class="ai-check info"><span>갈등 전환 모드</span><h2>지금 우리에게 필요한 건 무엇일까요?</h2><p>누가 맞는지보다, 다음 대화를 어떻게 이어갈지 고를 수 있어요.</p><div class="choice-stack"><button onclick="chooseConflictPath('사실 정리')">사실 정리 · 무엇이 있었는지 차분히 보기</button><button onclick="chooseConflictPath('감정 먼저')">감정 먼저 · 서운했던 점을 말하기</button><button onclick="chooseConflictPath('다음 행동')">다음 행동 · 해결할 일을 정하기</button></div></div>`,
+  );
 }
 function chooseConflictPath(path) {
-  const copy = {"사실 정리":"서로 기억하는 사실을 짧게 적어볼까요?", "감정 먼저":"‘나는 …해서 서운했어’처럼 내 감정부터 말해볼까요?", "다음 행동":"지금 할 수 있는 작은 다음 행동을 정해볼까요?"}[path];
-  popup(`<div class="ai-check info"><span>${path}</span><h2>${copy}</h2><p>필요하다면 이 내용을 공동 확인 카드로 바로 남길 수 있어요.</p><button onclick="closePopup();newAgreement()">공동 확인으로 만들기</button><button class="quiet" onclick="closePopup()">채팅으로 돌아가기</button></div>`);
+  const copy = {
+    "사실 정리": "서로 기억하는 사실을 짧게 적어볼까요?",
+    "감정 먼저": "‘나는 …해서 서운했어’처럼 내 감정부터 말해볼까요?",
+    "다음 행동": "지금 할 수 있는 작은 다음 행동을 정해볼까요?",
+  }[path];
+  popup(
+    `<div class="ai-check info"><span>${path}</span><h2>${copy}</h2><p>필요하다면 이 내용을 공동 확인 카드로 바로 남길 수 있어요.</p><button onclick="closePopup();newAgreement()">공동 확인으로 만들기</button><button class="quiet" onclick="closePopup()">채팅으로 돌아가기</button></div>`,
+  );
 }
 function chooseIntent() {
-  popup(`<div class="ai-check info"><span>의도 확인</span><h2>이 메시지를 어떤 마음으로 보내나요?</h2><p>상대가 내 말을 추측하지 않도록, 선택한 의도를 메시지에 함께 표시해요.</p><div class="choice-stack">${["진지한 요청", "가벼운 농담", "서운한 마음", "재촉이 아닌 확인"].map((intent) => `<button onclick="setIntent('${intent}')">${intent}</button>`).join("")}</div><button class="quiet" onclick="setIntent('')">의도 없이 보내기</button></div>`);
+  popup(
+    `<div class="ai-check info"><span>의도 확인</span><h2>이 메시지를 어떤 마음으로 보내나요?</h2><p>상대가 내 말을 추측하지 않도록, 선택한 의도를 메시지에 함께 표시해요.</p><div class="choice-stack">${["진지한 요청", "가벼운 농담", "서운한 마음", "재촉이 아닌 확인"].map((intent) => `<button onclick="setIntent('${intent}')">${intent}</button>`).join("")}</div><button class="quiet" onclick="setIntent('')">의도 없이 보내기</button></div>`,
+  );
 }
-function setIntent(intent) { selectedIntent = intent; closePopup(); const button = document.querySelector(".intent-button"); if (button) button.textContent = intent ? "◎" : "＋"; }
-function viewReflection(item) { return `<article class="reflection-card"><span>↻ 약속 회고</span><b>${esc(item.title)}</b><p><strong>계속할 점</strong> ${esc(item.keep || "아직 작성하지 않았어요")}</p><p><strong>다음에는</strong> ${esc(item.next || "아직 작성하지 않았어요")}</p></article>`; }
-function viewAppointment(item) { return `<article class="appointment-card"><span>◷ 말맞춤 약속</span><b>${esc(item.title)}</b><p><strong>${esc(item.date)}</strong>${item.place ? ` · ${esc(item.place)}` : ""}</p></article>`; }
-function setQuickDate(inputId, offset) { const date = new Date(); date.setDate(date.getDate() + offset); date.setHours(18, 0, 0, 0); const value = new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16); const input = document.querySelector(`#${inputId}`); if (input) input.value = value; }
-function viewInsight(item) { return `<article class="insight-card"><span>✦ 대화 흐름 말맞춤 · ${esc(item.topic || "대화 흐름")}</span><b>${esc(item.summary)}</b><p><strong>엇갈린 지점</strong> ${esc(item.reason)}</p><p><strong>이렇게 풀어볼까요?</strong> ${esc(item.suggestion)}</p><button onclick="openConflictGuide()">갈등 전환 모드 열기</button></article>`; }
+function setIntent(intent) {
+  selectedIntent = intent;
+  closePopup();
+  const button = document.querySelector(".intent-button");
+  if (button) button.textContent = intent ? "◎" : "＋";
+}
+function viewReflection(item) {
+  return `<article class="reflection-card"><span>↻ 약속 회고</span><b>${esc(item.title)}</b><p><strong>계속할 점</strong> ${esc(item.keep || "아직 작성하지 않았어요")}</p><p><strong>다음에는</strong> ${esc(item.next || "아직 작성하지 않았어요")}</p></article>`;
+}
+function viewAppointment(item) {
+  return `<article class="appointment-card"><span>◷ 말맞춤 약속</span><b>${esc(item.title)}</b><p><strong>${esc(item.date)}</strong>${item.place ? ` · ${esc(item.place)}` : ""}</p></article>`;
+}
+function setQuickDate(inputId, offset) {
+  const date = new Date();
+  date.setDate(date.getDate() + offset);
+  date.setHours(18, 0, 0, 0);
+  const value = new Date(date.getTime() - date.getTimezoneOffset() * 60000)
+    .toISOString()
+    .slice(0, 16);
+  const input = document.querySelector(`#${inputId}`);
+  if (input) input.value = value;
+}
+function viewInsight(item) {
+  return `<article class="insight-card"><span>✦ 대화 흐름 말맞춤 · ${esc(item.topic || "대화 흐름")}</span><b>${esc(item.summary)}</b><p><strong>엇갈린 지점</strong> ${esc(item.reason)}</p><p><strong>이렇게 풀어볼까요?</strong> ${esc(item.suggestion)}</p><button onclick="openConflictGuide()">갈등 전환 모드 열기</button></article>`;
+}
 function alignmentCard(messages) {
   if (aiDetails()["말맞춤 카드"] === "끄기") return "";
-  const message = [...messages].reverse().find((item) => item.alignment_hint && localStorage.getItem(`retone-alignment-dismissed-${item.id}`) !== "1");
+  const message = [...messages]
+    .reverse()
+    .find(
+      (item) =>
+        item.alignment_hint &&
+        localStorage.getItem(`retone-alignment-dismissed-${item.id}`) !== "1",
+    );
   if (!message) return "";
   return `<article class="alignment-card"><span>✦ 말맞춤 제안</span><b>약속을 정하는 대화 같아요.</b><p>‘${esc(message.body)}’에 대해 시간·장소·할 일을 함께 맞춰볼까요?</p><div><button onclick="openAlignmentCard('${message.id}')">말맞춤 카드 만들기</button><button class="quiet" onclick="dismissAlignment('${message.id}')">나중에</button></div></article>`;
 }
-function dismissAlignment(id) { localStorage.setItem(`retone-alignment-dismissed-${id}`, "1"); openRoom(roomId); }
+function dismissAlignment(id) {
+  localStorage.setItem(`retone-alignment-dismissed-${id}`, "1");
+  openRoom(roomId);
+}
 function openAlignmentCard(id) {
-  popup(`<div class="ai-check info"><span>말맞춤 카드</span><h2>약속을 함께 맞춰볼까요?</h2><p>상대의 의도를 추측하지 않고, 시간·장소·목적을 한 번에 정리해요.</p><input id="alignment-title" placeholder="무엇을 할지 입력해주세요"><div class="quick-date"><button type="button" onclick="setQuickDate('alignment-date',0)">오늘</button><button type="button" onclick="setQuickDate('alignment-date',1)">내일</button></div><input id="alignment-date" type="datetime-local"><input id="alignment-place" placeholder="장소 또는 온라인 링크를 입력해주세요"><button onclick="saveAlignmentCard('${id}')">약속 카드 만들기</button></div>`);
+  popup(
+    `<div class="ai-check info"><span>말맞춤 카드</span><h2>약속을 함께 맞춰볼까요?</h2><p>상대의 의도를 추측하지 않고, 시간·장소·목적을 한 번에 정리해요.</p><input id="alignment-title" placeholder="무엇을 할지 입력해주세요"><div class="quick-date"><button type="button" onclick="setQuickDate('alignment-date',0)">오늘</button><button type="button" onclick="setQuickDate('alignment-date',1)">내일</button></div><input id="alignment-date" type="datetime-local"><input id="alignment-place" placeholder="장소 또는 온라인 링크를 입력해주세요"><button onclick="saveAlignmentCard('${id}')">약속 카드 만들기</button></div>`,
+  );
 }
 async function saveAlignmentCard(messageId) {
-  const title = document.querySelector("#alignment-title").value.trim(), date = document.querySelector("#alignment-date").value;
+  const title = document.querySelector("#alignment-title").value.trim(),
+    date = document.querySelector("#alignment-date").value;
   if (!title || !date) return alert("무엇을 할지와 시간을 입력해주세요.");
-  await api("/api/appointments", { method: "POST", body: JSON.stringify({ title, room_id: roomId, date: date.replace("T", " "), place: document.querySelector("#alignment-place").value.trim() }) });
-  localStorage.setItem(`retone-alignment-dismissed-${messageId}`, "1"); closePopup(); data = await api(`/api/bootstrap?user_id=${encodeURIComponent(signedInId)}`); openRoom(roomId);
+  await api("/api/appointments", {
+    method: "POST",
+    body: JSON.stringify({
+      title,
+      room_id: roomId,
+      date: date.replace("T", " "),
+      place: document.querySelector("#alignment-place").value.trim(),
+    }),
+  });
+  localStorage.setItem(`retone-alignment-dismissed-${messageId}`, "1");
+  closePopup();
+  data = await api(`/api/bootstrap?user_id=${encodeURIComponent(signedInId)}`);
+  openRoom(roomId);
 }
 function inspectMessage(text) {
   popup(
@@ -324,7 +750,11 @@ function inspectMessage(text) {
 async function factCheck(text) {
   const result = await api("/api/ai/check", {
     method: "POST",
-      body: JSON.stringify({ text, ai_intervention: "careful", details: aiDetails() }),
+    body: JSON.stringify({
+      text,
+      ai_intervention: "careful",
+      details: aiDetails(),
+    }),
   });
   const info = result.info || {};
   popup(
@@ -358,7 +788,11 @@ function setAiStatus(text, working = false) {
 function queueAiCheck(value) {
   const text = value.trim();
   clearTimeout(aiPrefetch.timer);
-  if (aiIntervention === "off" || aiDetails()["입력 중 선검사"] === "끄기" || !text) {
+  if (
+    aiIntervention === "off" ||
+    aiDetails()["입력 중 선검사"] === "끄기" ||
+    !text
+  ) {
     aiPrefetch = { text: "", result: null, promise: null, timer: null };
     setAiStatus("");
     return;
@@ -384,7 +818,11 @@ async function runAiCheck(text) {
   setAiStatus("AI 확인 중", true);
   const request = api("/api/ai/check", {
     method: "POST",
-    body: JSON.stringify({ text, ai_intervention: aiIntervention, details: aiDetails() }),
+    body: JSON.stringify({
+      text,
+      ai_intervention: aiIntervention,
+      details: aiDetails(),
+    }),
   });
   aiPrefetch.promise = request;
   try {
@@ -452,20 +890,55 @@ async function send(event) {
     await sendApproved();
   }
 }
-async function sendImageNow(dataUrl) { await api(`/api/rooms/${roomId}/messages`, { method: "POST", body: JSON.stringify({ sender: signedIn, sender_id: signedInId, body: "사진을 보냈어요.", image_url: dataUrl }) }); openRoom(roomId); }
+async function sendImageNow(dataUrl) {
+  await api(`/api/rooms/${roomId}/messages`, {
+    method: "POST",
+    body: JSON.stringify({
+      sender: signedIn,
+      sender_id: signedInId,
+      body: "사진을 보냈어요.",
+      image_url: dataUrl,
+    }),
+  });
+  openRoom(roomId);
+}
 async function sendImage(input) {
   const file = input.files[0];
   if (!file || !roomId) return;
   try {
     setAiStatus("사진을 안전하게 확인 중이에요…", true);
     const dataUrl = await readImage(file);
-    if (aiDetails()["이미지 안전 안내"] !== "끄기") { const check = await api("/api/images/check", { method: "POST", body: JSON.stringify({ data_url: dataUrl }) }); if (check.flagged) { const legal = check.sexual ? "선정적 이미지로 보일 수 있어 법률·플랫폼 규정 문제가 생길 수 있어요. Re:Tone은 법적 판단을 하지 않으며, 최종 선택과 책임은 사용자에게 있어요." : "상대에게 불쾌감이나 유해한 이미지로 보일 수 있어요."; const token = encodeURIComponent(dataUrl); popup(`<div class="ai-check warn"><span>사진 전송 안내</span><h2>이 사진은 이렇게 보일 수 있어요</h2><p>${legal}</p><div class="modal-actions"><button class="quiet" onclick="closePopup()">다른 사진 고르기</button><button onclick="closePopup();sendImageNow(decodeURIComponent('${token}'))">그래도 보내기</button></div></div>`); return; } }
+    if (aiDetails()["이미지 안전 안내"] !== "끄기") {
+      const check = await api("/api/images/check", {
+        method: "POST",
+        body: JSON.stringify({ data_url: dataUrl }),
+      });
+      if (check.flagged) {
+        const legal = check.sexual
+          ? "선정적 이미지로 보일 수 있어 법률·플랫폼 규정 문제가 생길 수 있어요. Re:Tone은 법적 판단을 하지 않으며, 최종 선택과 책임은 사용자에게 있어요."
+          : "상대에게 불쾌감이나 유해한 이미지로 보일 수 있어요.";
+        const token = encodeURIComponent(dataUrl);
+        popup(
+          `<div class="ai-check warn"><span>사진 전송 안내</span><h2>이 사진은 이렇게 보일 수 있어요</h2><p>${legal}</p><div class="modal-actions"><button class="quiet" onclick="closePopup()">다른 사진 고르기</button><button onclick="closePopup();sendImageNow(decodeURIComponent('${token}'))">그래도 보내기</button></div></div>`,
+        );
+        return;
+      }
+    }
     await sendImageNow(dataUrl);
-  } catch { popup(`<div class="ai-check warn"><h2>사진을 전송하지 못했어요</h2><p>2MB 이하의 이미지인지, AI 안전 점검 연결 상태를 확인해주세요.</p><button onclick="closePopup()">확인</button></div>`); }
-  finally { setAiStatus(""); input.value = ""; }
+  } catch {
+    popup(
+      `<div class="ai-check warn"><h2>사진을 전송하지 못했어요</h2><p>2MB 이하의 이미지인지, AI 안전 점검 연결 상태를 확인해주세요.</p><button onclick="closePopup()">확인</button></div>`,
+    );
+  } finally {
+    setAiStatus("");
+    input.value = "";
+  }
 }
 function showCheckResult(result) {
-  if (!result || (result.verdict !== "PASS" && result.verdict !== "WARN")) { sendApproved(); return; }
+  if (!result || (result.verdict !== "PASS" && result.verdict !== "WARN")) {
+    sendApproved();
+    return;
+  }
   if (pendingSend) pendingSend.result = result;
   const info = result.info || { level: "none", queries: [] };
   const suggestion = result.suggestion
@@ -473,7 +946,10 @@ function showCheckResult(result) {
     : "";
   if (result.verdict === "WARN") {
     removePendingBubble();
-    const rewrite = aiDetails()["표현 바꾸기"] === "끄기" ? "" : `<button class="quiet" onclick="rewritePending()">AI로 표현 바꾸기</button>`;
+    const rewrite =
+      aiDetails()["표현 바꾸기"] === "끄기"
+        ? ""
+        : `<button class="quiet" onclick="rewritePending()">AI로 표현 바꾸기</button>`;
     popup(
       `<div class="ai-check warn"><span>Re:Tone의 제안</span><h2>이렇게 들릴 수도 있어요</h2>${suggestion || "<p>상대에게는 공격적인 표현으로 들릴 수 있어요. 조금 다르게 말해볼까요?</p>"}<small>Re:Tone은 이 문장을 판단하거나 막지 않아요. 선택은 언제나 나에게 있어요.</small><div class="modal-actions">${rewrite}<button onclick="sendDespiteWarning()">그냥 보내기</button></div><button class="report-ai" onclick="reportAiResult()">AI 제안이 이상했나요? 문의하기</button></div>`,
     );
@@ -491,9 +967,15 @@ function showCheckResult(result) {
 function sendDespiteWarning() {
   if (pendingSend?.result?.verdict === "WARN") {
     const state = sensitivityState();
-    const category = pendingSend.result.source === "dictionary" ? "강한 공격 표현" : "비꼼·압박 표현";
+    const category =
+      pendingSend.result.source === "dictionary"
+        ? "강한 공격 표현"
+        : "비꼼·압박 표현";
     state.overrides[category] = (state.overrides[category] || 0) + 1;
-    if (state.overrides[category] >= 3) { state.categories[category] = Math.max(0, state.categories[category] - 5); state.overrides[category] = 0; }
+    if (state.overrides[category] >= 3) {
+      state.categories[category] = Math.max(0, state.categories[category] - 5);
+      state.overrides[category] = 0;
+    }
     saveSensitivity(state);
   }
   sendApproved();
@@ -508,7 +990,12 @@ async function rewritePending() {
   try {
     const out = await api("/api/ai/rewrite", {
       method: "POST",
-      body: JSON.stringify({ text: pendingSend.body, context: currentRoomMessages.slice(-12).map((message) => `${message.sender}: ${message.body}`) }),
+      body: JSON.stringify({
+        text: pendingSend.body,
+        context: currentRoomMessages
+          .slice(-12)
+          .map((message) => `${message.sender}: ${message.body}`),
+      }),
     });
     if (out.suggestion) {
       pendingSend.body = out.suggestion;
@@ -542,22 +1029,37 @@ async function sendApproved() {
   try {
     await api(`/api/rooms/${next.room}/messages`, {
       method: "POST",
-      body: JSON.stringify({ sender: signedIn, sender_id: signedInId, body: next.body, intent: next.intent }),
+      body: JSON.stringify({
+        sender: signedIn,
+        sender_id: signedInId,
+        body: next.body,
+        intent: next.intent,
+      }),
     });
   } catch {
     removePendingBubble();
     const input = document.querySelector("#text");
-    if (input) { input.disabled = false; input.placeholder = "메시지를 입력하세요"; }
-    popup(`<div class="ai-check warn"><span>전송되지 않았어요</span><h2>메시지를 보내지 못했어요.</h2><p>인터넷 연결 또는 서버 상태를 확인한 뒤 다시 시도해주세요. 메시지 내용은 유지돼요.</p><div class="modal-actions"><button class="quiet" onclick="editPendingSend()">내용 다시 보기</button><button onclick="sendApproved()">다시 보내기</button></div></div>`);
+    if (input) {
+      input.disabled = false;
+      input.placeholder = "메시지를 입력하세요";
+    }
+    popup(
+      `<div class="ai-check warn"><span>전송되지 않았어요</span><h2>메시지를 보내지 못했어요.</h2><p>인터넷 연결 또는 서버 상태를 확인한 뒤 다시 시도해주세요. 메시지 내용은 유지돼요.</p><div class="modal-actions"><button class="quiet" onclick="editPendingSend()">내용 다시 보기</button><button onclick="sendApproved()">다시 보내기</button></div></div>`,
+    );
     return;
   }
   pendingSend = null;
   selectedIntent = "";
   openRoom(next.room);
-  if (aiDetails()["대화 흐름 요약"] !== "끄기") api(`/api/rooms/${next.room}/insight`, { method: "POST" }).then(async () => {
-    data = await api(`/api/bootstrap?user_id=${encodeURIComponent(signedInId)}`);
-    if (roomId === next.room) openRoom(next.room);
-  }).catch(() => {});
+  if (aiDetails()["대화 흐름 요약"] !== "끄기")
+    api(`/api/rooms/${next.room}/insight`, { method: "POST" })
+      .then(async () => {
+        data = await api(
+          `/api/bootstrap?user_id=${encodeURIComponent(signedInId)}`,
+        );
+        if (roomId === next.room) openRoom(next.room);
+      })
+      .catch(() => {});
 }
 function editPendingSend() {
   const body = pendingSend?.body || "";
@@ -574,7 +1076,10 @@ function editPendingSend() {
 }
 async function removeMessage(id) {
   if (!confirm("이 메시지를 삭제할까요?")) return;
-  await api(`/api/rooms/${roomId}/messages/${id}?user_id=${encodeURIComponent(signedInId)}`, { method: "DELETE" });
+  await api(
+    `/api/rooms/${roomId}/messages/${id}?user_id=${encodeURIComponent(signedInId)}`,
+    { method: "DELETE" },
+  );
   openRoom(roomId);
 }
 function popup(inner) {
@@ -628,15 +1133,25 @@ function closePopup() {
   document.querySelector(".modal")?.remove();
 }
 async function newRoom() {
-  const users = (await api("/api/users")).filter((user) => user.id !== signedInId);
-  popup(`<h2>새 단체 채팅</h2><p>방 이름을 정하고, 가입한 친구를 바로 초대할 수 있어요.</p><input id="roomName" placeholder="예: 과학 수행평가 조"><div class="invite-list">${users.length ? users.map((user) => `<label><input type="checkbox" class="invite-user" value="${user.id}"> <b>${esc(user.name)}</b> 초대</label>`).join("") : "<small>가입한 다른 친구가 아직 없어요.</small>"}</div><button onclick="saveRoom()">채팅방 만들기</button>`);
+  const users = (await api("/api/users")).filter(
+    (user) => user.id !== signedInId,
+  );
+  popup(
+    `<h2>새 단체 채팅</h2><p>방 이름을 정하고, 가입한 친구를 바로 초대할 수 있어요.</p><input id="roomName" placeholder="예: 과학 수행평가 조"><div class="invite-list">${users.length ? users.map((user) => `<label><input type="checkbox" class="invite-user" value="${user.id}"> <b>${esc(user.name)}</b> 초대</label>`).join("") : "<small>가입한 다른 친구가 아직 없어요.</small>"}</div><button onclick="saveRoom()">채팅방 만들기</button>`,
+  );
 }
 function selectedInvitees() {
-  return [...document.querySelectorAll(".invite-user:checked")].map((input) => input.value);
+  return [...document.querySelectorAll(".invite-user:checked")].map(
+    (input) => input.value,
+  );
 }
 async function inviteFriends() {
-  const users = (await api("/api/users")).filter((user) => user.id !== signedInId);
-  popup(`<h2>친구 초대</h2><p>친구를 고르면 참여 안내가 표시돼요.</p><div class="invite-list">${users.length ? users.map((user) => `<label><input type="checkbox" class="invite-user" value="${user.id}"> <b>${esc(user.name)}</b></label>`).join("") : "<small>초대할 가입 친구가 없어요.</small>"}</div><button onclick="confirmInviteFriends()">선택한 친구 초대</button>`);
+  const users = (await api("/api/users")).filter(
+    (user) => user.id !== signedInId,
+  );
+  popup(
+    `<h2>친구 초대</h2><p>친구를 고르면 참여 안내가 표시돼요.</p><div class="invite-list">${users.length ? users.map((user) => `<label><input type="checkbox" class="invite-user" value="${user.id}"> <b>${esc(user.name)}</b></label>`).join("") : "<small>초대할 가입 친구가 없어요.</small>"}</div><button onclick="confirmInviteFriends()">선택한 친구 초대</button>`,
+  );
 }
 async function confirmInviteFriends() {
   const inviteeIds = selectedInvitees();
@@ -649,7 +1164,14 @@ async function confirmInviteFriends() {
 async function saveRoom() {
   const name = document.querySelector("#roomName").value.trim();
   if (!name) return;
-  await api("/api/rooms", { method: "POST", body: JSON.stringify({ name, creator_id: signedInId, invitee_ids: selectedInvitees() }) });
+  await api("/api/rooms", {
+    method: "POST",
+    body: JSON.stringify({
+      name,
+      creator_id: signedInId,
+      invitee_ids: selectedInvitees(),
+    }),
+  });
   closePopup();
   home();
 }
@@ -671,6 +1193,10 @@ async function saveAgreement() {
     }),
   });
   closePopup();
+  openRoom(roomId);
+}
+async function answerAgreement(id, action) {
+  await api(`/api/agreements/${id}/${action}`, { method: "POST" });
   openRoom(roomId);
 }
 function newAppointment() {
@@ -695,12 +1221,22 @@ async function saveAppointment() {
   home();
 }
 function newReflection() {
-  popup(`<h2>약속 회고 카드</h2><p>회의나 공동 확인이 끝난 뒤, 다음 대화를 더 좋게 만들 수 있어요.</p><input id="reflection-title" placeholder="무엇을 함께 돌아볼까요?"><input id="reflection-keep" placeholder="계속할 점을 입력해주세요"><input id="reflection-next" placeholder="다음에는 어떻게 할지 입력해주세요"><button onclick="saveReflection()">회고 카드 남기기</button>`);
+  popup(
+    `<h2>약속 회고 카드</h2><p>회의나 공동 확인이 끝난 뒤, 다음 대화를 더 좋게 만들 수 있어요.</p><input id="reflection-title" placeholder="무엇을 함께 돌아볼까요?"><input id="reflection-keep" placeholder="계속할 점을 입력해주세요"><input id="reflection-next" placeholder="다음에는 어떻게 할지 입력해주세요"><button onclick="saveReflection()">회고 카드 남기기</button>`,
+  );
 }
 async function saveReflection() {
   const title = document.querySelector("#reflection-title").value.trim();
   if (!title) return alert("돌아볼 내용을 입력해주세요.");
-  await api("/api/reflections", { method: "POST", body: JSON.stringify({ room_id: roomId, title, keep: document.querySelector("#reflection-keep").value.trim(), next: document.querySelector("#reflection-next").value.trim() }) });
+  await api("/api/reflections", {
+    method: "POST",
+    body: JSON.stringify({
+      room_id: roomId,
+      title,
+      keep: document.querySelector("#reflection-keep").value.trim(),
+      next: document.querySelector("#reflection-next").value.trim(),
+    }),
+  });
   closePopup();
   data = await api(`/api/bootstrap?user_id=${encodeURIComponent(signedInId)}`);
   openRoom(roomId);
@@ -726,12 +1262,22 @@ function authForm(mode) {
     .forEach((b, i) => b.classList.toggle("selected", (i === 1) === join));
   if (join) {
     if (!signupAiDetails) signupAiDetails = { ...aiDetails() };
-    if (!signupDraft) signupDraft = { step: 0, name: "", phone: "", password: "", sensitivity: 50, ai: "standard", consent: false };
+    if (!signupDraft)
+      signupDraft = {
+        step: 0,
+        name: "",
+        phone: "",
+        password: "",
+        sensitivity: 50,
+        ai: "standard",
+        consent: false,
+      };
     renderSignupWizard();
     return;
   }
   if (mode === "admin") {
-    document.querySelector("#auth-form").innerHTML = `<div class="admin-auth"><span>관리자 전용</span><h2>관리자 로그인</h2><p>비밀번호와 2차 인증 코드를 모두 입력해주세요.</p><label>관리자 비밀번호<input id="admin-password" type="password" placeholder="관리자 비밀번호를 입력해주세요"></label><label>2차 인증 코드<input id="admin-two-factor" inputmode="numeric" type="password" placeholder="2차 인증 코드를 입력해주세요"></label><button class="auth-submit" onclick="finishAdminLogin()">관리자 로그인</button><button type="button" class="admin-back" onclick="authForm('login')">일반 로그인으로 돌아가기</button></div>`;
+    document.querySelector("#auth-form").innerHTML =
+      `<div class="admin-auth"><span>관리자 전용</span><h2>관리자 로그인</h2><p>비밀번호와 2차 인증 코드를 모두 입력해주세요.</p><label>관리자 비밀번호<input id="admin-password" type="password" placeholder="관리자 비밀번호를 입력해주세요"></label><label>2차 인증 코드<input id="admin-two-factor" inputmode="numeric" type="password" placeholder="2차 인증 코드를 입력해주세요"></label><button class="auth-submit" onclick="finishAdminLogin()">관리자 로그인</button><button type="button" class="admin-back" onclick="authForm('login')">일반 로그인으로 돌아가기</button></div>`;
     return;
   }
   if (join && !signupAiDetails) signupAiDetails = { ...aiDetails() };
@@ -748,46 +1294,207 @@ function renderSignupWizard() {
   const steps = ["계정", "AI 민감도", "확인"];
   const progress = `<div class="signup-progress"><span>${draft.step + 1} / ${steps.length}</span><b>${steps[draft.step]}</b><div><i style="width:${((draft.step + 1) / steps.length) * 100}%"></i></div></div>`;
   let content = "";
-  if (draft.step === 0) content = `<h2>먼저 계정을 만들어요</h2><p>친구들과 안전하게 대화하기 위한 기본 정보예요.</p><label>이름<input id="signup-name" value="${esc(draft.name)}" placeholder="이름을 입력해주세요"></label><label>전화번호<input id="signup-phone" value="${esc(draft.phone)}" inputmode="numeric" oninput="checkSignupPhone()" placeholder="전화번호를 입력해주세요"><small id="signup-phone-status" class="field-status">전화번호를 입력하면 중복 여부를 바로 확인해요.</small></label><label>비밀번호<input id="signup-password" value="${esc(draft.password)}" type="password" oninput="checkPasswordRequirements()" placeholder="비밀번호를 입력해주세요"></label><ul class="password-requirements"><li id="password-length">○ 6자 이상</li><li id="password-letter">○ 영어 1자 이상</li><li id="password-special">○ 특수문자 1자 이상</li></ul>`;
-  else if (draft.step === 1) content = `<h2>AI가 얼마나 도울까요?</h2><p>처음에는 보통(50)에서 시작해요. 이후 ‘그냥 보내기’ 선택 패턴을 보고 AI가 세부 민감도를 조절하며, 설정에서 언제든 바꿀 수 있어요.</p><section class="signup-sensitivity"><div><span>AI 민감도</span><b id="signup-sensitivity-label">${sensitivityLabel(draft.sensitivity)} · ${draft.sensitivity}</b></div><input type="range" min="0" max="100" value="${draft.sensitivity}" style="--sensitivity:${draft.sensitivity}%" oninput="previewSignupSensitivity(this.value,this)" onchange="setSignupSensitivity(this.value)"><small>낮을수록 필요한 순간에만, 높을수록 더 세심하게 제안해요.</small></section>`;
-  else content = `<h2>마지막 확인이에요</h2><p>Re:Tone은 판단하거나 차단하지 않고, 선택한 범위에서만 대화를 돕습니다.</p><button type="button" class="ai-policy-link" onclick="showAiPolicy()">AI가 개입하는 이유와 사용 범위 보기</button><label class="consent"><input id="signup-consent" type="checkbox" ${draft.consent ? "checked" : ""}> AI 사용 안내를 읽었고, 선택한 범위의 점검에 동의해요.</label><p class="auth-hint">AI 끄기를 선택한 경우에는 동의 없이도 가입할 수 있어요.</p>`;
-  const back = draft.step ? `<button class="wizard-back" onclick="signupBack()">이전</button>` : `<button class="wizard-back" onclick="authForm('login')">로그인으로</button>`;
-  const next = draft.step === steps.length - 1 ? `<button class="auth-submit" onclick="completeSignup()">회원가입하고 시작하기</button>` : `<button class="auth-submit" onclick="signupNext()">다음</button>`;
-  document.querySelector("#auth-form").innerHTML = `<section class="signup-wizard">${progress}<div class="wizard-content">${content}</div><div class="wizard-actions">${back}${next}</div></section>`;
-  if (draft.step === 0) { checkPasswordRequirements(); if (draft.phone) checkSignupPhone(); }
+  if (draft.step === 0)
+    content = `<h2>먼저 계정을 만들어요</h2><p>친구들과 안전하게 대화하기 위한 기본 정보예요.</p><label>이름<input id="signup-name" value="${esc(draft.name)}" placeholder="이름을 입력해주세요"></label><label>전화번호<input id="signup-phone" value="${esc(draft.phone)}" inputmode="numeric" oninput="checkSignupPhone()" placeholder="전화번호를 입력해주세요"><small id="signup-phone-status" class="field-status">전화번호를 입력하면 중복 여부를 바로 확인해요.</small></label><label>비밀번호<input id="signup-password" value="${esc(draft.password)}" type="password" oninput="checkPasswordRequirements()" placeholder="비밀번호를 입력해주세요"></label><ul class="password-requirements"><li id="password-length">○ 6자 이상</li><li id="password-letter">○ 영어 1자 이상</li><li id="password-special">○ 특수문자 1자 이상</li></ul>`;
+  else if (draft.step === 1)
+    content = `<h2>AI가 얼마나 도울까요?</h2><p>처음에는 보통(50)에서 시작해요. 이후 ‘그냥 보내기’ 선택 패턴을 보고 AI가 세부 민감도를 조절하며, 설정에서 언제든 바꿀 수 있어요.</p><section class="signup-sensitivity"><div><span>AI 민감도</span><b id="signup-sensitivity-label">${sensitivityLabel(draft.sensitivity)} · ${draft.sensitivity}</b></div><input type="range" min="0" max="100" value="${draft.sensitivity}" style="--sensitivity:${draft.sensitivity}%" oninput="previewSignupSensitivity(this.value,this)" onchange="setSignupSensitivity(this.value)"><small>낮을수록 필요한 순간에만, 높을수록 더 세심하게 제안해요.</small></section>`;
+  else
+    content = `<h2>마지막 확인이에요</h2><p>Re:Tone은 판단하거나 차단하지 않고, 선택한 범위에서만 대화를 돕습니다.</p><button type="button" class="ai-policy-link" onclick="showAiPolicy()">AI가 개입하는 이유와 사용 범위 보기</button><label class="consent"><input id="signup-consent" type="checkbox" ${draft.consent ? "checked" : ""}> AI 사용 안내를 읽었고, 선택한 범위의 점검에 동의해요.</label><p class="auth-hint">AI 끄기를 선택한 경우에는 동의 없이도 가입할 수 있어요.</p>`;
+  const back = draft.step
+    ? `<button class="wizard-back" onclick="signupBack()">이전</button>`
+    : `<button class="wizard-back" onclick="authForm('login')">로그인으로</button>`;
+  const next =
+    draft.step === steps.length - 1
+      ? `<button class="auth-submit" onclick="completeSignup()">회원가입하고 시작하기</button>`
+      : `<button class="auth-submit" onclick="signupNext()">다음</button>`;
+  document.querySelector("#auth-form").innerHTML =
+    `<section class="signup-wizard">${progress}<div class="wizard-content">${content}</div><div class="wizard-actions">${back}${next}</div></section>`;
+  if (draft.step === 0) {
+    checkPasswordRequirements();
+    if (draft.phone) checkSignupPhone();
+  }
 }
-function setSignupLevel(value) { signupDraft.ai = value; renderSignupWizard(); }
-function previewSignupSensitivity(value, input) { signupDraft.sensitivity = Number(value); signupDraft.ai = interventionFromSensitivity(signupDraft.sensitivity); const label = document.querySelector("#signup-sensitivity-label"); if (label) label.textContent = `${sensitivityLabel(Number(value))} · ${value}`; (input || document.querySelector(".signup-sensitivity input")).style.setProperty("--sensitivity", `${value}%`); }
-function setSignupSensitivity(value) { signupDraft.sensitivity = Number(value); signupDraft.ai = interventionFromSensitivity(signupDraft.sensitivity); }
-function setFieldStatus(id, message, state = "") { const node = document.querySelector(id); if (!node) return; node.textContent = message; node.className = `field-status ${state}`; }
-function checkSignupPhone() { const input = document.querySelector("#signup-phone"); if (!input) return; input.value = input.value.replace(/\D/g, ""); const phone = input.value; clearTimeout(signupPhoneTimer); if (phone.length < 7) return setFieldStatus("#signup-phone-status", "전화번호를 입력하면 중복 여부를 바로 확인해요."); setFieldStatus("#signup-phone-status", "확인 중…", "checking"); signupPhoneTimer = setTimeout(async () => { try { const out = await api(`/api/auth/phone-available?phone=${encodeURIComponent(phone)}`); if (document.querySelector("#signup-phone")?.value !== phone) return; setFieldStatus("#signup-phone-status", out.available ? "사용 가능한 전화번호예요." : "이미 가입된 전화번호예요.", out.available ? "ok" : "error"); } catch { setFieldStatus("#signup-phone-status", "중복 여부를 확인하지 못했어요. 잠시 후 다시 시도해주세요.", "error"); } }, 350); }
-function checkPasswordRequirements() { const value = document.querySelector("#signup-password")?.value || ""; const tests = [["#password-length", value.length >= 6], ["#password-letter", /[A-Za-z]/.test(value)], ["#password-special", /[^A-Za-z0-9]/.test(value)]]; tests.forEach(([selector, passed]) => { const item = document.querySelector(selector); if (item) { item.classList.toggle("passed", passed); item.textContent = `${passed ? "✓" : "○"} ${item.id === "password-length" ? "6자 이상" : item.id === "password-letter" ? "영어 1자 이상" : "특수문자 1자 이상"}`; } }); return tests.every(([, passed]) => passed); }
-function setWizardDetail(name, value) { signupAiDetails = { ...signupAiDetails, [name]: value }; renderSignupWizard(); }
+function setSignupLevel(value) {
+  signupDraft.ai = value;
+  renderSignupWizard();
+}
+function previewSignupSensitivity(value, input) {
+  signupDraft.sensitivity = Number(value);
+  signupDraft.ai = interventionFromSensitivity(signupDraft.sensitivity);
+  const label = document.querySelector("#signup-sensitivity-label");
+  if (label)
+    label.textContent = `${sensitivityLabel(Number(value))} · ${value}`;
+  (
+    input || document.querySelector(".signup-sensitivity input")
+  ).style.setProperty("--sensitivity", `${value}%`);
+}
+function setSignupSensitivity(value) {
+  signupDraft.sensitivity = Number(value);
+  signupDraft.ai = interventionFromSensitivity(signupDraft.sensitivity);
+}
+function setFieldStatus(id, message, state = "") {
+  const node = document.querySelector(id);
+  if (!node) return;
+  node.textContent = message;
+  node.className = `field-status ${state}`;
+}
+function checkSignupPhone() {
+  const input = document.querySelector("#signup-phone");
+  if (!input) return;
+  input.value = input.value.replace(/\D/g, "");
+  const phone = input.value;
+  clearTimeout(signupPhoneTimer);
+  if (phone.length < 7)
+    return setFieldStatus(
+      "#signup-phone-status",
+      "전화번호를 입력하면 중복 여부를 바로 확인해요.",
+    );
+  setFieldStatus("#signup-phone-status", "확인 중…", "checking");
+  signupPhoneTimer = setTimeout(async () => {
+    try {
+      const out = await api(
+        `/api/auth/phone-available?phone=${encodeURIComponent(phone)}`,
+      );
+      if (document.querySelector("#signup-phone")?.value !== phone) return;
+      setFieldStatus(
+        "#signup-phone-status",
+        out.available
+          ? "사용 가능한 전화번호예요."
+          : "이미 가입된 전화번호예요.",
+        out.available ? "ok" : "error",
+      );
+    } catch {
+      setFieldStatus(
+        "#signup-phone-status",
+        "중복 여부를 확인하지 못했어요. 잠시 후 다시 시도해주세요.",
+        "error",
+      );
+    }
+  }, 350);
+}
+function checkPasswordRequirements() {
+  const value = document.querySelector("#signup-password")?.value || "";
+  const tests = [
+    ["#password-length", value.length >= 6],
+    ["#password-letter", /[A-Za-z]/.test(value)],
+    ["#password-special", /[^A-Za-z0-9]/.test(value)],
+  ];
+  tests.forEach(([selector, passed]) => {
+    const item = document.querySelector(selector);
+    if (item) {
+      item.classList.toggle("passed", passed);
+      item.textContent = `${passed ? "✓" : "○"} ${item.id === "password-length" ? "6자 이상" : item.id === "password-letter" ? "영어 1자 이상" : "특수문자 1자 이상"}`;
+    }
+  });
+  return tests.every(([, passed]) => passed);
+}
+function setWizardDetail(name, value) {
+  signupAiDetails = { ...signupAiDetails, [name]: value };
+  renderSignupWizard();
+}
 async function signupNext() {
-  if (signupDraft.step === 0) { const name = document.querySelector("#signup-name").value.trim(), phone = document.querySelector("#signup-phone").value.replace(/\D/g, ""), password = document.querySelector("#signup-password").value; if (!name || phone.length < 7 || !checkPasswordRequirements()) return alert("이름, 전화번호와 비밀번호 조건을 모두 확인해주세요."); try { const out = await api(`/api/auth/phone-available?phone=${encodeURIComponent(phone)}`); if (!out.available) { setFieldStatus("#signup-phone-status", "이미 가입된 전화번호예요.", "error"); return; } } catch { return setFieldStatus("#signup-phone-status", "중복 여부를 확인하지 못했어요. 잠시 후 다시 시도해주세요.", "error"); } Object.assign(signupDraft, { name, phone, password }); }
-  signupDraft.step += 1; renderSignupWizard();
+  if (signupDraft.step === 0) {
+    const name = document.querySelector("#signup-name").value.trim(),
+      phone = document.querySelector("#signup-phone").value.replace(/\D/g, ""),
+      password = document.querySelector("#signup-password").value;
+    if (!name || phone.length < 7 || !checkPasswordRequirements())
+      return alert("이름, 전화번호와 비밀번호 조건을 모두 확인해주세요.");
+    try {
+      const out = await api(
+        `/api/auth/phone-available?phone=${encodeURIComponent(phone)}`,
+      );
+      if (!out.available) {
+        setFieldStatus(
+          "#signup-phone-status",
+          "이미 가입된 전화번호예요.",
+          "error",
+        );
+        return;
+      }
+    } catch {
+      return setFieldStatus(
+        "#signup-phone-status",
+        "중복 여부를 확인하지 못했어요. 잠시 후 다시 시도해주세요.",
+        "error",
+      );
+    }
+    Object.assign(signupDraft, { name, phone, password });
+  }
+  signupDraft.step += 1;
+  renderSignupWizard();
 }
-function signupBack() { if (signupDraft.step) signupDraft.step -= 1; renderSignupWizard(); }
+function signupBack() {
+  if (signupDraft.step) signupDraft.step -= 1;
+  renderSignupWizard();
+}
 async function completeSignup() {
-  signupDraft.consent = document.querySelector("#signup-consent")?.checked || false;
-  if (signupDraft.ai !== "off" && !signupDraft.consent) return alert("AI 사용 안내를 확인하고 동의하거나, AI 끄기를 선택해주세요.");
-  const sensitivity = { overall: signupDraft.sensitivity, categories: Object.fromEntries(sensitivityKeys.map((key) => [key, signupDraft.sensitivity])), overrides: {} }; saveSensitivity(sensitivity);
-  try { const user = await api("/api/auth/signup", { method: "POST", body: JSON.stringify({ name: signupDraft.name, phone: signupDraft.phone, password: signupDraft.password, ai_intervention: signupDraft.ai }) }); signedIn = user.name; signedInId = user.id; aiIntervention = user.ai_intervention || "standard"; sessionStorage.setItem("retone-v2-name", user.name); sessionStorage.setItem("retone-v2-user-id", user.id); sessionStorage.setItem("retone-v2-ai-level", aiIntervention); sessionStorage.setItem("retone-v2-ai-consent", signupDraft.consent || aiIntervention === "off" ? "yes" : ""); signupDraft = null; home(); } catch { alert("이미 가입된 전화번호이거나 입력값을 확인해주세요."); }
+  signupDraft.consent =
+    document.querySelector("#signup-consent")?.checked || false;
+  if (signupDraft.ai !== "off" && !signupDraft.consent)
+    return alert("AI 사용 안내를 확인하고 동의하거나, AI 끄기를 선택해주세요.");
+  const sensitivity = {
+    overall: signupDraft.sensitivity,
+    categories: Object.fromEntries(
+      sensitivityKeys.map((key) => [key, signupDraft.sensitivity]),
+    ),
+    overrides: {},
+  };
+  saveSensitivity(sensitivity);
+  try {
+    const user = await api("/api/auth/signup", {
+      method: "POST",
+      body: JSON.stringify({
+        name: signupDraft.name,
+        phone: signupDraft.phone,
+        password: signupDraft.password,
+        ai_intervention: signupDraft.ai,
+      }),
+    });
+    signedIn = user.name;
+    signedInId = user.id;
+    aiIntervention = user.ai_intervention || "standard";
+    sessionStorage.setItem("retone-v2-name", user.name);
+    sessionStorage.setItem("retone-v2-user-id", user.id);
+    sessionStorage.setItem("retone-v2-ai-level", aiIntervention);
+    sessionStorage.setItem(
+      "retone-v2-ai-consent",
+      signupDraft.consent || aiIntervention === "off" ? "yes" : "",
+    );
+    signupDraft = null;
+    home();
+  } catch {
+    alert("이미 가입된 전화번호이거나 입력값을 확인해주세요.");
+  }
 }
 async function finishAdminLogin() {
   const password = document.querySelector("#admin-password").value;
   const two_factor = document.querySelector("#admin-two-factor").value;
-  if (!password || !two_factor) return alert("비밀번호와 2차 인증 코드를 모두 입력해주세요.");
+  if (!password || !two_factor)
+    return alert("비밀번호와 2차 인증 코드를 모두 입력해주세요.");
   try {
-    const user = await api("/api/auth/admin-login", { method: "POST", body: JSON.stringify({ password, two_factor }) });
-    signedIn = user.name; signedInId = user.id; aiIntervention = "off"; isAdmin = true;
-    sessionStorage.setItem("retone-v2-name", user.name); sessionStorage.setItem("retone-v2-user-id", user.id); sessionStorage.setItem("retone-v2-ai-level", "off"); sessionStorage.setItem("retone-v2-admin", "yes");
+    const user = await api("/api/auth/admin-login", {
+      method: "POST",
+      body: JSON.stringify({ password, two_factor }),
+    });
+    signedIn = user.name;
+    signedInId = user.id;
+    aiIntervention = "off";
+    isAdmin = true;
+    sessionStorage.setItem("retone-v2-name", user.name);
+    sessionStorage.setItem("retone-v2-user-id", user.id);
+    sessionStorage.setItem("retone-v2-ai-level", "off");
+    sessionStorage.setItem("retone-v2-admin", "yes");
     settings();
-  } catch { alert("관리자 비밀번호 또는 2차 인증 코드가 맞지 않아요."); }
+  } catch {
+    alert("관리자 비밀번호 또는 2차 인증 코드가 맞지 않아요.");
+  }
 }
 function setSignupAiDetail(button, name, value) {
   signupAiDetails = { ...(signupAiDetails || aiDetails()), [name]: value };
-  button.closest(".signup-ai-category").querySelectorAll("button").forEach((item) => item.classList.toggle("selected", item === button));
+  button
+    .closest(".signup-ai-category")
+    .querySelectorAll("button")
+    .forEach((item) => item.classList.toggle("selected", item === button));
 }
 async function finishAuth(mode) {
   const name = document.querySelector("#auth-name").value.trim(),
@@ -802,7 +1509,10 @@ async function finishAuth(mode) {
       "AI 사용 안내를 확인하고 동의하거나, AI 끄기를 선택해 주세요.",
     );
   if (mode === "signup") {
-    localStorage.setItem("retone-ai-detail", JSON.stringify({ ...aiCategoryDefaults, ...signupAiDetails }));
+    localStorage.setItem(
+      "retone-ai-detail",
+      JSON.stringify({ ...aiCategoryDefaults, ...signupAiDetails }),
+    );
   }
   try {
     const user = await api(
