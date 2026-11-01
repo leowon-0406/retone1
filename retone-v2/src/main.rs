@@ -31,6 +31,7 @@ struct Message {
     id: String,
     room_id: String,
     sender: String,
+    sender_id: Option<String>,
     mine: bool,
     body: String,
     created: i64,
@@ -134,6 +135,8 @@ struct Credentials {
 struct PhoneCheck {
     phone: String,
 }
+#[derive(Deserialize)]
+struct SessionQuery { user_id: Option<Uuid> }
 #[derive(Deserialize)]
 struct ImageInput {
     data_url: String,
@@ -908,10 +911,17 @@ async fn report_ai(
     sqlx::query("INSERT INTO retone_v2.ai_reports(id,reporter_name,original_text,ai_result) VALUES($1,$2,$3,$4)").bind(Uuid::new_v4()).bind(input.reporter_name.trim()).bind(input.original_text.trim()).bind(input.ai_result).execute(&app.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(serde_json::json!({"ok":true})))
 }
-async fn bootstrap(State(app): State<App>) -> Json<DataOut> {
+async fn bootstrap(State(app): State<App>, Query(session): Query<SessionQuery>) -> Json<DataOut> {
     let d = app.data.read().await;
+    let mut rooms = d.rooms.clone();
+    if let Some(user_id) = session.user_id {
+        if let Ok(rows) = sqlx::query_as::<_, (Uuid, i64)>("SELECT r.id,COUNT(m.id) FROM retone_v2.rooms r JOIN retone_v2.room_members rm ON rm.room_id=r.id LEFT JOIN retone_v2.messages m ON m.room_id=r.id AND m.deleted_at IS NULL AND m.sender_id<>$1 AND (rm.last_read_at IS NULL OR m.created_at>rm.last_read_at) WHERE rm.user_id=$1 GROUP BY r.id").bind(user_id).fetch_all(&app.db).await {
+            let unread = rows.into_iter().map(|(id,count)|(id.to_string(),count.min(255) as u8)).collect::<HashMap<_,_>>();
+            rooms.iter_mut().for_each(|room| room.unread = *unread.get(&room.id).unwrap_or(&0));
+        }
+    }
     Json(DataOut {
-        rooms: d.rooms.clone(),
+        rooms,
         agreements: d.agreements.clone(),
         appointments: d.appointments.clone(),
         reflections: d.reflections.clone(),
@@ -926,13 +936,15 @@ struct DataOut {
     reflections: Vec<Reflection>,
     insights: Vec<ConversationInsight>,
 }
-async fn messages(State(app): State<App>, Path(id): Path<String>) -> Json<Vec<Message>> {
+async fn messages(State(app): State<App>, Path(id): Path<String>, Query(session): Query<SessionQuery>) -> Json<Vec<Message>> {
+    if let (Ok(room_id), Some(user_id)) = (Uuid::parse_str(&id), session.user_id) { let _ = sqlx::query("UPDATE retone_v2.room_members SET last_read_at=NOW() WHERE room_id=$1 AND user_id=$2").bind(room_id).bind(user_id).execute(&app.db).await; }
     let d = app.data.read().await;
     Json(
         d.messages
             .iter()
             .filter(|m| m.room_id == id)
             .cloned()
+            .map(|mut message| { message.mine = session.user_id.map(|user_id| message.sender_id.as_deref() == Some(user_id.to_string().as_str())).unwrap_or(false); message })
             .collect(),
     )
 }
@@ -975,6 +987,7 @@ async fn send(
         id: Uuid::new_v4().to_string(),
         room_id: id.clone(),
         sender: input.sender,
+        sender_id: sender_id.map(|value| value.to_string()),
         mine: true,
         body: input.body.trim().to_string(),
         created: Utc::now().timestamp_millis(),
@@ -1240,8 +1253,8 @@ async fn prepare_storage() -> Option<PgPool> {
 async fn restore_data(db: &PgPool) -> Data {
     let rooms = sqlx::query_as::<_, (Uuid, String, i64, String, i64)>("SELECT r.id,r.name,(SELECT COUNT(*) FROM retone_v2.room_members rm WHERE rm.room_id=r.id),COALESCE((SELECT m.body FROM retone_v2.messages m WHERE m.room_id=r.id AND m.deleted_at IS NULL ORDER BY m.created_at DESC LIMIT 1),'새 대화를 시작해 보세요.'),FLOOR(EXTRACT(EPOCH FROM r.created_at)*1000)::BIGINT FROM retone_v2.rooms r ORDER BY r.created_at")
         .fetch_all(db).await.unwrap_or_default().into_iter().map(|(id,name,members,last,updated)| Room { id:id.to_string(),name,members:members.min(255) as u8,unread:0,pinned:false,last,updated }).collect();
-    let messages = sqlx::query_as::<_, (Uuid, Uuid, Option<String>, String, i64, Option<String>, Option<String>)>("SELECT m.id,m.room_id,u.name,m.body,FLOOR(EXTRACT(EPOCH FROM m.created_at)*1000)::BIGINT,m.intent,m.image_url FROM retone_v2.messages m LEFT JOIN retone_v2.users u ON u.id=m.sender_id WHERE m.deleted_at IS NULL ORDER BY m.created_at")
-        .fetch_all(db).await.unwrap_or_default().into_iter().map(|(id,room_id,sender,body,created,intent,image_url)| { let alignment_hint = looks_like_alignment(&body); Message { id:id.to_string(),room_id:room_id.to_string(),sender:sender.unwrap_or_else(|| "알 수 없는 사용자".into()),mine:false,body,created,unread:0,intent,alignment_hint,image_url } }).collect();
+    let messages = sqlx::query_as::<_, (Uuid, Uuid, Option<String>, Option<Uuid>, String, i64, Option<String>, Option<String>)>("SELECT m.id,m.room_id,u.name,m.sender_id,m.body,FLOOR(EXTRACT(EPOCH FROM m.created_at)*1000)::BIGINT,m.intent,m.image_url FROM retone_v2.messages m LEFT JOIN retone_v2.users u ON u.id=m.sender_id WHERE m.deleted_at IS NULL ORDER BY m.created_at")
+        .fetch_all(db).await.unwrap_or_default().into_iter().map(|(id,room_id,sender,sender_id,body,created,intent,image_url)| { let alignment_hint = looks_like_alignment(&body); Message { id:id.to_string(),room_id:room_id.to_string(),sender:sender.unwrap_or_else(|| "알 수 없는 사용자".into()),sender_id:sender_id.map(|value| value.to_string()),mine:false,body,created,unread:0,intent,alignment_hint,image_url } }).collect();
     Data {
         rooms,
         messages,

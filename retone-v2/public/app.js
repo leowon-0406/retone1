@@ -79,7 +79,7 @@ function rail() {
 }
 async function home() {
   stopRoomPolling();
-  data = await api("/api/bootstrap");
+  data = await api(`/api/bootstrap?user_id=${encodeURIComponent(signedInId)}`);
   roomId = null;
   const rooms = data.rooms.filter(
     (r) => !["science", "friends"].includes(r.id) && !hasLeftRoom(r.id),
@@ -90,7 +90,7 @@ async function openRoom(id) {
   stopRoomPolling();
   roomId = id;
   const room = data.rooms.find((r) => r.id === id),
-    messages = await api(`/api/rooms/${id}/messages`);
+    messages = await api(`/api/rooms/${id}/messages?user_id=${encodeURIComponent(signedInId)}`);
   currentRoomMessages = messages;
   const reflections = (data.reflections || []).filter((item) => item.room_id === id);
   const appointments = (data.appointments || []).filter((item) => item.room_id === id);
@@ -108,7 +108,7 @@ async function openRoom(id) {
   startRoomPolling(id, messages.length);
 }
 function stopRoomPolling() { if (roomPollTimer) { clearInterval(roomPollTimer); roomPollTimer = null; } }
-function startRoomPolling(id, initialCount) { roomPollTimer = setInterval(async () => { if (roomId !== id || document.hidden) return; try { const latest = await api(`/api/rooms/${id}/messages`); if (latest.length !== initialCount) openRoom(id); } catch {} }, 3500); }
+function startRoomPolling(id, initialCount) { roomPollTimer = setInterval(async () => { if (roomId !== id || document.hidden) return; try { const latest = await api(`/api/rooms/${id}/messages?user_id=${encodeURIComponent(signedInId)}`); if (latest.length !== initialCount) openRoom(id); } catch {} }, 3500); }
 async function friends() {
   stopRoomPolling();
   const users = await api("/api/users");
@@ -135,7 +135,7 @@ async function startDirect(name, inviteeId = "") {
     method: "POST",
     body: JSON.stringify({ name, creator_id: signedInId, invitee_ids: inviteeId ? [inviteeId] : [] }),
   });
-  data = await api("/api/bootstrap");
+  data = await api(`/api/bootstrap?user_id=${encodeURIComponent(signedInId)}`);
   openRoom(room.id);
 }
 function settings() {
@@ -312,7 +312,7 @@ async function saveAlignmentCard(messageId) {
   const title = document.querySelector("#alignment-title").value.trim(), date = document.querySelector("#alignment-date").value;
   if (!title || !date) return alert("무엇을 할지와 시간을 입력해주세요.");
   await api("/api/appointments", { method: "POST", body: JSON.stringify({ title, room_id: roomId, date: date.replace("T", " "), place: document.querySelector("#alignment-place").value.trim() }) });
-  localStorage.setItem(`retone-alignment-dismissed-${messageId}`, "1"); closePopup(); data = await api("/api/bootstrap"); openRoom(roomId);
+  localStorage.setItem(`retone-alignment-dismissed-${messageId}`, "1"); closePopup(); data = await api(`/api/bootstrap?user_id=${encodeURIComponent(signedInId)}`); openRoom(roomId);
 }
 function inspectMessage(text) {
   popup(
@@ -553,7 +553,7 @@ async function sendApproved() {
   selectedIntent = "";
   openRoom(next.room);
   if (aiDetails()["대화 흐름 요약"] !== "끄기") api(`/api/rooms/${next.room}/insight`, { method: "POST" }).then(async () => {
-    data = await api("/api/bootstrap");
+    data = await api(`/api/bootstrap?user_id=${encodeURIComponent(signedInId)}`);
     if (roomId === next.room) openRoom(next.room);
   }).catch(() => {});
 }
@@ -700,7 +700,7 @@ async function saveReflection() {
   if (!title) return alert("돌아볼 내용을 입력해주세요.");
   await api("/api/reflections", { method: "POST", body: JSON.stringify({ room_id: roomId, title, keep: document.querySelector("#reflection-keep").value.trim(), next: document.querySelector("#reflection-next").value.trim() }) });
   closePopup();
-  data = await api("/api/bootstrap");
+  data = await api(`/api/bootstrap?user_id=${encodeURIComponent(signedInId)}`);
   openRoom(roomId);
 }
 function showAiPolicy() {
