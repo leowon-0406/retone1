@@ -49,6 +49,7 @@ struct Agreement {
 }
 #[derive(Clone, Serialize)]
 struct Appointment {
+    room_id: String,
     title: String,
     date: String,
     place: String,
@@ -825,7 +826,11 @@ async fn create_conversation_insight(
             .filter(|message| message.room_id == room_id)
             .collect::<Vec<_>>();
         let checkpoint = messages.len() / 10;
-        if checkpoint == 0 || d.insights.iter().any(|item| item.room_id == room_id && item.checkpoint == checkpoint) {
+        if checkpoint == 0
+            || d.insights
+                .iter()
+                .any(|item| item.room_id == room_id && item.checkpoint == checkpoint)
+        {
             return Json(serde_json::json!({"created":false}));
         }
         let history = messages
@@ -850,18 +855,40 @@ async fn create_conversation_insight(
         .json(&serde_json::json!({"model":"gpt-4o-mini","input":prompt,"max_output_tokens":130}))
         .send()
         .await;
-    let Ok(response) = response else { return Json(serde_json::json!({"created":false})); };
-    let value = response.json::<serde_json::Value>().await.unwrap_or_default();
-    let text = value["output"][0]["content"][0]["text"].as_str().unwrap_or("{}");
+    let Ok(response) = response else {
+        return Json(serde_json::json!({"created":false}));
+    };
+    let value = response
+        .json::<serde_json::Value>()
+        .await
+        .unwrap_or_default();
+    let text = value["output"][0]["content"][0]["text"]
+        .as_str()
+        .unwrap_or("{}");
     let parsed = serde_json::from_str::<serde_json::Value>(text).unwrap_or_default();
     let insight = ConversationInsight {
         id: Uuid::new_v4().to_string(),
         room_id: room_id.clone(),
         checkpoint,
         has_conflict: parsed["has_conflict"].as_bool().unwrap_or(false),
-        summary: parsed["summary"].as_str().unwrap_or("대화 10개를 함께 확인했어요.").chars().take(180).collect(),
-        reason: parsed["reason"].as_str().unwrap_or("").chars().take(220).collect(),
-        suggestion: parsed["suggestion"].as_str().unwrap_or("").chars().take(220).collect(),
+        summary: parsed["summary"]
+            .as_str()
+            .unwrap_or("대화 10개를 함께 확인했어요.")
+            .chars()
+            .take(180)
+            .collect(),
+        reason: parsed["reason"]
+            .as_str()
+            .unwrap_or("")
+            .chars()
+            .take(220)
+            .collect(),
+        suggestion: parsed["suggestion"]
+            .as_str()
+            .unwrap_or("")
+            .chars()
+            .take(220)
+            .collect(),
     };
     app.data.write().await.insights.push(insight.clone());
     Json(serde_json::json!({"created":true,"insight":insight}))
@@ -934,6 +961,7 @@ async fn create_appointment(
         return Err(StatusCode::BAD_REQUEST);
     }
     let appointment = Appointment {
+        room_id: input.room_id.unwrap_or_default(),
         title: input.title.trim().chars().take(80).collect(),
         date: input.date.trim().chars().take(30).collect(),
         place: if input.place.trim().is_empty() {

@@ -82,8 +82,9 @@ async function openRoom(id) {
   const room = data.rooms.find((r) => r.id === id),
     messages = await api(`/api/rooms/${id}/messages`);
   const reflections = (data.reflections || []).filter((item) => item.room_id === id);
+  const appointments = (data.appointments || []).filter((item) => item.room_id === id);
   const insights = (data.insights || []).filter((item) => item.room_id === id && (item.has_conflict || aiDetails()["대화 10개 요약"] === "항상"));
-  app.innerHTML = `<main class="layout">${rail()}<section class="chat"><header class="head"><button onclick="home()">←</button><div><h1>${esc(room.name)}</h1><span>참여자 ${room.members}명 · ${isRoomMuted(id) ? "알림 끔" : "연결됨"}</span></div><div class="chat-actions"><button title="친구 초대" onclick="inviteFriends()">＋</button><button title="AI 도움받기" onclick="openAiHelp()">✦</button><button title="회고 카드" onclick="newReflection()">↻</button><button title="채팅방 설정" onclick="roomSettings()">⋯</button><button title="공동 확인" onclick="newAgreement()">✓</button></div></header><section class="messages" id="messages">${toneCard(messages)}${insights.map(viewInsight).join("")}${messages.map(view).join("")}${alignmentCard(messages)}${reflections.map(viewReflection).join("")}${data.agreements
+  app.innerHTML = `<main class="layout">${rail()}<section class="chat"><header class="head"><button onclick="home()">←</button><div><h1>${esc(room.name)}</h1><span>참여자 ${room.members}명 · ${isRoomMuted(id) ? "알림 끔" : "연결됨"}</span></div><div class="chat-actions"><button title="친구 초대" onclick="inviteFriends()">＋</button><button title="AI 도움받기" onclick="openAiHelp()">✦</button><button title="회고 카드" onclick="newReflection()">↻</button><button title="채팅방 설정" onclick="roomSettings()">⋯</button><button title="공동 확인" onclick="newAgreement()">✓</button></div></header><section class="messages" id="messages">${toneCard(messages)}${insights.map(viewInsight).join("")}${messages.map(view).join("")}${alignmentCard(messages)}${appointments.map(viewAppointment).join("")}${reflections.map(viewReflection).join("")}${data.agreements
     .slice(0, 1)
     .map(
       (a) =>
@@ -242,6 +243,8 @@ function chooseIntent() {
 }
 function setIntent(intent) { selectedIntent = intent; closePopup(); const button = document.querySelector(".intent-button"); if (button) button.textContent = intent ? "◎" : "＋"; }
 function viewReflection(item) { return `<article class="reflection-card"><span>↻ 약속 회고</span><b>${esc(item.title)}</b><p><strong>계속할 점</strong> ${esc(item.keep || "아직 작성하지 않았어요")}</p><p><strong>다음에는</strong> ${esc(item.next || "아직 작성하지 않았어요")}</p></article>`; }
+function viewAppointment(item) { return `<article class="appointment-card"><span>◷ 말맞춤 약속</span><b>${esc(item.title)}</b><p><strong>${esc(item.date)}</strong>${item.place ? ` · ${esc(item.place)}` : ""}</p></article>`; }
+function setQuickDate(inputId, offset) { const date = new Date(); date.setDate(date.getDate() + offset); date.setHours(18, 0, 0, 0); const value = new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16); const input = document.querySelector(`#${inputId}`); if (input) input.value = value; }
 function viewInsight(item) { return `<article class="insight-card"><span>✦ 10개 대화 말맞춤</span><b>${esc(item.summary)}</b><p><strong>엇갈린 지점</strong> ${esc(item.reason)}</p><p><strong>이렇게 풀어볼까요?</strong> ${esc(item.suggestion)}</p><button onclick="openConflictGuide()">갈등 전환 모드 열기</button></article>`; }
 function alignmentCard(messages) {
   if (aiDetails()["말맞춤 카드"] === "끄기") return "";
@@ -251,7 +254,7 @@ function alignmentCard(messages) {
 }
 function dismissAlignment(id) { localStorage.setItem(`retone-alignment-dismissed-${id}`, "1"); openRoom(roomId); }
 function openAlignmentCard(id) {
-  popup(`<div class="ai-check info"><span>말맞춤 카드</span><h2>약속을 함께 맞춰볼까요?</h2><p>상대의 의도를 추측하지 않고, 시간·장소·목적을 한 번에 정리해요.</p><input id="alignment-title" placeholder="무엇을 할지 입력해주세요"><input id="alignment-date" type="datetime-local"><input id="alignment-place" placeholder="장소 또는 온라인 링크를 입력해주세요"><button onclick="saveAlignmentCard('${id}')">약속 카드 만들기</button></div>`);
+  popup(`<div class="ai-check info"><span>말맞춤 카드</span><h2>약속을 함께 맞춰볼까요?</h2><p>상대의 의도를 추측하지 않고, 시간·장소·목적을 한 번에 정리해요.</p><input id="alignment-title" placeholder="무엇을 할지 입력해주세요"><div class="quick-date"><button type="button" onclick="setQuickDate('alignment-date',0)">오늘</button><button type="button" onclick="setQuickDate('alignment-date',1)">내일</button></div><input id="alignment-date" type="datetime-local"><input id="alignment-place" placeholder="장소 또는 온라인 링크를 입력해주세요"><button onclick="saveAlignmentCard('${id}')">약속 카드 만들기</button></div>`);
 }
 async function saveAlignmentCard(messageId) {
   const title = document.querySelector("#alignment-title").value.trim(), date = document.querySelector("#alignment-date").value;
@@ -587,7 +590,7 @@ async function saveAgreement() {
 }
 function newAppointment() {
   popup(
-    `<h2>함께할 약속 잡기</h2><p>회의·보이스톡·만남 일정을 팀에 바로 공유해요.</p><input id="appointmentTitle" placeholder="예: 발표 방향 짧은 회의"><input id="appointmentDate" type="datetime-local"><input id="appointmentPlace" placeholder="장소 또는 채팅방"><button onclick="saveAppointment()">약속 공유하기</button>`,
+    `<h2>함께할 약속 잡기</h2><p>회의·보이스톡·만남 일정을 팀에 바로 공유해요.</p><input id="appointmentTitle" placeholder="예: 발표 방향 짧은 회의"><div class="quick-date"><button type="button" onclick="setQuickDate('appointmentDate',0)">오늘</button><button type="button" onclick="setQuickDate('appointmentDate',1)">내일</button></div><input id="appointmentDate" type="datetime-local"><input id="appointmentPlace" placeholder="장소 또는 채팅방"><button onclick="saveAppointment()">약속 공유하기</button>`,
   );
 }
 async function saveAppointment() {
