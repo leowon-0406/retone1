@@ -99,14 +99,57 @@ function sensitivityWord(name, value) {
     return value < 35 ? "중요 정보만" : value < 70 ? "균형 있게" : "민감하게";
   return value < 35 ? "강한 표현만" : value < 70 ? "균형 있게" : "민감하게";
 }
-const aiDetails = () => {
+function roomAiConfig(id = roomId) {
+  if (!id) return { mode: "inherit", checks: {} };
+  try {
+    const saved = JSON.parse(
+      localStorage.getItem(roomPreferenceKey("ai", id)) || "{}",
+    );
+    return {
+      mode: ["inherit", "off", "light", "standard", "careful"].includes(
+        saved.mode,
+      )
+        ? saved.mode
+        : "inherit",
+      checks: saved.checks || {},
+    };
+  } catch {
+    return { mode: "inherit", checks: {} };
+  }
+}
+function saveRoomAiConfig(config, id = roomId) {
+  if (!id) return;
+  localStorage.setItem(roomPreferenceKey("ai", id), JSON.stringify(config));
+  clearTimeout(aiPrefetch.timer);
+  aiPrefetch = { text: "", result: null, promise: null, timer: null };
+}
+function activeAiIntervention() {
+  const mode = roomAiConfig().mode;
+  return mode === "inherit" ? aiIntervention : mode;
+}
+const aiDetails = (useRoomOverride = true) => {
   const state = sensitivityState();
-  return Object.fromEntries(
+  const details = Object.fromEntries(
     sensitivityKeys.map((key) => [
       key,
       sensitivityWord(key, state.categories[key]),
     ]),
   );
+  const room = useRoomOverride ? roomAiConfig() : { mode: "inherit", checks: {} };
+  if (room.mode === "off")
+    return Object.fromEntries(sensitivityKeys.map((key) => [key, "끄기"]));
+  const groups = {
+    attack: ["강한 공격 표현"],
+    tone: ["비꼼·압박 표현"],
+    source: ["출처 확인 제안"],
+    flow: ["말맞춤 카드", "대화 흐름 요약", "대화 온도 타임라인", "대화 복구 문장"],
+    help: ["감정 도움 AI", "표현 바꾸기"],
+    image: ["이미지 안전 안내"],
+  };
+  Object.entries(groups).forEach(([group, keys]) => {
+    if (room.checks[group] === false) keys.forEach((key) => (details[key] = "끄기"));
+  });
+  return details;
 };
 const sensitivityLabel = (value) =>
   value <= 20
@@ -128,8 +171,10 @@ const interventionFromSensitivity = (value) =>
         : "careful";
 const roomPreferenceKey = (kind, id) =>
   `retone-${kind}-${signedInId || "guest"}-${id}`;
-const roomRule = (id) =>
-  localStorage.getItem(roomPreferenceKey("rule", id)) || "균형 있게";
+const roomRule = (id) => {
+  const mode = roomAiConfig(id).mode;
+  return { inherit: "내 기본 설정", off: "AI 끄기", light: "최소 개입", standard: "균형 있게", careful: "꼼꼼하게" }[mode];
+};
 const isRoomMuted = (id) =>
   localStorage.getItem(roomPreferenceKey("muted", id)) === "1";
 const hasLeftRoom = (id) =>
@@ -140,7 +185,7 @@ const esc = (s) =>
     (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c],
   );
 const aiCacheKey = (text) =>
-  `${aiIntervention}|${JSON.stringify(aiDetails())}|${text.trim().toLowerCase()}`;
+  `${activeAiIntervention()}|${JSON.stringify(aiDetails())}|${text.trim().toLowerCase()}`;
 function savedAiResult(text) {
   const result = aiSavedResults[aiCacheKey(text)] || null;
   return result && (result.verdict === "PASS" || result.verdict === "WARN")
@@ -199,7 +244,7 @@ async function openRoom(id) {
       item.room_id === id &&
       (item.has_conflict || aiDetails()["대화 흐름 요약"] === "항상"),
   );
-  app.innerHTML = `<main class="layout">${rail()}<section class="chat"><header class="head"><button class="back-button" title="채팅 목록으로" aria-label="채팅 목록으로" onclick="home()"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14.5 5-7 7 7 7M8 12h9"/></svg></button><div class="room-title"><h1>${esc(room.name)}</h1><span>참여자 ${room.members}명 · ${isRoomMuted(id) ? "알림 끔" : "연결됨"}</span></div><div class="chat-actions"><button title="친구 초대" onclick="inviteFriends()">＋</button><button title="AI 도움받기" onclick="openAiHelp()">✦</button><button title="회고 카드" onclick="newReflection()">↻</button><button title="채팅방 설정" onclick="roomSettings()">⋯</button><button title="공동 확인" onclick="newAgreement()">✓</button></div></header><section class="messages" id="messages">${emotionTimeline(messages)}${toneCard(messages)}${insights.map(viewInsight).join("")}${messages.map(view).join("")}${alignmentCard(messages)}${appointments.map(viewAppointment).join("")}${reflections.map(viewReflection).join("")}${data.agreements
+  app.innerHTML = `<main class="layout">${rail()}<section class="chat"><header class="head"><button class="back-button" title="채팅 목록으로" aria-label="채팅 목록으로" onclick="home()"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14.5 5-7 7 7 7M8 12h9"/></svg></button><div class="room-title"><h1>${esc(room.name)}</h1><span>참여자 ${room.members}명 · AI ${roomRule(id)} · ${isRoomMuted(id) ? "알림 끔" : "연결됨"}</span></div><div class="chat-actions"><button title="친구 초대" onclick="inviteFriends()">＋</button><button title="AI 도움받기" onclick="openAiHelp()">✦</button><button title="회고 카드" onclick="newReflection()">↻</button><button title="채팅방 설정" onclick="roomSettings()">⋯</button><button title="공동 확인" onclick="newAgreement()">✓</button></div></header><section class="messages" id="messages">${emotionTimeline(messages)}${toneCard(messages)}${insights.map(viewInsight).join("")}${messages.map(view).join("")}${alignmentCard(messages)}${appointments.map(viewAppointment).join("")}${reflections.map(viewReflection).join("")}${data.agreements
     .slice(0, 1)
     .map(
       (a) =>
@@ -237,14 +282,30 @@ async function friends() {
 }
 function roomSettings() {
   const muted = isRoomMuted(roomId);
+  const config = roomAiConfig();
+  const checks = [
+    ["attack", "강한 공격 표현"],
+    ["tone", "비꼼·압박 표현"],
+    ["source", "출처 확인"],
+    ["flow", "말맞춤·대화 흐름"],
+    ["help", "표현 바꾸기·감정 도움"],
+    ["image", "사진 안전 안내"],
+  ];
   popup(
-    `<h2>채팅방 설정</h2><p>이 방에서 AI가 돕는 정도를 간단히 정해요.</p><div class="choice-stack"><button onclick="setRoomRule('최소 개입')">최소 개입 · 강한 표현만</button><button onclick="setRoomRule('균형 있게')">균형 있게 · 필요한 순간만</button><button onclick="setRoomRule('꼼꼼하게')">꼼꼼하게 · 말투와 약속도</button></div><button onclick="toggleRoomMute()">${muted ? "이 채팅방 알림 켜기" : "이 채팅방 알림 끄기"}</button><button class="danger-action" onclick="leaveRoom()">채팅방 나가기</button>`,
+    `<div class="room-ai-settings"><span>이 채팅방만</span><h2>AI 도움 범위</h2><p>친한 친구 방은 최소 개입으로 두고, 중요한 방만 꼼꼼하게 설정할 수 있어요.</p><div class="room-ai-presets"><button class="${config.mode === "inherit" ? "selected" : ""}" onclick="setRoomAiMode('inherit')">내 기본 설정</button><button class="${config.mode === "off" ? "selected" : ""}" onclick="setRoomAiMode('off')">AI 끄기</button><button class="${config.mode === "light" ? "selected" : ""}" onclick="setRoomAiMode('light')">친한 사이 · 최소</button><button class="${config.mode === "careful" ? "selected" : ""}" onclick="setRoomAiMode('careful')">중요 대화 · 꼼꼼</button></div>${config.mode === "off" ? `<small>이 방에서는 전송 검사와 AI 제안을 하지 않아요.</small>` : `<div class="room-ai-checks">${checks.map(([key, label]) => `<label><input type="checkbox" ${config.checks[key] !== false ? "checked" : ""} onchange="toggleRoomAiCheck('${key}',this.checked)"><span>${label}</span></label>`).join("")}</div>`}<button class="room-muted-action" onclick="toggleRoomMute()">${muted ? "이 채팅방 알림 켜기" : "이 채팅방 알림 끄기"}</button><button class="danger-action" onclick="leaveRoom()">채팅방 나가기</button></div>`,
   );
 }
-function setRoomRule(rule) {
-  localStorage.setItem(roomPreferenceKey("rule", roomId), rule);
+function setRoomAiMode(mode) {
+  const config = roomAiConfig();
+  config.mode = mode;
+  saveRoomAiConfig(config);
   closePopup();
   openRoom(roomId);
+}
+function toggleRoomAiCheck(key, enabled) {
+  const config = roomAiConfig();
+  config.checks[key] = enabled;
+  saveRoomAiConfig(config);
 }
 function toggleRoomMute() {
   const key = roomPreferenceKey("muted", roomId);
@@ -443,12 +504,12 @@ function renderDetailedAiSettings() {
   const root = document.querySelector(".ai-toggles");
   if (!root) return;
   const sensitivity = sensitivityState();
-  const saved = aiDetails();
+  const saved = aiDetails(false);
   const card = (name) => {
     const [, desc, options] = aiCategories.find(([title]) => title === name);
     return `<article class="ai-category"><span><b>${name}</b><small>${desc}</small></span><div class="ai-choice-row">${options.map((option) => `<button class="${saved[name] === option ? "selected" : ""}" onclick="saveAiDetail('${name}','${option}')">${option}</button>`).join("")}</div></article>`;
   };
-  root.innerHTML = `<section class="overall-sensitivity"><span>AI 전체 민감도</span><b id="overall-sensitivity-label">${sensitivityLabel(sensitivity.overall)} · ${sensitivity.overall}</b><input type="range" min="0" max="100" value="${sensitivity.overall}" style="--sensitivity:${sensitivity.overall}%" oninput="previewOverallSensitivity(this.value,this)" onchange="setOverallSensitivity(this.value)"><small>낮을수록 필요한 경우에만, 높을수록 더 세심하게 제안해요.</small></section><div class="ai-setting-intro"><b>세부 민감도는 AI가 조절해요</b><span>‘그냥 보내기’ 선택 패턴을 보고 항목별 수치를 조정합니다. 아래에서 언제든 직접 바꿀 수 있어요.</span></div>${aiGroups.map(([title, desc, names], index) => `<details class="ai-setting-group" ${index === 0 ? "open" : ""}><summary><span><b>${title}</b><small>${desc}</small></span><i>⌄</i></summary><div class="ai-category-list">${names.map(card).join("")}</div></details>`).join("")}<section class="settings-actions"><button class="theme-toggle" onclick="toggleTheme()">${document.body.classList.contains("dark") ? "☀️ 라이트 모드" : "🌙 다크 모드"}</button><button class="danger-action" onclick="openDeleteAccount()">계정 삭제</button></section>`;
+  root.innerHTML = `<section class="overall-sensitivity"><span>기본 AI 민감도</span><b id="overall-sensitivity-label">${sensitivityLabel(sensitivity.overall)} · ${sensitivity.overall}</b><input type="range" min="0" max="100" value="${sensitivity.overall}" style="--sensitivity:${sensitivity.overall}%" oninput="previewOverallSensitivity(this.value,this)" onchange="setOverallSensitivity(this.value)"><small>모든 채팅방의 기본값이에요. 친한 친구 방은 방 설정에서 따로 낮출 수 있어요.</small></section><details class="ai-advanced-settings"><summary><span><b>세부 AI 항목 조절</b><small>필요할 때만 열어 항목별로 바꿔요.</small></span><i>⌄</i></summary><div class="ai-setting-intro"><b>세부 민감도는 AI가 조절해요</b><span>‘그냥 보내기’ 선택 패턴을 보고 항목별 수치를 조정합니다.</span></div>${aiGroups.map(([title, desc, names]) => `<details class="ai-setting-group"><summary><span><b>${title}</b><small>${desc}</small></span><i>⌄</i></summary><div class="ai-category-list">${names.map(card).join("")}</div></details>`).join("")}</details><section class="settings-actions"><button class="theme-toggle" onclick="toggleTheme()">${document.body.classList.contains("dark") ? "☀️ 라이트 모드" : "🌙 다크 모드"}</button><button class="danger-action" onclick="openDeleteAccount()">계정 삭제</button></section>`;
 }
 function saveAiDetail(name, value) {
   const state = sensitivityState();
@@ -885,7 +946,7 @@ function queueAiCheck(value) {
   const text = value.trim();
   clearTimeout(aiPrefetch.timer);
   if (
-    aiIntervention === "off" ||
+    activeAiIntervention() === "off" ||
     aiDetails()["입력 중 선검사"] === "끄기" ||
     !text
   ) {
@@ -916,7 +977,7 @@ async function runAiCheck(text) {
     method: "POST",
     body: JSON.stringify({
       text,
-      ai_intervention: aiIntervention,
+      ai_intervention: activeAiIntervention(),
       details: aiDetails(),
     }),
   });
@@ -939,7 +1000,7 @@ async function runAiCheck(text) {
   }
 }
 async function checkForSend(body) {
-  if (aiIntervention === "off")
+  if (activeAiIntervention() === "off")
     return { verdict: "PASS", info: { level: "none" } };
   const saved = savedAiResult(body);
   if (saved) return saved;
@@ -972,9 +1033,9 @@ async function send(event) {
   pendingSend = { body, room: roomId, intent: selectedIntent };
   input.value = "";
   input.disabled = true;
-  const saved = aiIntervention !== "off" && savedAiResult(body);
+  const saved = activeAiIntervention() !== "off" && savedAiResult(body);
   input.placeholder =
-    aiIntervention === "off"
+    activeAiIntervention() === "off"
       ? "메시지를 보내고 있어요…"
       : saved
         ? "이전 확인 결과를 사용해요…"
