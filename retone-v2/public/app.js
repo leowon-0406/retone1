@@ -7,6 +7,7 @@ let signedInId = sessionStorage.getItem("retone-v2-user-id") || "";
 let isAdmin = sessionStorage.getItem("retone-v2-admin") === "yes";
 let aiIntervention = sessionStorage.getItem("retone-v2-ai-level") || "standard";
 let pendingSend = null;
+let pendingAnalysisDraft = "";
 let currentRoomMessages = [];
 let signupAiDetails = null;
 let signupDraft = null;
@@ -707,10 +708,44 @@ function dismissRecoveryMessage() {
   localStorage.setItem(`retone-recovery-dismissed-${roomId}`, "1");
   openRoom(roomId);
 }
-function openConflictGuide() {
+async function openConflictGuide() {
   popup(
-    `<div class="ai-check info"><span>갈등 전환 모드</span><h2>지금 우리에게 필요한 건 무엇일까요?</h2><p>누가 맞는지보다, 다음 대화를 어떻게 이어갈지 고를 수 있어요.</p><div class="choice-stack"><button onclick="chooseConflictPath('사실 정리')">사실 정리 · 무엇이 있었는지 차분히 보기</button><button onclick="chooseConflictPath('감정 먼저')">감정 먼저 · 서운했던 점을 말하기</button><button onclick="chooseConflictPath('다음 행동')">다음 행동 · 해결할 일을 정하기</button></div></div>`,
+    `<div class="ai-check info analysis-loading"><span>대화 흐름 분석</span><h2>최근 맥락을 살펴보고 있어요</h2><p>누가 맞는지 판단하지 않고, 지금 대화의 주제와 엇갈릴 수 있는 지점만 정리해요.</p></div>`,
   );
+  try {
+    const result = await api("/api/ai/conversation-analysis", {
+      method: "POST",
+      body: JSON.stringify({
+        messages: currentRoomMessages
+          .slice(-20)
+          .map((message) => `${message.sender}: ${message.body}`),
+      }),
+    });
+    closePopup();
+    const reason = result.reason
+      ? `<p><strong>엇갈릴 수 있는 지점</strong><br>${esc(result.reason)}</p>`
+      : `<p><strong>지금 흐름</strong><br>뚜렷한 갈등 신호는 보이지 않아요. 필요할 때만 아래 제안을 참고해 보세요.</p>`;
+    pendingAnalysisDraft = result.draft || "";
+    const draft = pendingAnalysisDraft
+      ? `<button class="quiet" onclick="useAnalysisDraft()">이 문장 입력창에 넣기</button>`
+      : "";
+    popup(
+      `<div class="ai-check info conversation-analysis"><span>대화 온도 · ${esc(result.tone || "대화 흐름 정리")}</span><h2>최근 대화를 이렇게 읽을 수 있어요</h2><p>${esc(result.summary || "최근 대화를 함께 정리해 봐요.")}</p>${reason}<p><strong>이렇게 해보면 좋아요</strong><br>${esc(result.suggestion || "서로의 의도를 한 문장으로 확인해 보세요.")}</p><small>이 분석은 사람이나 감정을 확정하지 않는 참고용 제안이에요.</small><div class="modal-actions">${draft}<button onclick="closePopup()">확인</button></div></div>`,
+    );
+  } catch {
+    closePopup();
+    popup(
+      `<div class="ai-check info"><span>대화 흐름 분석</span><h2>지금은 분석을 불러오지 못했어요</h2><p>잠시 후 다시 눌러보거나, 상대에게 “내 말이 어떻게 들렸는지 알려줄래?”라고 먼저 물어보세요.</p><button onclick="closePopup()">확인</button></div>`,
+    );
+  }
+}
+function useAnalysisDraft() {
+  closePopup();
+  const input = document.querySelector("#text");
+  if (!input) return;
+  input.value = pendingAnalysisDraft;
+  input.focus();
+  queueAiCheck(pendingAnalysisDraft);
 }
 function chooseConflictPath(path) {
   const copy = {

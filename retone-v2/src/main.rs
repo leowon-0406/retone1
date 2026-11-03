@@ -177,6 +177,10 @@ struct AiReport {
     ai_result: Option<String>,
 }
 #[derive(Deserialize)]
+struct ConversationAnalysis {
+    messages: Vec<String>,
+}
+#[derive(Deserialize)]
 struct Preferences {
     ai_intervention: String,
 }
@@ -983,6 +987,61 @@ async fn ai_rewrite(Json(input): Json<RewriteRequest>) -> Json<serde_json::Value
     };
     Json(serde_json::json!({"suggestion":suggestion}))
 }
+async fn analyze_conversation(Json(input): Json<ConversationAnalysis>) -> Json<serde_json::Value> {
+    let mut recent_messages = input
+        .messages
+        .into_iter()
+        .filter(|message| !message.trim().is_empty())
+        .collect::<Vec<_>>();
+    if recent_messages.len() > 20 {
+        recent_messages.drain(0..recent_messages.len() - 20);
+    }
+    let history = recent_messages
+        .into_iter()
+        .map(|message| message.chars().take(320).collect::<String>())
+        .collect::<Vec<_>>();
+    if history.len() < 2 {
+        return Json(
+            serde_json::json!({"tone":"대화 흐름을 더 살펴보는 중","summary":"분석하려면 메시지가 조금 더 필요해요.","reason":"","suggestion":"지금 느끼는 점이나 확인하고 싶은 내용을 한 문장으로 말해보세요.","draft":""}),
+        );
+    }
+    let fallback = serde_json::json!({"tone":"대화 흐름 정리","summary":"최근 대화에서 서로의 의도를 확인하며 이야기를 이어가고 있어요.","reason":"메시지의 짧은 표현은 서로 다른 뜻으로 읽힐 수 있어요.","suggestion":"‘내 의도는 …이었어. 너는 어떻게 들었어?’처럼 의도를 먼저 확인해 보세요.","draft":"내 의도는 비난이 아니라 서로 이해하려는 거였어. 내가 말한 뜻이 어떻게 들렸는지 알려줄래?"});
+    let Some(key) = env::var("OPENAI_API_KEY").ok() else {
+        return Json(fallback);
+    };
+    let prompt = format!(
+        "너는 Re:Tone의 중립적 대화 흐름 도우미다. 아래 대화만 바탕으로, 사람의 성격·잘잘못·진실을 판단하지 말고 현재 대화의 맥락을 정리한다. tone은 '편안함', '조금 조심스러움', '오해 가능성', '정리해 보면 좋음' 중 하나다. summary는 대화의 실제 주제와 흐름을 2문장 이내로 정리한다. reason은 갈등이 명확하거나 오해될 지점이 있을 때만, 특정 사람을 탓하지 않고 왜 엇갈릴 수 있는지 1문장으로 적는다. suggestion은 바로 해볼 수 있는 대처 1개를 제안한다. draft는 필요할 때 쓸 수 있는 자연스러운 한국어 문장 1개다. 갈등 신호가 없으면 억지로 문제를 만들지 말고 reason은 빈 문자열로 한다. JSON만 출력: {{\"tone\":string,\"summary\":string,\"reason\":string,\"suggestion\":string,\"draft\":string}}\n\n최근 대화:\n{}",
+        history.join("\n")
+    );
+    let response = reqwest::Client::new()
+        .post("https://api.openai.com/v1/responses")
+        .bearer_auth(key)
+        .json(&serde_json::json!({"model":"gpt-4o-mini","input":prompt,"max_output_tokens":260}))
+        .send()
+        .await;
+    let parsed = match response {
+        Ok(response) => response
+            .json::<serde_json::Value>()
+            .await
+            .ok()
+            .and_then(|value| {
+                value["output"][0]["content"][0]["text"]
+                    .as_str()
+                    .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok())
+            }),
+        Err(_) => None,
+    };
+    let Some(parsed) = parsed else {
+        return Json(fallback);
+    };
+    Json(serde_json::json!({
+        "tone":parsed["tone"].as_str().unwrap_or("대화 흐름 정리"),
+        "summary":parsed["summary"].as_str().unwrap_or("최근 대화를 함께 정리해 봐요."),
+        "reason":parsed["reason"].as_str().unwrap_or(""),
+        "suggestion":parsed["suggestion"].as_str().unwrap_or("서로의 의도를 한 문장으로 확인해 보세요."),
+        "draft":parsed["draft"].as_str().unwrap_or("")
+    }))
+}
 async fn ai_support(Json(input): Json<RewriteRequest>) -> Json<serde_json::Value> {
     let text = input.text.trim();
     let Some(key) = env::var("OPENAI_API_KEY").ok() else {
@@ -1489,6 +1548,7 @@ async fn main() {
         .route("/api/ai/check", post(ai_check))
         .route("/api/ai/fact-check", post(fact_check))
         .route("/api/ai/rewrite", post(ai_rewrite))
+        .route("/api/ai/conversation-analysis", post(analyze_conversation))
         .route("/api/ai/support", post(ai_support))
         .route("/api/ai/reports", post(report_ai))
         .route("/api/bootstrap", get(bootstrap))
