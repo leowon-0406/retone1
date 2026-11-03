@@ -21,6 +21,14 @@ let aiSavedResults = (() => {
     return {};
   }
 })();
+let factFindings = (() => {
+  try {
+    return JSON.parse(localStorage.getItem("retone-fact-findings-v1") || "{}");
+  } catch {
+    return {};
+  }
+})();
+const factChecksInFlight = new Set();
 const aiCategoryDefaults = {
   "강한 공격 표현": "강한 표현만",
   "비꼼·압박 표현": "균형 있게",
@@ -201,6 +209,7 @@ async function openRoom(id) {
     )}</section><form class="sendbar" onsubmit="send(event)"><button type="button" class="intent-button" title="의도 표시" onclick="chooseIntent()">${selectedIntent ? "◎" : "＋"}</button><label class="image-upload" title="사진 보내기">▧<input hidden type="file" accept="image/*" onchange="sendImage(this)"></label><input id="text" placeholder="메시지를 입력하세요" autocomplete="off" oninput="queueAiCheck(this.value)"><span id="ai-status" class="ai-status"></span><button>↑</button></form></section></main>`;
   document.querySelector("#messages").scrollTop = 999999;
   startRoomPolling(id, messages.length);
+  queueFactChecks(messages);
 }
 function stopRoomPolling() {
   if (roomPollTimer) {
@@ -599,8 +608,48 @@ async function setAvatar(input) {
     );
   }
 }
+function likelyFactualClaim(text) {
+  const value = String(text || "").trim();
+  if (value.length < 12 || value.includes("?")) return false;
+  return /\d|%|원|만원|억|조|통계|연구|조사|발표|뉴스|속보|확진|재난|지진|태풍|지원금|대출|투자|주식|법|정책|선거|건강|질병|치료|사망|발생|이라고|라는데|래|된다|했대/.test(value);
+}
+function saveFactFindings() {
+  const entries = Object.entries(factFindings).slice(-120);
+  factFindings = Object.fromEntries(entries);
+  try {
+    localStorage.setItem("retone-fact-findings-v1", JSON.stringify(factFindings));
+  } catch {}
+}
+async function queueFactChecks(messages) {
+  if (aiDetails()["출처 확인 제안"] === "끄기") return;
+  const candidates = messages
+    .filter((message) => !message.mine && likelyFactualClaim(message.body))
+    .slice(-3);
+  for (const message of candidates) {
+    if (factFindings[message.id] || factChecksInFlight.has(message.id)) continue;
+    factChecksInFlight.add(message.id);
+    try {
+      const result = await api("/api/ai/fact-check", {
+        method: "POST",
+        body: JSON.stringify({ text: message.body }),
+      });
+      factFindings[message.id] = result;
+      saveFactFindings();
+      if (roomId === message.room_id && result.status === "check") openRoom(roomId);
+    } catch {
+      // 연결 실패는 조용히 넘기며, 사용자가 다시 눌러 확인할 수 있게 둡니다.
+    } finally {
+      factChecksInFlight.delete(message.id);
+    }
+  }
+}
 function view(m) {
-  return `<article class="bubble ${m.mine ? "mine" : ""}" ${m.mine ? "" : `onclick="inspectMessage(${JSON.stringify(m.body)})"`}><div class="meta">${esc(m.sender)}${m.intent ? ` · <span class="intent-tag">${esc(m.intent)}</span>` : ""}</div>${m.image_url ? `<img class="chat-image" src="${m.image_url}" alt="보낸 사진">` : ""}${m.body ? `<span>${esc(m.body)}</span>` : ""}${m.mine && m.unread ? `<span class="read">${m.unread}</span>` : ""}${m.mine ? `<button class="delete-message" title="메시지 삭제" onclick="removeMessage('${m.id}')">×</button>` : ""}</article>`;
+  const finding = !m.mine ? factFindings[m.id] : null;
+  const factCue =
+    finding?.status === "check"
+      ? `<button class="fact-cue" title="출처 확인 안내" onclick="event.stopPropagation();openFactFinding('${m.id}')">ⓘ</button>`
+      : "";
+  return `<article class="bubble ${m.mine ? "mine" : ""}" ${m.mine ? "" : `onclick="inspectMessage(${JSON.stringify(m.body)})"`}><div class="meta">${esc(m.sender)}${m.intent ? ` · <span class="intent-tag">${esc(m.intent)}</span>` : ""}</div>${m.image_url ? `<img class="chat-image" src="${m.image_url}" alt="보낸 사진">` : ""}${m.body ? `<span>${esc(m.body)}</span>` : ""}${factCue}${m.mine && m.unread ? `<span class="read">${m.unread}</span>` : ""}${m.mine ? `<button class="delete-message" title="메시지 삭제" onclick="removeMessage('${m.id}')">×</button>` : ""}</article>`;
 }
 function toneCard(messages) {
   const joined = messages.map((message) => message.body).join(" ");
@@ -747,19 +796,31 @@ function inspectMessage(text) {
     `<div class="ai-check info"><span>상대 메시지</span><h2>이 메시지를 함께 살펴볼까요?</h2><p>Re:Tone은 진실·거짓을 판정하지 않고, 확인에 필요한 단서를 제안해요.</p><button onclick="factCheck(${JSON.stringify(text)})">사실여부 확인 도움받기</button></div>`,
   );
 }
+function safeLink(url) {
+  const value = String(url || "");
+  return /^https?:\/\//i.test(value) ? value.replace(/"/g, "%22") : "";
+}
+function factFindingMarkup(result) {
+  const sources = (result.sources || [])
+    .map((source) => {
+      const url = safeLink(source.url);
+      if (!url) return "";
+      return `<a href="${url}" target="_blank" rel="noreferrer"><b>${esc(source.title || "출처 열기")}</b>${source.date ? `<small>${esc(source.date)}</small>` : ""}<span>열기 ↗</span></a>`;
+    })
+    .join("");
+  return `<div class="ai-check info fact-finding"><span>출처 확인 안내</span><h2>한 번 더 확인해 볼까요?</h2><p>${esc(result.summary || "서로 다른 출처와 게시 날짜를 함께 확인해 보세요.")}</p>${sources ? `<div class="fact-sources">${sources}</div>` : ""}<small>이 표시는 사람이나 메시지를 판정하지 않으며, 출처가 부족하거나 엇갈릴 때만 보여요.</small><button onclick="closePopup()">확인</button></div>`;
+}
+function openFactFinding(id) {
+  const result = factFindings[id];
+  if (result) popup(factFindingMarkup(result));
+}
 async function factCheck(text) {
-  const result = await api("/api/ai/check", {
+  const result = await api("/api/ai/fact-check", {
     method: "POST",
-    body: JSON.stringify({
-      text,
-      ai_intervention: "careful",
-      details: aiDetails(),
-    }),
+    body: JSON.stringify({ text }),
   });
-  const info = result.info || {};
-  popup(
-    `<div class="ai-check info"><span>확인 제안</span><h2>이렇게 확인해 보면 어때요?</h2><p>${esc(info.note || "원문 출처, 게시 날짜, 신뢰할 수 있는 기관의 자료를 함께 확인해 보세요.")}</p><button onclick="closePopup()">확인</button></div>`,
-  );
+  if (result.status === "check") return popup(factFindingMarkup(result));
+  popup(`<div class="ai-check info"><span>출처 확인</span><h2>별도 안내가 필요하지 않아 보여요</h2><p>검색된 신뢰 가능한 출처들이 현재 문장을 대체로 뒷받침했어요. 그래도 중요한 결정 전에는 원문과 날짜를 확인해 주세요.</p><button onclick="closePopup()">확인</button></div>`);
 }
 function openAiHelp() {
   if (aiDetails()["감정 도움 AI"] === "끄기") return;

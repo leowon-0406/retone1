@@ -162,6 +162,10 @@ struct AiCheck {
     details: Option<HashMap<String, String>>,
 }
 #[derive(Deserialize)]
+struct FactCheck {
+    text: String,
+}
+#[derive(Deserialize)]
 struct RewriteRequest {
     text: String,
     context: Option<Vec<String>>,
@@ -866,6 +870,76 @@ async fn ai_check(State(app): State<App>, Json(input): Json<AiCheck>) -> Json<se
         serde_json::json!({"verdict":verdict,"suggestion":suggestion,"info":{"level":info_level,"note":info_note,"queries":info_queries},"source":"ai"}),
     )
 }
+async fn fact_check(Json(input): Json<FactCheck>) -> Json<serde_json::Value> {
+    let text = input.text.trim();
+    if text.is_empty() || text.chars().count() > 900 {
+        return Json(serde_json::json!({"status":"clear","summary":"","sources":[]}));
+    }
+    let Some(key) = env::var("OPENAI_API_KEY").ok() else {
+        return Json(serde_json::json!({"status":"clear","summary":"","sources":[]}));
+    };
+    let prompt = format!(
+        "너는 Re:Tone의 출처 확인 보조 도구다. 사람이나 문장의 진실·거짓을 판정하거나 단정하지 않는다. 반드시 웹 검색 도구로 현재 메시지의 정보성 주장만 확인한다. 신뢰할 수 있는 최신 출처들이 대체로 뒷받침하면 status=clear로 한다. 출처가 부족하거나, 날짜가 오래되었거나, 믿을 만한 출처 사이에 차이가 있으면 status=check로 한다. status=check일 때 summary에는 '확인되지 않았어요' 또는 '출처가 엇갈려요' 같은 조심스러운 표현으로, 무엇을 다시 확인하면 좋을지 2문장 이내로 쓴다. sources는 실제 검색으로 확인한 링크만 최대 3개 넣는다. JSON만 출력한다: {{\"status\":\"clear|check\",\"summary\":\"...\",\"sources\":[{{\"title\":\"...\",\"url\":\"https://...\",\"date\":\"...\"}}]}}\n\n현재 메시지: {text}"
+    );
+    let response = reqwest::Client::new()
+        .post("https://api.openai.com/v1/responses")
+        .bearer_auth(key)
+        .json(&serde_json::json!({
+            "model":"gpt-4.1-mini",
+            "input":prompt,
+            "tools":[{"type":"web_search"}],
+            "tool_choice":"required",
+            "max_output_tokens":500
+        }))
+        .send()
+        .await;
+    let parsed = match response {
+        Ok(response) => response.json::<serde_json::Value>().await.ok(),
+        Err(_) => None,
+    }
+    .and_then(|value| {
+        value["output"]
+            .as_array()
+            .and_then(|output| {
+                output.iter().find_map(|item| {
+                    item["content"]
+                        .as_array()
+                        .and_then(|content| content.iter().find_map(|part| part["text"].as_str()))
+                })
+            })
+            .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok())
+    });
+    let Some(parsed) = parsed else {
+        return Json(serde_json::json!({"status":"clear","summary":"","sources":[]}));
+    };
+    let status = if parsed["status"].as_str() == Some("check") {
+        "check"
+    } else {
+        "clear"
+    };
+    let summary = parsed["summary"].as_str().unwrap_or("");
+    let sources = parsed["sources"]
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    let url = item["url"].as_str()?;
+                    if !(url.starts_with("https://") || url.starts_with("http://")) {
+                        return None;
+                    }
+                    Some(serde_json::json!({
+                        "title": item["title"].as_str().unwrap_or(url),
+                        "url": url,
+                        "date": item["date"].as_str().unwrap_or("")
+                    }))
+                })
+                .take(3)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    Json(serde_json::json!({"status":status,"summary":summary,"sources":sources}))
+}
 async fn ai_rewrite(Json(input): Json<RewriteRequest>) -> Json<serde_json::Value> {
     let text = input.text.trim();
     if text.is_empty() {
@@ -1413,6 +1487,7 @@ async fn main() {
         .route("/api/users/{id}/avatar", post(update_avatar))
         .route("/api/images/check", post(check_image))
         .route("/api/ai/check", post(ai_check))
+        .route("/api/ai/fact-check", post(fact_check))
         .route("/api/ai/rewrite", post(ai_rewrite))
         .route("/api/ai/support", post(ai_support))
         .route("/api/ai/reports", post(report_ai))
