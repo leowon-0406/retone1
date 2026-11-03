@@ -1124,6 +1124,11 @@ async function sendApproved() {
 }
 function editPendingSend() {
   const body = pendingSend?.body || "";
+  // 경고창에서 입력창으로 돌아가는 것은 '취소'가 아니라 새 문장의 편집입니다.
+  // 이 상태를 남겨두면 send()가 중복 전송 방지 분기에서 즉시 종료됩니다.
+  pendingSend = null;
+  clearTimeout(aiPrefetch.timer);
+  aiPrefetch = { text: "", result: null, promise: null, timer: null };
   removePendingBubble();
   closePopup();
   const input = document.querySelector("#text");
