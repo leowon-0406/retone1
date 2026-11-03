@@ -771,7 +771,7 @@ function dismissRecoveryMessage() {
 }
 async function openConflictGuide() {
   popup(
-    `<div class="ai-check info analysis-loading"><span>대화 흐름 분석</span><h2>최근 맥락을 살펴보고 있어요</h2><p>누가 맞는지 판단하지 않고, 지금 대화의 주제와 엇갈릴 수 있는 지점만 정리해요.</p></div>`,
+    `<div class="ai-check info analysis-loading"><div class="thinking-loader" aria-label="AI 분석 중"><i></i><i></i><i></i></div><span>대화 흐름 분석 중</span><h2>최근 맥락을 살펴보고 있어요</h2><p>누가 맞는지 판단하지 않고, 지금 대화의 주제와 엇갈릴 수 있는 지점만 정리해요.</p><small>AI가 생각하고 있어요</small></div>`,
   );
   try {
     const result = await api("/api/ai/conversation-analysis", {
@@ -788,7 +788,7 @@ async function openConflictGuide() {
       : `<p><strong>지금 흐름</strong><br>뚜렷한 갈등 신호는 보이지 않아요. 필요할 때만 아래 제안을 참고해 보세요.</p>`;
     pendingAnalysisDraft = result.draft || "";
     const draft = pendingAnalysisDraft
-      ? `<button class="quiet" onclick="useAnalysisDraft()">이 문장 입력창에 넣기</button>`
+      ? `<button class="quiet" onclick="useAnalysisDraft()">입력창에 넣기</button>`
       : "";
     popup(
       `<div class="ai-check info conversation-analysis"><span>대화 온도 · ${esc(result.tone || "대화 흐름 정리")}</span><h2>최근 대화를 이렇게 읽을 수 있어요</h2><p>${esc(result.summary || "최근 대화를 함께 정리해 봐요.")}</p>${reason}<p><strong>이렇게 해보면 좋아요</strong><br>${esc(result.suggestion || "서로의 의도를 한 문장으로 확인해 보세요.")}</p><small>이 분석은 사람이나 감정을 확정하지 않는 참고용 제안이에요.</small><div class="modal-actions">${draft}<button onclick="closePopup()">확인</button></div></div>`,
