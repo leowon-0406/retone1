@@ -105,6 +105,11 @@ struct NewRoom {
     invitee_ids: Option<Vec<String>>,
 }
 #[derive(Deserialize)]
+struct AddRoomMembers {
+    inviter_id: Uuid,
+    invitee_ids: Vec<Uuid>,
+}
+#[derive(Deserialize)]
 struct NewAgreement {
     task: String,
     room_id: Option<String>,
@@ -1547,6 +1552,71 @@ async fn leave_room(
     }
     Ok(StatusCode::NO_CONTENT)
 }
+async fn add_room_members(
+    State(app): State<App>,
+    Path(room_id): Path<Uuid>,
+    Json(input): Json<AddRoomMembers>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    if input.invitee_ids.is_empty() || input.invitee_ids.len() > 99 {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let inviter_is_member: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM retone_v2.room_members WHERE room_id=$1 AND user_id=$2)",
+    )
+    .bind(room_id)
+    .bind(input.inviter_id)
+    .fetch_one(&app.db)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if !inviter_is_member {
+        return Err(StatusCode::FORBIDDEN);
+    }
+
+    let mut invitees = input.invitee_ids;
+    invitees.sort_unstable();
+    invitees.dedup();
+    invitees.retain(|id| *id != input.inviter_id);
+    for invitee_id in &invitees {
+        let are_friends: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM retone_v2.friendships WHERE user_id=$1 AND friend_id=$2)",
+        )
+        .bind(input.inviter_id)
+        .bind(*invitee_id)
+        .fetch_one(&app.db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        if !are_friends {
+            return Err(StatusCode::FORBIDDEN);
+        }
+    }
+    for invitee_id in invitees {
+        sqlx::query(
+            "INSERT INTO retone_v2.room_members(room_id,user_id) VALUES($1,$2) ON CONFLICT DO NOTHING",
+        )
+        .bind(room_id)
+        .bind(invitee_id)
+        .execute(&app.db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    }
+    let members: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM retone_v2.room_members WHERE room_id=$1")
+            .bind(room_id)
+            .fetch_one(&app.db)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if let Some(room) = app
+        .data
+        .write()
+        .await
+        .rooms
+        .iter_mut()
+        .find(|room| room.id == room_id.to_string())
+    {
+        room.members = members.min(255) as u8;
+    }
+    Ok(Json(serde_json::json!({ "members": members })))
+}
 async fn create_room(
     State(app): State<App>,
     Json(input): Json<NewRoom>,
@@ -1756,6 +1826,7 @@ async fn main() {
         .route("/api/admin/reports", get(admin_reports))
         .route("/api/bootstrap", get(bootstrap))
         .route("/api/rooms", post(create_room))
+        .route("/api/rooms/{id}/members", post(add_room_members))
         .route("/api/agreements", post(create_agreement))
         .route("/api/agreements/{id}/{action}", post(update_agreement))
         .route("/api/appointments", post(create_appointment))

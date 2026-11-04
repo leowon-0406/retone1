@@ -1377,10 +1377,17 @@ async function inviteFriends() {
 async function confirmInviteFriends() {
   const inviteeIds = selectedInvitees();
   if (!inviteeIds.length) return alert("초대할 친구를 한 명 이상 골라 주세요.");
-  const room = data.rooms.find((item) => item.id === roomId);
-  if (room) room.members += inviteeIds.length;
-  closePopup();
-  openRoom(roomId);
+  try {
+    await api(`/api/rooms/${roomId}/members`, {
+      method: "POST",
+      body: JSON.stringify({ inviter_id: signedInId, invitee_ids: inviteeIds }),
+    });
+    data = await api(`/api/bootstrap?user_id=${encodeURIComponent(signedInId)}`);
+    closePopup();
+    openRoom(roomId);
+  } catch (error) {
+    alert("친구를 초대하지 못했어요. 친구 상태와 채팅방 참여 상태를 다시 확인해주세요.");
+  }
 }
 async function saveRoom() {
   const name = document.querySelector("#roomName").value.trim();
