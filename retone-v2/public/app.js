@@ -15,6 +15,7 @@ let signupPhoneTimer = null;
 let selectedIntent = "";
 let aiPrefetch = { text: "", result: null, promise: null, timer: null };
 let roomPollTimer = null;
+const browserNotificationsEnabled = () => localStorage.getItem("retone-browser-notifications") === "1";
 let aiSavedResults = (() => {
   try {
     return JSON.parse(localStorage.getItem("retone-ai-results-v1") || "{}");
@@ -265,20 +266,59 @@ function stopRoomPolling() {
 }
 function startRoomPolling(id, initialCount) {
   roomPollTimer = setInterval(async () => {
-    if (roomId !== id || document.hidden) return;
+    if (roomId !== id) return;
     try {
       const latest = await api(
         `/api/rooms/${id}/messages?user_id=${encodeURIComponent(signedInId)}`,
       );
-      if (latest.length !== initialCount) openRoom(id);
+      if (latest.length !== initialCount) {
+        const incoming = latest.slice(initialCount).filter((message) => !message.mine);
+        incoming.forEach((message) => notifyNewMessage(message));
+        openRoom(id);
+      }
     } catch {}
   }, 3500);
 }
+async function toggleBrowserNotifications() {
+  if (!("Notification" in window)) return alert("이 브라우저에서는 알림을 지원하지 않아요.");
+  const permission = await Notification.requestPermission();
+  localStorage.setItem("retone-browser-notifications", permission === "granted" ? "1" : "0");
+  settings();
+}
+function notifyNewMessage(message) {
+  if (!browserNotificationsEnabled() || Notification.permission !== "granted" || isRoomMuted(roomId)) return;
+  const room = data?.rooms?.find((item) => item.id === roomId);
+  new Notification(room?.name || "Re:Tone", { body: `${message.sender}: ${message.body || "사진을 보냈어요."}`, tag: `retone-${roomId}` });
+}
 async function friends() {
   stopRoomPolling();
-  const users = await api("/api/users");
-  const list = users.filter((u) => u.id !== signedInId);
-  app.innerHTML = `<main class="layout">${rail()}<section class="page"><header class="head"><h1>친구</h1><button class="new-room" onclick="home()">채팅 목록</button></header><div class="content"><div class="intro"><h2>Re:Tone 친구</h2><p>이 앱에 가입한 친구를 눌러 바로 대화를 시작해요.</p></div><div class="rooms">${list.length ? list.map((u) => `<button class="room" onclick="startDirect('${esc(u.name)}','${u.id}')"><span class="avatar">${u.avatar_url ? `<img src="${u.avatar_url}" alt="">` : esc(u.name[0])}</span><span class="copy"><b>${esc(u.name)}</b><span>눌러서 1:1 대화 시작</span></span><span>›</span></button>`).join("") : `<div class="empty-chat"><b>아직 가입한 친구가 없어요</b><span>친구가 가입하면 이곳에 자동으로 나타나요.</span></div>`}</div></div></section></main>`;
+  const [users, relations] = await Promise.all([
+    api("/api/users"),
+    api(`/api/friends?user_id=${encodeURIComponent(signedInId)}`),
+  ]);
+  const known = new Set([
+    ...relations.friends.map((user) => user.id),
+    ...relations.incoming.map((user) => user.id),
+    ...relations.outgoing.map((user) => user.id),
+    ...relations.blocked.map((user) => user.id),
+    signedInId,
+  ]);
+  const candidates = users.filter((user) => !known.has(user.id));
+  const person = (user, action, detail) => `<article class="friend-row"><span class="avatar">${user.avatar_url ? `<img src="${user.avatar_url}" alt="">` : esc(user.name[0])}</span><span class="copy"><b>${esc(user.name)}</b><span>${detail}</span></span>${action}</article>`;
+  app.innerHTML = `<main class="layout">${rail()}<section class="page"><header class="head"><h1>친구</h1><button class="new-room" onclick="home()">채팅 목록</button></header><div class="content"><div class="intro"><h2>내 친구</h2><p>친구 요청을 수락한 사람과만 1:1 채팅을 시작할 수 있어요.</p></div>${relations.incoming.length ? `<section class="friend-section"><b>받은 친구 요청 <em>${relations.incoming.length}</em></b><div>${relations.incoming.map((user) => person(user, `<button onclick="acceptFriend('${user.id}')">수락</button><button class="soft" onclick="blockFriend('${user.id}')">차단</button>`, "친구 요청을 보냈어요")).join("")}</div></section>` : ""}<section class="friend-section"><b>친구 ${relations.friends.length}</b><div>${relations.friends.length ? relations.friends.map((user) => person(user, `<button onclick="startDirect('${esc(user.name)}','${user.id}')">채팅</button><button class="soft" onclick="blockFriend('${user.id}')">차단</button>`, "1:1 대화를 시작할 수 있어요")).join("") : `<div class="empty-chat"><b>아직 친구가 없어요</b><span>아래에서 친구 요청을 보내보세요.</span></div>`}</div></section>${relations.outgoing.length ? `<section class="friend-section"><b>보낸 요청</b><div>${relations.outgoing.map((user) => person(user, `<span class="request-state">대기 중</span>`, "수락을 기다리고 있어요")).join("")}</div></section>` : ""}${candidates.length ? `<section class="friend-section"><b>친구 찾아보기</b><div>${candidates.map((user) => person(user, `<button onclick="requestFriend('${user.id}')">친구 요청</button>`, "Re:Tone에 가입했어요")).join("")}</div></section>` : ""}${relations.blocked.length ? `<details class="blocked-list"><summary>차단한 사용자 ${relations.blocked.length}명</summary><p>차단한 사용자는 친구 요청과 채팅을 시작할 수 없어요.</p></details>` : ""}</div></section></main>`;
+}
+async function requestFriend(id) {
+  await api("/api/friends/request", { method: "POST", body: JSON.stringify({ user_id: signedInId, target_id: id }) });
+  friends();
+}
+async function acceptFriend(id) {
+  await api("/api/friends/accept", { method: "POST", body: JSON.stringify({ user_id: signedInId, target_id: id }) });
+  friends();
+}
+async function blockFriend(id) {
+  if (!confirm("이 사용자를 차단할까요? 친구 요청과 새 채팅을 할 수 없게 됩니다.")) return;
+  await api("/api/blocks", { method: "POST", body: JSON.stringify({ user_id: signedInId, target_id: id }) });
+  friends();
 }
 function roomSettings() {
   const muted = isRoomMuted(roomId);
@@ -314,12 +354,16 @@ function toggleRoomMute() {
   closePopup();
   openRoom(roomId);
 }
-function leaveRoom() {
-  if (!confirm("채팅방을 나갈까요? 나간 뒤 목록에서 이 방은 보이지 않아요."))
-    return;
-  localStorage.setItem(roomPreferenceKey("left", roomId), "1");
-  closePopup();
-  home();
+async function leaveRoom() {
+  if (!confirm("채팅방을 나갈까요? 나가면 이 방의 메시지를 더 볼 수 없어요.")) return;
+  try {
+    await api(`/api/rooms/${roomId}/leave?user_id=${encodeURIComponent(signedInId)}`, { method: "DELETE" });
+    localStorage.removeItem(roomPreferenceKey("left", roomId));
+    closePopup();
+    home();
+  } catch {
+    alert("채팅방을 나가지 못했어요. 잠시 후 다시 시도해주세요.");
+  }
 }
 async function startDirect(name, inviteeId = "") {
   const room = await api("/api/rooms", {
@@ -509,7 +553,7 @@ function renderDetailedAiSettings() {
     const [, desc, options] = aiCategories.find(([title]) => title === name);
     return `<article class="ai-category"><span><b>${name}</b><small>${desc}</small></span><div class="ai-choice-row">${options.map((option) => `<button class="${saved[name] === option ? "selected" : ""}" onclick="saveAiDetail('${name}','${option}')">${option}</button>`).join("")}</div></article>`;
   };
-  root.innerHTML = `<section class="overall-sensitivity"><span>기본 AI 민감도</span><b id="overall-sensitivity-label">${sensitivityLabel(sensitivity.overall)} · ${sensitivity.overall}</b><input type="range" min="0" max="100" value="${sensitivity.overall}" style="--sensitivity:${sensitivity.overall}%" oninput="previewOverallSensitivity(this.value,this)" onchange="setOverallSensitivity(this.value)"><small>모든 채팅방의 기본값이에요. 친한 친구 방은 방 설정에서 따로 낮출 수 있어요.</small></section><details class="ai-advanced-settings"><summary><span><b>세부 AI 항목 조절</b><small>필요할 때만 열어 항목별로 바꿔요.</small></span><i>⌄</i></summary><div class="ai-setting-intro"><b>세부 민감도는 AI가 조절해요</b><span>‘그냥 보내기’ 선택 패턴을 보고 항목별 수치를 조정합니다.</span></div>${aiGroups.map(([title, desc, names]) => `<details class="ai-setting-group"><summary><span><b>${title}</b><small>${desc}</small></span><i>⌄</i></summary><div class="ai-category-list">${names.map(card).join("")}</div></details>`).join("")}</details><section class="settings-actions"><button class="theme-toggle" onclick="toggleTheme()">${document.body.classList.contains("dark") ? "☀️ 라이트 모드" : "🌙 다크 모드"}</button><button class="danger-action" onclick="openDeleteAccount()">계정 삭제</button></section>`;
+  root.innerHTML = `<section class="overall-sensitivity"><span>기본 AI 민감도</span><b id="overall-sensitivity-label">${sensitivityLabel(sensitivity.overall)} · ${sensitivity.overall}</b><input type="range" min="0" max="100" value="${sensitivity.overall}" style="--sensitivity:${sensitivity.overall}%" oninput="previewOverallSensitivity(this.value,this)" onchange="setOverallSensitivity(this.value)"><small>모든 채팅방의 기본값이에요. 친한 친구 방은 방 설정에서 따로 낮출 수 있어요.</small></section><details class="ai-advanced-settings"><summary><span><b>세부 AI 항목 조절</b><small>필요할 때만 열어 항목별로 바꿔요.</small></span><i>⌄</i></summary><div class="ai-setting-intro"><b>세부 민감도는 AI가 조절해요</b><span>‘그냥 보내기’ 선택 패턴을 보고 항목별 수치를 조정합니다.</span></div>${aiGroups.map(([title, desc, names]) => `<details class="ai-setting-group"><summary><span><b>${title}</b><small>${desc}</small></span><i>⌄</i></summary><div class="ai-category-list">${names.map(card).join("")}</div></details>`).join("")}</details><section class="settings-actions"><button class="theme-toggle" onclick="toggleTheme()">${document.body.classList.contains("dark") ? "☀️ 라이트 모드" : "🌙 다크 모드"}</button><button class="notification-toggle" onclick="toggleBrowserNotifications()">${browserNotificationsEnabled() ? "🔔 새 메시지 알림 켬" : "🔕 새 메시지 알림 켜기"}</button><button class="danger-action" onclick="openDeleteAccount()">계정 삭제</button></section>`;
 }
 function saveAiDetail(name, value) {
   const state = sensitivityState();
@@ -569,7 +613,7 @@ function toggleTheme() {
 }
 function openDeleteAccount() {
   popup(
-    `<div class="ai-check warn"><span>계정 삭제</span><h2>정말 탈퇴할까요?</h2><p>계정 삭제 후에는 같은 계정으로 다시 로그인할 수 없어요.</p><input id="delete-name" placeholder="현재 계정의 이름을 입력해주세요"><input id="delete-password" type="password" placeholder="현재 비밀번호를 입력해주세요"><button class="danger-action" onclick="deleteMyAccount()">계정 삭제하기</button></div>`,
+    `<div class="delete-account-card"><div class="delete-account-icon">!</div><span>계정 삭제</span><h2>계정을 삭제할까요?</h2><p>이 작업은 되돌릴 수 없어요. 본인 확인을 위해 현재 이름과 비밀번호를 다시 입력해주세요.</p><label>현재 이름<input id="delete-name" placeholder="이름을 입력해주세요"></label><label>현재 비밀번호<input id="delete-password" type="password" placeholder="비밀번호를 입력해주세요"></label><small>삭제하면 로그인과 프로필 사용이 중단돼요.</small><div class="modal-actions"><button class="quiet" onclick="closePopup()">취소</button><button class="danger-action" onclick="deleteMyAccount()">계정 삭제</button></div></div>`,
   );
 }
 async function deleteMyAccount() {
@@ -1295,9 +1339,7 @@ function closePopup() {
   document.querySelector(".modal")?.remove();
 }
 async function newRoom() {
-  const users = (await api("/api/users")).filter(
-    (user) => user.id !== signedInId,
-  );
+  const users = (await api(`/api/friends?user_id=${encodeURIComponent(signedInId)}`)).friends;
   popup(
     `<h2>새 단체 채팅</h2><p>방 이름을 정하고, 가입한 친구를 바로 초대할 수 있어요.</p><input id="roomName" placeholder="예: 과학 수행평가 조"><div class="invite-list">${users.length ? users.map((user) => `<label><input type="checkbox" class="invite-user" value="${user.id}"> <b>${esc(user.name)}</b> 초대</label>`).join("") : "<small>가입한 다른 친구가 아직 없어요.</small>"}</div><button onclick="saveRoom()">채팅방 만들기</button>`,
   );
@@ -1308,9 +1350,7 @@ function selectedInvitees() {
   );
 }
 async function inviteFriends() {
-  const users = (await api("/api/users")).filter(
-    (user) => user.id !== signedInId,
-  );
+  const users = (await api(`/api/friends?user_id=${encodeURIComponent(signedInId)}`)).friends;
   popup(
     `<h2>친구 초대</h2><p>친구를 고르면 참여 안내가 표시돼요.</p><div class="invite-list">${users.length ? users.map((user) => `<label><input type="checkbox" class="invite-user" value="${user.id}"> <b>${esc(user.name)}</b></label>`).join("") : "<small>초대할 가입 친구가 없어요.</small>"}</div><button onclick="confirmInviteFriends()">선택한 친구 초대</button>`,
   );

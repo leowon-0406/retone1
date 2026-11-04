@@ -74,6 +74,28 @@ CREATE TABLE IF NOT EXISTS retone_v2.ai_reports (
   status TEXT NOT NULL DEFAULT 'open'
 );
 
+CREATE TABLE IF NOT EXISTS retone_v2.friend_requests (
+  from_id UUID REFERENCES retone_v2.users(id) ON DELETE CASCADE,
+  to_id UUID REFERENCES retone_v2.users(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY(from_id, to_id),
+  CHECK(from_id <> to_id)
+);
+CREATE TABLE IF NOT EXISTS retone_v2.friendships (
+  user_id UUID REFERENCES retone_v2.users(id) ON DELETE CASCADE,
+  friend_id UUID REFERENCES retone_v2.users(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY(user_id, friend_id),
+  CHECK(user_id <> friend_id)
+);
+CREATE TABLE IF NOT EXISTS retone_v2.blocks (
+  blocker_id UUID REFERENCES retone_v2.users(id) ON DELETE CASCADE,
+  blocked_id UUID REFERENCES retone_v2.users(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY(blocker_id, blocked_id),
+  CHECK(blocker_id <> blocked_id)
+);
+
 -- Safe for databases created before the information-check fields were added.
 ALTER TABLE retone_v2.ai_cache ADD COLUMN IF NOT EXISTS info_level TEXT NOT NULL DEFAULT 'none';
 ALTER TABLE retone_v2.ai_cache ADD COLUMN IF NOT EXISTS info_note TEXT;
