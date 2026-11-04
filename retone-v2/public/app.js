@@ -212,6 +212,7 @@ async function api(url, options = {}) {
     ...options,
   });
   if (!r.ok) throw new Error();
+  if (r.status === 204) return {};
   return r.json();
 }
 function rail() {
@@ -381,7 +382,7 @@ function settings() {
   stopRoomPolling();
   nav = "settings";
   if (isAdmin) {
-    app.innerHTML = `<main class="layout">${rail()}<section class="page"><header class="head"><h1>관리자</h1></header><div class="content"><div class="intro"><h2>Re:Tone 관리자 계정</h2><p>사용자별 계정과 데이터를 관리하는 공간이에요.</p></div><section class="admin-panel"><b>관리자 로그인 완료</b><span>일반 사용자 대화에는 관리자 권한이 자동으로 개입하지 않아요.</span></section><section class="admin-users"><div><b>가입 사용자</b><span>초기화할 계정을 개별로 선택하세요.</span></div><div id="admin-users-list" class="admin-users-list"><small>사용자 목록을 불러오는 중…</small></div></section><button class="room" onclick="logout()"><span class="avatar">↪</span><span class="copy"><b>로그아웃</b><span>관리자 세션을 안전하게 종료해요.</span></span></button></div></section></main>`;
+    app.innerHTML = `<main class="layout">${rail()}<section class="page"><header class="head"><h1>관리자</h1></header><div class="content"><div class="intro"><h2>Re:Tone 관리자 계정</h2><p>사용자별 계정과 AI 문의를 관리하는 공간이에요.</p></div><section class="admin-panel"><b>관리자 로그인 완료</b><span>일반 사용자 대화에는 관리자 권한이 자동으로 개입하지 않아요.</span><button onclick="openAdminReports()">AI 문의 확인</button></section><section class="admin-users"><div><b>가입 사용자</b><span>초기화할 계정을 개별로 선택하세요.</span></div><div id="admin-users-list" class="admin-users-list"><small>사용자 목록을 불러오는 중…</small></div></section><button class="room" onclick="logout()"><span class="avatar">↪</span><span class="copy"><b>로그아웃</b><span>관리자 세션을 안전하게 종료해요.</span></span></button></div></section></main>`;
     renderAdminUsers();
     return;
   }
@@ -428,6 +429,24 @@ async function renderAdminUsers() {
       : `<small>초기화할 가입 사용자가 없어요.</small>`;
   } catch {
     root.innerHTML = `<small>사용자 목록을 불러오지 못했어요.</small>`;
+  }
+}
+function openAdminReports() {
+  popup(
+    `<div class="admin-reports"><span>AI 문의 관리</span><h2>접수된 문의를 확인해요</h2><p>관리자 비밀번호와 2차 인증을 다시 입력하면 원문과 AI 결과를 볼 수 있어요.</p><input id="report-admin-password" type="password" placeholder="관리자 비밀번호"><input id="report-admin-two-factor" type="password" inputmode="numeric" placeholder="2차 인증 코드"><button onclick="loadAdminReports()">문의 불러오기</button></div>`,
+  );
+}
+async function loadAdminReports() {
+  const password = document.querySelector("#report-admin-password")?.value;
+  const twoFactor = document.querySelector("#report-admin-two-factor")?.value;
+  if (!password || !twoFactor) return alert("관리자 비밀번호와 2차 인증 코드를 입력해주세요.");
+  try {
+    const reports = await api(`/api/admin/reports?password=${encodeURIComponent(password)}&two_factor=${encodeURIComponent(twoFactor)}`);
+    const rows = reports.length ? reports.map((report) => `<article><header><b>${esc(report.reporter_name)}</b><small>${esc(report.created)}</small></header><p><strong>원문</strong> ${esc(report.original_text)}</p>${report.ai_result ? `<p><strong>AI 결과</strong> ${esc(report.ai_result)}</p>` : ""}</article>`).join("") : `<div class="empty-chat"><b>접수된 문의가 없어요</b><span>사용자가 AI 제안에 문의하면 이곳에 표시돼요.</span></div>`;
+    closePopup();
+    popup(`<div class="admin-reports report-list"><span>AI 문의 관리</span><h2>접수된 문의</h2><div>${rows}</div><button onclick="closePopup()">닫기</button></div>`);
+  } catch {
+    alert("관리자 인증 정보가 맞지 않거나 문의를 불러오지 못했어요.");
   }
 }
 function openAdminUserClear(id, encodedName) {

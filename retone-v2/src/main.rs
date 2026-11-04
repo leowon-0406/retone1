@@ -151,6 +151,11 @@ struct AdminLogin {
     two_factor: String,
 }
 #[derive(Deserialize)]
+struct AdminQuery {
+    password: String,
+    two_factor: String,
+}
+#[derive(Deserialize)]
 struct DeleteCredentials {
     name: String,
     password: String,
@@ -175,6 +180,15 @@ struct AiReport {
     reporter_name: String,
     original_text: String,
     ai_result: Option<String>,
+}
+#[derive(Serialize)]
+struct AdminReportOut {
+    id: String,
+    reporter_name: String,
+    original_text: String,
+    ai_result: Option<String>,
+    created: String,
+    status: String,
 }
 #[derive(Deserialize)]
 struct ConversationAnalysis {
@@ -1194,6 +1208,30 @@ async fn report_ai(
     sqlx::query("INSERT INTO retone_v2.ai_reports(id,reporter_name,original_text,ai_result) VALUES($1,$2,$3,$4)").bind(Uuid::new_v4()).bind(input.reporter_name.trim()).bind(input.original_text.trim()).bind(input.ai_result).execute(&app.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(serde_json::json!({"ok":true})))
 }
+async fn admin_reports(
+    State(app): State<App>,
+    Query(input): Query<AdminQuery>,
+) -> Result<Json<Vec<AdminReportOut>>, StatusCode> {
+    let password = env::var("RETONE_ADMIN_PASSWORD").unwrap_or_else(|_| "3612asdf!!".into());
+    let two_factor = env::var("RETONE_ADMIN_2FA").unwrap_or_else(|_| "7812".into());
+    if input.password != password || input.two_factor != two_factor {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    let rows = sqlx::query_as::<_, (Uuid, String, String, Option<String>, String, String)>("SELECT id,reporter_name,original_text,ai_result,TO_CHAR(created_at AT TIME ZONE 'Asia/Seoul','YYYY-MM-DD HH24:MI'),status FROM retone_v2.ai_reports ORDER BY created_at DESC LIMIT 80")
+        .fetch_all(&app.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(
+        rows.into_iter()
+            .map(|row| AdminReportOut {
+                id: row.0.to_string(),
+                reporter_name: row.1,
+                original_text: row.2,
+                ai_result: row.3,
+                created: row.4,
+                status: row.5,
+            })
+            .collect(),
+    ))
+}
 async fn bootstrap(State(app): State<App>, Query(session): Query<SessionQuery>) -> Json<DataOut> {
     let d = app.data.read().await;
     let mut rooms = d.rooms.clone();
@@ -1715,6 +1753,7 @@ async fn main() {
         .route("/api/ai/conversation-analysis", post(analyze_conversation))
         .route("/api/ai/support", post(ai_support))
         .route("/api/ai/reports", post(report_ai))
+        .route("/api/admin/reports", get(admin_reports))
         .route("/api/bootstrap", get(bootstrap))
         .route("/api/rooms", post(create_room))
         .route("/api/agreements", post(create_agreement))
