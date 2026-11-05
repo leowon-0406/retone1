@@ -96,6 +96,14 @@ CREATE TABLE IF NOT EXISTS retone_v2.blocks (
   CHECK(blocker_id <> blocked_id)
 );
 
+CREATE TABLE IF NOT EXISTS retone_v2.auth_sessions (
+  token UUID PRIMARY KEY,
+  user_id UUID NOT NULL REFERENCES retone_v2.users(id) ON DELETE CASCADE,
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS auth_sessions_user_id_idx ON retone_v2.auth_sessions(user_id);
+
 -- Safe for databases created before the information-check fields were added.
 ALTER TABLE retone_v2.ai_cache ADD COLUMN IF NOT EXISTS info_level TEXT NOT NULL DEFAULT 'none';
 ALTER TABLE retone_v2.ai_cache ADD COLUMN IF NOT EXISTS info_note TEXT;

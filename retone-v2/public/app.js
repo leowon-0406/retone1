@@ -4,6 +4,7 @@ let data = null,
   nav = "chat";
 let signedIn = sessionStorage.getItem("retone-v2-name") || "";
 let signedInId = sessionStorage.getItem("retone-v2-user-id") || "";
+let sessionToken = sessionStorage.getItem("retone-v2-session") || "";
 let isAdmin = sessionStorage.getItem("retone-v2-admin") === "yes";
 let aiIntervention = sessionStorage.getItem("retone-v2-ai-level") || "standard";
 let pendingSend = null;
@@ -207,9 +208,11 @@ function rememberAiResult(text, result) {
   } catch {}
 }
 async function api(url, options = {}) {
+  const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
+  if (sessionToken) headers.Authorization = `Bearer ${sessionToken}`;
   const r = await fetch(url, {
-    headers: { "Content-Type": "application/json" },
     ...options,
+    headers,
   });
   if (!r.ok) throw new Error();
   if (r.status === 204) return {};
@@ -676,11 +679,13 @@ function logout() {
   [
     "retone-v2-name",
     "retone-v2-user-id",
+    "retone-v2-session",
     "retone-v2-ai-level",
     "retone-v2-admin",
   ].forEach((k) => sessionStorage.removeItem(k));
   signedIn = "";
   signedInId = "";
+  sessionToken = "";
   isAdmin = false;
   start();
 }
@@ -1475,9 +1480,11 @@ function showAiPolicy() {
   );
 }
 function start() {
-  if (signedIn && !signedInId) {
-    sessionStorage.removeItem("retone-v2-name");
+  if (signedIn && (!signedInId || (!isAdmin && !sessionToken))) {
+    ["retone-v2-name", "retone-v2-user-id", "retone-v2-session", "retone-v2-ai-level"].forEach((key) => sessionStorage.removeItem(key));
     signedIn = "";
+    signedInId = "";
+    sessionToken = "";
   }
   // The administrator is not a database chat user. Restoring it through home()
   // would request a bootstrap for the synthetic "admin" id and hide the admin UI.
@@ -1672,7 +1679,7 @@ async function completeSignup() {
   };
   saveSensitivity(sensitivity);
   try {
-    const user = await api("/api/auth/signup", {
+    const auth = await api("/api/auth/signup", {
       method: "POST",
       body: JSON.stringify({
         name: signupDraft.name,
@@ -1681,9 +1688,12 @@ async function completeSignup() {
         ai_intervention: signupDraft.ai,
       }),
     });
+    const user = auth.user;
+    sessionToken = auth.session_token;
     signedIn = user.name;
     signedInId = user.id;
     aiIntervention = user.ai_intervention || "standard";
+    sessionStorage.setItem("retone-v2-session", sessionToken);
     sessionStorage.setItem("retone-v2-name", user.name);
     sessionStorage.setItem("retone-v2-user-id", user.id);
     sessionStorage.setItem("retone-v2-ai-level", aiIntervention);
@@ -1746,16 +1756,19 @@ async function finishAuth(mode) {
     );
   }
   try {
-    const user = await api(
+    const auth = await api(
       "/api/auth/" + (mode === "signup" ? "signup" : "login"),
       {
         method: "POST",
         body: JSON.stringify({ name, phone, password, ai_intervention: ai }),
       },
     );
+    const user = auth.user;
+    sessionToken = auth.session_token;
     signedIn = user.name;
     signedInId = user.id;
     aiIntervention = user.ai_intervention || "standard";
+    sessionStorage.setItem("retone-v2-session", sessionToken);
     sessionStorage.setItem("retone-v2-name", user.name);
     sessionStorage.setItem("retone-v2-user-id", user.id);
     sessionStorage.setItem("retone-v2-ai-level", aiIntervention);

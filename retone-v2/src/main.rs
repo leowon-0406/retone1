@@ -2,7 +2,7 @@ use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     routing::{delete, get, patch, post},
 };
 use chrono::Utc;
@@ -222,6 +222,37 @@ struct PublicUser {
     avatar_url: Option<String>,
     ai_intervention: String,
 }
+#[derive(Serialize)]
+struct AuthResponse {
+    user: PublicUser,
+    session_token: String,
+}
+async fn create_session(db: &PgPool, user_id: Uuid) -> Result<String, StatusCode> {
+    let token = Uuid::new_v4();
+    sqlx::query("INSERT INTO retone_v2.auth_sessions(token,user_id,expires_at) VALUES($1,$2,NOW()+INTERVAL '30 days')")
+        .bind(token)
+        .bind(user_id)
+        .execute(db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(token.to_string())
+}
+async fn require_user(app: &App, headers: &HeaderMap) -> Result<Uuid, StatusCode> {
+    let raw = headers
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+    let token = Uuid::parse_str(raw).map_err(|_| StatusCode::UNAUTHORIZED)?;
+    sqlx::query_scalar(
+        "SELECT user_id FROM retone_v2.auth_sessions WHERE token=$1 AND expires_at>NOW()",
+    )
+    .bind(token)
+    .fetch_optional(&app.db)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    .ok_or(StatusCode::UNAUTHORIZED)
+}
 fn phone_hash(phone: &str) -> String {
     format!(
         "phone:{}",
@@ -260,7 +291,7 @@ async fn health() -> Json<serde_json::Value> {
 async fn signup(
     State(app): State<App>,
     Json(input): Json<Credentials>,
-) -> Result<Json<PublicUser>, StatusCode> {
+) -> Result<Json<AuthResponse>, StatusCode> {
     let name = input.name.trim();
     let phone = phone_hash(&input.phone);
     if name.is_empty()
@@ -282,7 +313,11 @@ async fn signup(
     if result.is_err() {
         return Err(StatusCode::CONFLICT);
     };
-    Ok(Json(user_out(id, name.to_string(), None, level)))
+    let session_token = create_session(&app.db, id).await?;
+    Ok(Json(AuthResponse {
+        user: user_out(id, name.to_string(), None, level),
+        session_token,
+    }))
 }
 async fn phone_available(
     State(app): State<App>,
@@ -308,13 +343,17 @@ async fn phone_available(
 async fn login(
     State(app): State<App>,
     Json(input): Json<Credentials>,
-) -> Result<Json<PublicUser>, StatusCode> {
+) -> Result<Json<AuthResponse>, StatusCode> {
     let row=sqlx::query_as::<_,(Uuid,String,Option<String>,String,String)>("SELECT id,name,avatar_url,password_hash,ai_intervention FROM retone_v2.users WHERE phone_hash=$1 AND name=$2 AND deleted_at IS NULL").bind(phone_hash(&input.phone)).bind(input.name.trim()).fetch_optional(&app.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?.ok_or(StatusCode::UNAUTHORIZED)?;
     let parsed = PasswordHash::new(&row.3).map_err(|_| StatusCode::UNAUTHORIZED)?;
     Argon2::default()
         .verify_password(input.password.as_bytes(), &parsed)
         .map_err(|_| StatusCode::UNAUTHORIZED)?;
-    Ok(Json(user_out(row.0, row.1, row.2, row.4)))
+    let session_token = create_session(&app.db, row.0).await?;
+    Ok(Json(AuthResponse {
+        user: user_out(row.0, row.1, row.2, row.4),
+        session_token,
+    }))
 }
 async fn admin_login(Json(input): Json<AdminLogin>) -> Result<Json<PublicUser>, StatusCode> {
     let password = env::var("RETONE_ADMIN_PASSWORD").unwrap_or_else(|_| "3612asdf!!".into());
@@ -419,9 +458,9 @@ async fn users(State(app): State<App>) -> Result<Json<Vec<PublicUser>>, StatusCo
 }
 async fn friends(
     State(app): State<App>,
-    Query(session): Query<SessionQuery>,
+    headers: HeaderMap,
 ) -> Result<Json<FriendData>, StatusCode> {
-    let user_id = session.user_id.ok_or(StatusCode::UNAUTHORIZED)?;
+    let user_id = require_user(&app, &headers).await?;
     let friend_rows = sqlx::query_as::<_, (Uuid, String, Option<String>, String)>("SELECT u.id,u.name,u.avatar_url,u.ai_intervention FROM retone_v2.friendships f JOIN retone_v2.users u ON u.id=f.friend_id WHERE f.user_id=$1 AND u.deleted_at IS NULL ORDER BY u.name").bind(user_id).fetch_all(&app.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let incoming_rows = sqlx::query_as::<_, (Uuid, String, Option<String>, String)>("SELECT u.id,u.name,u.avatar_url,u.ai_intervention FROM retone_v2.friend_requests r JOIN retone_v2.users u ON u.id=r.from_id WHERE r.to_id=$1 AND u.deleted_at IS NULL ORDER BY r.created_at").bind(user_id).fetch_all(&app.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let outgoing_rows = sqlx::query_as::<_, (Uuid, String, Option<String>, String)>("SELECT u.id,u.name,u.avatar_url,u.ai_intervention FROM retone_v2.friend_requests r JOIN retone_v2.users u ON u.id=r.to_id WHERE r.from_id=$1 AND u.deleted_at IS NULL ORDER BY r.created_at").bind(user_id).fetch_all(&app.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -444,20 +483,22 @@ async fn friends(
 }
 async fn request_friend(
     State(app): State<App>,
+    headers: HeaderMap,
     Json(input): Json<RelationshipAction>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    if input.user_id == input.target_id {
+    let user_id = require_user(&app, &headers).await?;
+    if user_id == input.target_id {
         return Err(StatusCode::BAD_REQUEST);
     }
     let blocked: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM retone_v2.blocks WHERE (blocker_id=$1 AND blocked_id=$2) OR (blocker_id=$2 AND blocked_id=$1))")
-        .bind(input.user_id).bind(input.target_id).fetch_one(&app.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .bind(user_id).bind(input.target_id).fetch_one(&app.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     if blocked {
         return Err(StatusCode::FORBIDDEN);
     }
     sqlx::query(
         "INSERT INTO retone_v2.friend_requests(from_id,to_id) VALUES($1,$2) ON CONFLICT DO NOTHING",
     )
-    .bind(input.user_id)
+    .bind(user_id)
     .bind(input.target_id)
     .execute(&app.db)
     .await
@@ -466,8 +507,10 @@ async fn request_friend(
 }
 async fn accept_friend(
     State(app): State<App>,
+    headers: HeaderMap,
     Json(input): Json<RelationshipAction>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    let user_id = require_user(&app, &headers).await?;
     let mut tx = app
         .db
         .begin()
@@ -475,7 +518,7 @@ async fn accept_friend(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let requested =
         sqlx::query("DELETE FROM retone_v2.friend_requests WHERE from_id=$2 AND to_id=$1")
-            .bind(input.user_id)
+            .bind(user_id)
             .bind(input.target_id)
             .execute(&mut *tx)
             .await
@@ -485,7 +528,7 @@ async fn accept_friend(
         return Err(StatusCode::NOT_FOUND);
     }
     sqlx::query("INSERT INTO retone_v2.friendships(user_id,friend_id) VALUES($1,$2),($2,$1) ON CONFLICT DO NOTHING")
-        .bind(input.user_id).bind(input.target_id).execute(&mut *tx).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .bind(user_id).bind(input.target_id).execute(&mut *tx).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     tx.commit()
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -493,9 +536,11 @@ async fn accept_friend(
 }
 async fn block_user(
     State(app): State<App>,
+    headers: HeaderMap,
     Json(input): Json<RelationshipAction>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    if input.user_id == input.target_id {
+    let user_id = require_user(&app, &headers).await?;
+    if user_id == input.target_id {
         return Err(StatusCode::BAD_REQUEST);
     }
     let mut tx = app
@@ -506,13 +551,13 @@ async fn block_user(
     sqlx::query(
         "INSERT INTO retone_v2.blocks(blocker_id,blocked_id) VALUES($1,$2) ON CONFLICT DO NOTHING",
     )
-    .bind(input.user_id)
+    .bind(user_id)
     .bind(input.target_id)
     .execute(&mut *tx)
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    sqlx::query("DELETE FROM retone_v2.friend_requests WHERE (from_id=$1 AND to_id=$2) OR (from_id=$2 AND to_id=$1)").bind(input.user_id).bind(input.target_id).execute(&mut *tx).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    sqlx::query("DELETE FROM retone_v2.friendships WHERE (user_id=$1 AND friend_id=$2) OR (user_id=$2 AND friend_id=$1)").bind(input.user_id).bind(input.target_id).execute(&mut *tx).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    sqlx::query("DELETE FROM retone_v2.friend_requests WHERE (from_id=$1 AND to_id=$2) OR (from_id=$2 AND to_id=$1)").bind(user_id).bind(input.target_id).execute(&mut *tx).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    sqlx::query("DELETE FROM retone_v2.friendships WHERE (user_id=$1 AND friend_id=$2) OR (user_id=$2 AND friend_id=$1)").bind(user_id).bind(input.target_id).execute(&mut *tx).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     tx.commit()
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -536,8 +581,12 @@ async fn reset_v2(
 async fn delete_account(
     State(app): State<App>,
     Path(id): Path<Uuid>,
+    headers: HeaderMap,
     Json(input): Json<DeleteCredentials>,
 ) -> Result<StatusCode, StatusCode> {
+    if require_user(&app, &headers).await? != id {
+        return Err(StatusCode::FORBIDDEN);
+    }
     let row = sqlx::query_as::<_, (String,)>(
         "SELECT password_hash FROM retone_v2.users WHERE id=$1 AND name=$2 AND deleted_at IS NULL",
     )
@@ -557,8 +606,12 @@ async fn delete_account(
 async fn update_preferences(
     State(app): State<App>,
     Path(id): Path<Uuid>,
+    headers: HeaderMap,
     Json(input): Json<Preferences>,
 ) -> Result<Json<PublicUser>, StatusCode> {
+    if require_user(&app, &headers).await? != id {
+        return Err(StatusCode::FORBIDDEN);
+    }
     let level = ai_level(Some(&input.ai_intervention));
     let row=sqlx::query_as::<_,(Uuid,String,Option<String>,String)>("UPDATE retone_v2.users SET ai_intervention=$1 WHERE id=$2 AND deleted_at IS NULL RETURNING id,name,avatar_url,ai_intervention").bind(&level).bind(id).fetch_optional(&app.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?.ok_or(StatusCode::NOT_FOUND)?;
     Ok(Json(user_out(row.0, row.1, row.2, row.3)))
@@ -623,8 +676,12 @@ async fn check_image(Json(input): Json<ImageInput>) -> Result<Json<serde_json::V
 async fn update_avatar(
     State(app): State<App>,
     Path(id): Path<Uuid>,
+    headers: HeaderMap,
     Json(input): Json<ImageInput>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
+    if require_user(&app, &headers).await? != id {
+        return Err(StatusCode::FORBIDDEN);
+    }
     let result = moderate_image(&input.data_url).await?;
     let flagged = result["flagged"].as_bool().unwrap_or(true);
     let sexual = result["categories"]["sexual"].as_bool().unwrap_or(false)
@@ -1237,10 +1294,14 @@ async fn admin_reports(
             .collect(),
     ))
 }
-async fn bootstrap(State(app): State<App>, Query(session): Query<SessionQuery>) -> Json<DataOut> {
+async fn bootstrap(
+    State(app): State<App>,
+    headers: HeaderMap,
+) -> Result<Json<DataOut>, StatusCode> {
+    let user_id = require_user(&app, &headers).await?;
     let d = app.data.read().await;
     let mut rooms = d.rooms.clone();
-    if let Some(user_id) = session.user_id {
+    {
         if let Ok(member_rows) = sqlx::query_scalar::<_, Uuid>(
             "SELECT room_id FROM retone_v2.room_members WHERE user_id=$1",
         )
@@ -1260,16 +1321,14 @@ async fn bootstrap(State(app): State<App>, Query(session): Query<SessionQuery>) 
             let unread = rows.into_iter().map(|(id,count)|(id.to_string(),count.min(255) as u8)).collect::<HashMap<_,_>>();
             rooms.iter_mut().for_each(|room| room.unread = *unread.get(&room.id).unwrap_or(&0));
         }
-    } else {
-        rooms.clear();
     }
-    Json(DataOut {
+    Ok(Json(DataOut {
         rooms,
         agreements: d.agreements.clone(),
         appointments: d.appointments.clone(),
         reflections: d.reflections.clone(),
         insights: d.insights.clone(),
-    })
+    }))
 }
 #[derive(Serialize)]
 struct DataOut {
@@ -1282,10 +1341,10 @@ struct DataOut {
 async fn messages(
     State(app): State<App>,
     Path(id): Path<String>,
-    Query(session): Query<SessionQuery>,
+    headers: HeaderMap,
 ) -> Result<Json<Vec<Message>>, StatusCode> {
     let room_id = Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
-    let user_id = session.user_id.ok_or(StatusCode::UNAUTHORIZED)?;
+    let user_id = require_user(&app, &headers).await?;
     let member = sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS(SELECT 1 FROM retone_v2.room_members WHERE room_id=$1 AND user_id=$2)",
     )
@@ -1311,12 +1370,7 @@ async fn messages(
             .filter(|m| m.room_id == id)
             .cloned()
             .map(|mut message| {
-                message.mine = session
-                    .user_id
-                    .map(|user_id| {
-                        message.sender_id.as_deref() == Some(user_id.to_string().as_str())
-                    })
-                    .unwrap_or(false);
+                message.mine = message.sender_id.as_deref() == Some(user_id.to_string().as_str());
                 message
             })
             .collect(),
@@ -1348,17 +1402,14 @@ fn looks_like_alignment(text: &str) -> bool {
 async fn send(
     State(app): State<App>,
     Path(id): Path<String>,
+    headers: HeaderMap,
     Json(input): Json<Send>,
 ) -> Result<Json<Message>, StatusCode> {
     if input.body.trim().is_empty() && input.image_url.is_none() {
         return Err(StatusCode::BAD_REQUEST);
     }
-    let sender_id = input
-        .sender_id
-        .as_deref()
-        .and_then(|value| Uuid::parse_str(value).ok());
     let room_uuid = Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
-    let sender_id = sender_id.ok_or(StatusCode::UNAUTHORIZED)?;
+    let sender_id = require_user(&app, &headers).await?;
     let member = sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS(SELECT 1 FROM retone_v2.room_members WHERE room_id=$1 AND user_id=$2)",
     )
@@ -1377,7 +1428,14 @@ async fn send(
     let message = Message {
         id: Uuid::new_v4().to_string(),
         room_id: id.clone(),
-        sender: input.sender,
+        sender: sqlx::query_scalar(
+            "SELECT name FROM retone_v2.users WHERE id=$1 AND deleted_at IS NULL",
+        )
+        .bind(sender_id)
+        .fetch_optional(&app.db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::UNAUTHORIZED)?,
         sender_id: Some(sender_id.to_string()),
         mine: true,
         body: input.body.trim().to_string(),
@@ -1494,7 +1552,7 @@ async fn create_conversation_insight(
 async fn delete_message(
     State(app): State<App>,
     Path((room_id, message_id)): Path<(String, String)>,
-    Query(session): Query<SessionQuery>,
+    headers: HeaderMap,
 ) -> StatusCode {
     let room_uuid = match Uuid::parse_str(&room_id) {
         Ok(value) => value,
@@ -1504,8 +1562,9 @@ async fn delete_message(
         Ok(value) => value,
         Err(_) => return StatusCode::BAD_REQUEST,
     };
-    let Some(user_id) = session.user_id else {
-        return StatusCode::UNAUTHORIZED;
+    let user_id = match require_user(&app, &headers).await {
+        Ok(id) => id,
+        Err(status) => return status,
     };
     let persisted = sqlx::query("UPDATE retone_v2.messages SET deleted_at=NOW() WHERE id=$1 AND room_id=$2 AND sender_id=$3 AND deleted_at IS NULL").bind(message_uuid).bind(room_uuid).bind(user_id).execute(&app.db).await;
     if persisted.map(|result| result.rows_affected()).unwrap_or(0) == 0 {
@@ -1527,9 +1586,9 @@ async fn delete_message(
 async fn leave_room(
     State(app): State<App>,
     Path(room_id): Path<Uuid>,
-    Query(session): Query<SessionQuery>,
+    headers: HeaderMap,
 ) -> Result<StatusCode, StatusCode> {
-    let user_id = session.user_id.ok_or(StatusCode::UNAUTHORIZED)?;
+    let user_id = require_user(&app, &headers).await?;
     let removed = sqlx::query("DELETE FROM retone_v2.room_members WHERE room_id=$1 AND user_id=$2")
         .bind(room_id)
         .bind(user_id)
@@ -1555,16 +1614,18 @@ async fn leave_room(
 async fn add_room_members(
     State(app): State<App>,
     Path(room_id): Path<Uuid>,
+    headers: HeaderMap,
     Json(input): Json<AddRoomMembers>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     if input.invitee_ids.is_empty() || input.invitee_ids.len() > 99 {
         return Err(StatusCode::BAD_REQUEST);
     }
+    let inviter_id = require_user(&app, &headers).await?;
     let inviter_is_member: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM retone_v2.room_members WHERE room_id=$1 AND user_id=$2)",
     )
     .bind(room_id)
-    .bind(input.inviter_id)
+    .bind(inviter_id)
     .fetch_one(&app.db)
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -1575,12 +1636,12 @@ async fn add_room_members(
     let mut invitees = input.invitee_ids;
     invitees.sort_unstable();
     invitees.dedup();
-    invitees.retain(|id| *id != input.inviter_id);
+    invitees.retain(|id| *id != inviter_id);
     for invitee_id in &invitees {
         let are_friends: bool = sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM retone_v2.friendships WHERE user_id=$1 AND friend_id=$2)",
         )
-        .bind(input.inviter_id)
+        .bind(inviter_id)
         .bind(*invitee_id)
         .fetch_one(&app.db)
         .await
@@ -1619,6 +1680,7 @@ async fn add_room_members(
 }
 async fn create_room(
     State(app): State<App>,
+    headers: HeaderMap,
     Json(input): Json<NewRoom>,
 ) -> Result<Json<Room>, StatusCode> {
     let name = input.name.trim();
@@ -1635,11 +1697,7 @@ async fn create_room(
         last: "새 대화를 시작해 보세요.".into(),
         updated: Utc::now().timestamp_millis(),
     };
-    let creator = input
-        .creator_id
-        .as_deref()
-        .and_then(|value| Uuid::parse_str(value).ok());
-    let creator = creator.ok_or(StatusCode::UNAUTHORIZED)?;
+    let creator = require_user(&app, &headers).await?;
     for invitee in &invitees {
         let invitee_id = Uuid::parse_str(invitee).map_err(|_| StatusCode::BAD_REQUEST)?;
         let are_friends: bool = sqlx::query_scalar(
