@@ -107,10 +107,12 @@ CREATE INDEX IF NOT EXISTS auth_sessions_user_id_idx ON retone_v2.auth_sessions(
 CREATE TABLE IF NOT EXISTS retone_v2.message_reactions (
   message_id UUID REFERENCES retone_v2.messages(id) ON DELETE CASCADE,
   user_id UUID REFERENCES retone_v2.users(id) ON DELETE CASCADE,
-  emoji TEXT NOT NULL CHECK (emoji IN ('👍', '❤️', '😂', '✅')),
+  emoji TEXT NOT NULL CHECK (emoji IN ('👍', '❤️', '😂', '👏')),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   PRIMARY KEY(message_id, user_id, emoji)
 );
+ALTER TABLE retone_v2.message_reactions DROP CONSTRAINT IF EXISTS message_reactions_emoji_check;
+ALTER TABLE retone_v2.message_reactions ADD CONSTRAINT message_reactions_emoji_check CHECK (emoji IN ('👍', '❤️', '😂', '👏', '✅'));
 
 -- Safe for databases created before the information-check fields were added.
 ALTER TABLE retone_v2.ai_cache ADD COLUMN IF NOT EXISTS info_level TEXT NOT NULL DEFAULT 'none';

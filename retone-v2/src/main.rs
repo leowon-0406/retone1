@@ -1504,7 +1504,7 @@ async fn toggle_reaction(
     headers: HeaderMap,
     Json(input): Json<ReactionInput>,
 ) -> Result<Json<Vec<Reaction>>, StatusCode> {
-    if !["👍", "❤️", "😂", "✅"].contains(&input.emoji.as_str()) {
+    if !["👍", "❤️", "😂", "👏"].contains(&input.emoji.as_str()) {
         return Err(StatusCode::BAD_REQUEST);
     }
     let user_id = require_user(&app, &headers).await?;
