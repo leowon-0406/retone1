@@ -600,6 +600,11 @@ async fn delete_account(
     Argon2::default()
         .verify_password(input.password.as_bytes(), &parsed)
         .map_err(|_| StatusCode::UNAUTHORIZED)?;
+    sqlx::query("DELETE FROM retone_v2.auth_sessions WHERE user_id=$1")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     sqlx::query("UPDATE retone_v2.users SET deleted_at=NOW(),name='탈퇴한 사용자',avatar_url=NULL WHERE id=$1").bind(id).execute(&app.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(StatusCode::NO_CONTENT)
 }
