@@ -259,7 +259,7 @@ async function openRoom(id) {
       "",
     )}</section><form class="sendbar" onsubmit="send(event)"><button type="button" class="intent-button" title="의도 표시" onclick="chooseIntent()">${selectedIntent ? "◎" : "＋"}</button><label class="image-upload" title="사진 보내기" aria-label="사진 보내기"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="3"/><circle cx="9" cy="10" r="1.5"/><path d="m5.5 17 4.5-4 3.2 2.7 2.4-2 2.9 3.3"/></svg><input hidden type="file" accept="image/*" onchange="sendImage(this)"></label><input id="text" placeholder="메시지를 입력하세요" autocomplete="off" oninput="queueAiCheck(this.value)"><span id="ai-status" class="ai-status"></span><button>↑</button></form></section></main>`;
   document.querySelector("#messages").scrollTop = 999999;
-  startRoomPolling(id, messages.length);
+  startRoomPolling(id, messages);
   queueFactChecks(messages);
 }
 function stopRoomPolling() {
@@ -268,16 +268,21 @@ function stopRoomPolling() {
     roomPollTimer = null;
   }
 }
-function startRoomPolling(id, initialCount) {
+function startRoomPolling(id, initialMessages) {
+  let knownCount = initialMessages.length;
+  let knownReactions = JSON.stringify(initialMessages.map((message) => [message.id, message.reactions || []]));
   roomPollTimer = setInterval(async () => {
     if (roomId !== id) return;
     try {
       const latest = await api(
         `/api/rooms/${id}/messages?user_id=${encodeURIComponent(signedInId)}`,
       );
-      if (latest.length !== initialCount) {
-        const incoming = latest.slice(initialCount).filter((message) => !message.mine);
+      const latestReactions = JSON.stringify(latest.map((message) => [message.id, message.reactions || []]));
+      if (latest.length !== knownCount || latestReactions !== knownReactions) {
+        const incoming = latest.slice(knownCount).filter((message) => !message.mine);
         incoming.forEach((message) => notifyNewMessage(message));
+        knownCount = latest.length;
+        knownReactions = latestReactions;
         openRoom(id);
       }
     } catch {}
@@ -779,7 +784,20 @@ function view(m) {
     finding?.status === "check"
       ? `<button class="fact-cue" title="출처 확인 안내" onclick="event.stopPropagation();openFactFinding('${m.id}')">ⓘ</button>`
       : "";
-  return `<article class="bubble ${m.mine ? "mine" : ""}" ${m.mine ? "" : `onclick="inspectMessage(${JSON.stringify(m.body)})"`}><div class="meta">${esc(m.sender)}${m.intent ? ` · <span class="intent-tag">${esc(m.intent)}</span>` : ""}</div>${m.image_url ? `<img class="chat-image" src="${m.image_url}" alt="보낸 사진">` : ""}${m.body ? `<span>${esc(m.body)}</span>` : ""}${factCue}${m.mine && m.unread ? `<span class="read">${m.unread}</span>` : ""}${m.mine ? `<button class="delete-message" title="메시지 삭제" onclick="removeMessage('${m.id}')">×</button>` : ""}</article>`;
+  const reactions = m.reactions || [];
+  const reactionBar = `<div class="reaction-bar" onclick="event.stopPropagation()"><div class="reaction-list">${reactions.map((reaction) => `<button class="reaction-count ${reaction.mine ? "mine" : ""}" onclick="toggleReaction('${m.room_id}','${m.id}','${reaction.emoji}')">${reaction.emoji} <b>${reaction.count}</b></button>`).join("")}</div><div class="reaction-picker">${["👍", "❤️", "😂", "✅"].map((emoji) => `<button title="${emoji} 반응" onclick="toggleReaction('${m.room_id}','${m.id}','${emoji}')">${emoji}</button>`).join("")}</div></div>`;
+  return `<article class="bubble ${m.mine ? "mine" : ""}" ${m.mine ? "" : `onclick="inspectMessage(${JSON.stringify(m.body)})"`}><div class="meta">${esc(m.sender)}${m.intent ? ` · <span class="intent-tag">${esc(m.intent)}</span>` : ""}</div>${m.image_url ? `<img class="chat-image" src="${m.image_url}" alt="보낸 사진">` : ""}${m.body ? `<span>${esc(m.body)}</span>` : ""}${factCue}${m.mine && m.unread ? `<span class="read">${m.unread}</span>` : ""}${m.mine ? `<button class="delete-message" title="메시지 삭제" onclick="removeMessage('${m.id}')">×</button>` : ""}${reactionBar}</article>`;
+}
+async function toggleReaction(room, message, emoji) {
+  try {
+    await api(`/api/rooms/${room}/messages/${message}/reactions`, {
+      method: "POST",
+      body: JSON.stringify({ emoji }),
+    });
+    if (roomId === room) openRoom(room);
+  } catch {
+    alert("반응을 저장하지 못했어요. 잠시 후 다시 시도해주세요.");
+  }
 }
 function toneCard(messages) {
   const joined = messages.map((message) => message.body).join(" ");
