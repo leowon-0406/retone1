@@ -172,6 +172,12 @@ struct AdminLogin {
     two_factor: String,
 }
 #[derive(Deserialize)]
+struct AdminReset {
+    password: String,
+    two_factor: String,
+    confirmation: String,
+}
+#[derive(Deserialize)]
 struct AdminQuery {
     password: String,
     two_factor: String,
@@ -441,14 +447,19 @@ async fn admin_login(
 }
 async fn clear_user_data(
     State(app): State<App>,
-    Json(input): Json<AdminLogin>,
+    headers: HeaderMap,
+    Json(input): Json<AdminReset>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let password = env::var("RETONE_ADMIN_PASSWORD").unwrap_or_else(|_| "3612asdf!!".into());
     let two_factor = env::var("RETONE_ADMIN_2FA").unwrap_or_else(|_| "7812".into());
     if input.password != password || input.two_factor != two_factor {
         return Err(StatusCode::UNAUTHORIZED);
     }
-    sqlx::query("TRUNCATE TABLE retone_v2.ai_reports,retone_v2.appointments,retone_v2.agreements,retone_v2.messages,retone_v2.room_members,retone_v2.rooms,retone_v2.users RESTART IDENTITY CASCADE")
+    if input.confirmation.trim() != "초기화" {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    check_or_lock_admin_ip(&app, &headers, false).await?;
+    sqlx::query("TRUNCATE TABLE retone_v2.ai_reports,retone_v2.ai_cache,retone_v2.appointments,retone_v2.agreements,retone_v2.message_reactions,retone_v2.messages,retone_v2.room_members,retone_v2.rooms,retone_v2.friend_requests,retone_v2.friendships,retone_v2.blocks,retone_v2.auth_sessions,retone_v2.users RESTART IDENTITY CASCADE")
         .execute(&app.db)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -460,7 +471,7 @@ async fn clear_user_data(
     data.reflections.clear();
     data.insights.clear();
     Ok(Json(
-        serde_json::json!({"ok":true,"ai_cache_preserved":true}),
+        serde_json::json!({"ok":true,"admin_ip_lock_preserved":true}),
     ))
 }
 async fn clear_single_user(

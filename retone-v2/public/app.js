@@ -409,7 +409,7 @@ function settings() {
   stopRoomPolling();
   nav = "settings";
   if (isAdmin) {
-    app.innerHTML = `<main class="layout">${rail()}<section class="page"><header class="head"><h1>관리자</h1></header><div class="content"><div class="intro"><h2>Re:Tone 관리자 계정</h2><p>사용자별 계정과 AI 문의를 관리하는 공간이에요.</p></div><section class="admin-panel"><b>관리자 로그인 완료</b><span>일반 사용자 대화에는 관리자 권한이 자동으로 개입하지 않아요.</span><button onclick="openAdminReports()">AI 문의 확인</button></section><section class="admin-users"><div><b>가입 사용자</b><span>초기화할 계정을 개별로 선택하세요.</span></div><div id="admin-users-list" class="admin-users-list"><small>사용자 목록을 불러오는 중…</small></div></section><button class="room" onclick="logout()"><span class="avatar">↪</span><span class="copy"><b>로그아웃</b><span>관리자 세션을 안전하게 종료해요.</span></span></button></div></section></main>`;
+    app.innerHTML = `<main class="layout">${rail()}<section class="page"><header class="head"><h1>관리자</h1></header><div class="content"><div class="intro"><h2>Re:Tone 관리자 계정</h2><p>사용자별 계정과 AI 문의를 관리하는 공간이에요.</p></div><section class="admin-panel"><b>관리자 로그인 완료</b><span>일반 사용자 대화에는 관리자 권한이 자동으로 개입하지 않아요.</span><button onclick="openAdminReports()">AI 문의 확인</button></section><section class="admin-users"><div><b>가입 사용자</b><span>초기화할 계정을 개별로 선택하세요.</span></div><div id="admin-users-list" class="admin-users-list"><small>사용자 목록을 불러오는 중…</small></div></section><section class="admin-danger"><b>전체 서비스 데이터 초기화</b><p>모든 계정, 친구 관계, 채팅, 사진, 일정, 반응, AI 문의와 확인 기록을 삭제합니다. 관리자 IP 잠금은 유지됩니다.</p><button onclick="openGlobalReset()">전체 데이터 초기화</button></section><button class="room" onclick="logout()"><span class="avatar">↪</span><span class="copy"><b>로그아웃</b><span>관리자 세션을 안전하게 종료해요.</span></span></button></div></section></main>`;
     renderAdminUsers();
     return;
   }
@@ -474,6 +474,40 @@ async function loadAdminReports() {
     popup(`<div class="admin-reports report-list"><span>AI 문의 관리</span><h2>접수된 문의</h2><div>${rows}</div><button onclick="closePopup()">닫기</button></div>`);
   } catch {
     alert("관리자 인증 정보가 맞지 않거나 문의를 불러오지 못했어요.");
+  }
+}
+function openGlobalReset() {
+  popup(
+    `<div class="delete-account-card global-reset-card"><div class="delete-account-icon">!</div><span>되돌릴 수 없는 관리자 작업</span><h2>전체 서비스 데이터를 초기화할까요?</h2><p>모든 계정, 친구 관계, 채팅방, 메시지, 사진, 일정, 반응, AI 문의와 확인 기록을 삭제해요. 관리자 접근 IP 잠금은 유지돼요.</p><label>관리자 비밀번호<input id="global-reset-password" type="password" placeholder="관리자 비밀번호를 입력해주세요"></label><label>2차 인증 코드<input id="global-reset-two-factor" type="password" inputmode="numeric" placeholder="2차 인증 코드를 입력해주세요"></label><label>확인 문구<input id="global-reset-confirmation" placeholder="초기화 를 입력해주세요"></label><small>실행하려면 위 칸에 <b>초기화</b>를 정확히 입력해주세요.</small><div class="modal-actions"><button class="quiet" onclick="closePopup()">취소</button><button class="danger-action" id="global-reset-action" onclick="confirmGlobalReset()">전체 초기화</button></div></div>`,
+  );
+}
+async function confirmGlobalReset() {
+  const password = document.querySelector("#global-reset-password")?.value || "";
+  const two_factor = document.querySelector("#global-reset-two-factor")?.value || "";
+  const confirmation = document.querySelector("#global-reset-confirmation")?.value || "";
+  if (!password || !two_factor) return alert("관리자 비밀번호와 2차 인증 코드를 모두 입력해주세요.");
+  if (confirmation.trim() !== "초기화") return alert("확인 문구로 ‘초기화’를 정확히 입력해주세요.");
+  const action = document.querySelector("#global-reset-action");
+  if (action) {
+    action.disabled = true;
+    action.textContent = "초기화 중…";
+  }
+  try {
+    const result = await api("/api/admin/clear-user-data", {
+      method: "POST",
+      body: JSON.stringify({ password, two_factor, confirmation }),
+    });
+    if (!result.ok) throw new Error();
+    closePopup();
+    popup(
+      `<div class="ai-check info"><h2>전체 초기화가 완료됐어요.</h2><p>계정과 소통 데이터, AI 확인 기록을 모두 삭제했어요. 관리자 접근 IP 잠금은 유지돼요.</p><button onclick="closePopup();settings()">확인</button></div>`,
+    );
+  } catch {
+    if (action) {
+      action.disabled = false;
+      action.textContent = "전체 초기화";
+    }
+    alert("초기화하지 못했어요. 관리자 인증 정보와 현재 접속 IP를 확인해주세요.");
   }
 }
 function openAdminUserClear(id, encodedName) {
