@@ -55,7 +55,7 @@ const sensitivityKeys = [
   "말맞춤 카드",
   "대화 흐름 요약",
   "이미지 안전 안내",
-  "대화 온도 타임라인",
+  "대화 흐름 참고",
   "대화 복구 문장",
 ];
 function sensitivityState() {
@@ -88,7 +88,7 @@ function sensitivityWord(name, value) {
   if (value <= 0) return "끄기";
   if (["입력 중 선검사", "확인 결과 재사용"].includes(name)) return "켜기";
   if (
-    ["이미지 안전 안내", "대화 온도 타임라인", "대화 복구 문장"].includes(name)
+    ["이미지 안전 안내", "대화 흐름 참고", "대화 복구 문장"].includes(name)
   )
     return value >= 70 ? "민감하게" : "필요할 때";
   if (["표현 바꾸기", "감정 도움 AI"].includes(name))
@@ -144,7 +144,7 @@ const aiDetails = (useRoomOverride = true) => {
     attack: ["강한 공격 표현"],
     tone: ["비꼼·압박 표현"],
     source: ["출처 확인 제안"],
-    flow: ["말맞춤 카드", "대화 흐름 요약", "대화 온도 타임라인", "대화 복구 문장"],
+    flow: ["말맞춤 카드", "대화 흐름 요약", "대화 흐름 참고", "대화 복구 문장"],
     help: ["감정 도움 AI", "표현 바꾸기"],
     image: ["이미지 안전 안내"],
   };
@@ -536,8 +536,8 @@ const aiCategories = [
     ["끄기", "필요할 때", "민감하게"],
   ],
   [
-    "대화 온도 타임라인",
-    "대화의 분위기 흐름을 작게 보여줘요. 알림이나 판단은 하지 않아요.",
+    "대화 흐름 참고",
+    "표현이 반복해서 엇갈릴 수 있을 때만 작게 알려줘요. 감정이나 잘잘못을 판단하지 않아요.",
     ["끄기", "필요할 때", "민감하게"],
   ],
   [
@@ -566,7 +566,7 @@ const aiGroups = [
       "확인 결과 재사용",
       "말맞춤 카드",
       "대화 흐름 요약",
-      "대화 온도 타임라인",
+      "대화 흐름 참고",
       "대화 복구 문장",
     ],
   ],
@@ -801,48 +801,33 @@ async function toggleReaction(room, message, emoji) {
   }
 }
 function toneCard(messages) {
-  const joined = messages.map((message) => message.body).join(" ");
-  const tense =
-    /(시발|씨발|병신|꺼져|죽어|닥쳐|최악|짜증|한심|왜이래|뭐하냐)/.test(joined);
-  const careful = /(근데|아니|왜|서운|답답|미안|오해)/.test(joined);
-  const tone = tense
-    ? [
-        "조심스러움",
-        "최근 대화에 강한 표현이 있었어요. 누가 문제인지 정하지 않고, 서로의 의도를 한 번 확인해 볼까요?",
-      ]
-    : careful
-      ? [
-          "오해 가능성",
-          "조금 다른 뜻으로 읽힐 수 있는 대화예요. 필요하면 의도 확인이나 갈등 전환 카드를 열어 보세요.",
-        ]
-      : ["편안함", "현재 대화는 비교적 편안하게 이어지고 있어요."];
-  return `<button class="tone-card ${tense ? "careful" : ""}" onclick="openConflictGuide()"><span>대화 온도 · ${tone[0]}</span><b>${tone[1]}</b><small>누구를 평가하지 않는 대화 흐름 안내 · 눌러서 함께 정리하기</small></button>`;
+  const strongCount = conversationSignals(messages).filter((signal) => signal === 2).length;
+  if (strongCount < 2) return "";
+  return `<button class="tone-card careful" onclick="openConflictGuide()"><span>대화 흐름 참고</span><b>강한 표현이 반복되어, 서로의 의도가 엇갈릴 수 있어요.</b><small>누가 잘못했는지 판단하지 않아요 · 필요할 때만 눌러 정리해 보세요</small></button>`;
+}
+function conversationSignals(messages) {
+  return messages.slice(-8).map((message) => {
+    const text = message.body || "";
+    if (/(시발|씨발|병신|꺼져|죽어|닥쳐|개새|좆|한심해|최악이야|뭐하는거야)/.test(text)) return 2;
+    if (/(서운해|답답해|오해한 것 같|말이 안|무슨 말이야|왜 그렇게 말해)/.test(text)) return 1;
+    return 0;
+  });
 }
 function emotionTimeline(messages) {
-  if (aiDetails()["대화 온도 타임라인"] === "끄기" || messages.length < 3)
+  if (aiDetails()["대화 흐름 참고"] === "끄기" || messages.length < 6)
     return "";
   const recent = messages.slice(-8);
-  const score = (text) =>
-    /(고마워|좋아|괜찮|미안|축하|ㅎㅎ|ㅋㅋ|도와|수고)/.test(text)
-      ? 1
-      : /(시발|씨발|병신|꺼져|죽어|닥쳐|짜증|최악|한심|왜이래|뭐하냐)/.test(
-            text,
-          )
-        ? -2
-        : /(근데|아니|왜|서운|답답|오해)/.test(text)
-          ? -1
-          : 0;
-  const points = recent.map((m) => score(m.body || ""));
-  const average = points.reduce((sum, value) => sum + value, 0) / points.length;
-  const label =
-    average <= -1 ? "조금 조심스러움" : average >= 0.5 ? "편안함" : "차분함";
+  const points = conversationSignals(recent);
+  const signalCount = points.filter(Boolean).length;
+  const strongCount = points.filter((point) => point === 2).length;
+  if (signalCount < 2) return "";
   const recovery =
-    average <= -1 &&
+    strongCount >= 2 &&
     aiDetails()["대화 복구 문장"] !== "끄기" &&
     !localStorage.getItem(`retone-recovery-dismissed-${roomId}`)
       ? `<button onclick="fillRecoveryMessage()">부드럽게 이어가기</button><i onclick="dismissRecoveryMessage()">×</i>`
       : "";
-  return `<section class="emotion-timeline" title="최근 메시지의 단어 흐름을 단순히 요약한 표시예요. 누구의 감정이나 잘잘못을 판단하지 않아요."><span>대화 온도 · ${label}</span><div>${points.map((point) => `<i class="${point < 0 ? "low" : point > 0 ? "high" : "mid"}"></i>`).join("")}</div>${recovery}</section>`;
+  return `<section class="emotion-timeline" title="최근 표현 중 일부가 서로 다르게 읽힐 수 있다는 참고 표시예요. 감정이나 잘잘못을 판단하지 않아요."><span>대화 흐름 참고</span><div>${points.map((point) => `<i class="${point ? "low" : "mid"}"></i>`).join("")}</div>${recovery}</section>`;
 }
 function fillRecoveryMessage() {
   const input = document.querySelector("#text");
