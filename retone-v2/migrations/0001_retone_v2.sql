@@ -104,6 +104,12 @@ CREATE TABLE IF NOT EXISTS retone_v2.auth_sessions (
 );
 CREATE INDEX IF NOT EXISTS auth_sessions_user_id_idx ON retone_v2.auth_sessions(user_id);
 
+CREATE TABLE IF NOT EXISTS retone_v2.admin_ip_lock (
+  id SMALLINT PRIMARY KEY CHECK (id = 1),
+  allowed_ip TEXT NOT NULL,
+  locked_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 CREATE TABLE IF NOT EXISTS retone_v2.message_reactions (
   message_id UUID REFERENCES retone_v2.messages(id) ON DELETE CASCADE,
   user_id UUID REFERENCES retone_v2.users(id) ON DELETE CASCADE,

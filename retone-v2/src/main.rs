@@ -12,7 +12,12 @@ use serde::{Deserialize, Serialize};
 use sha1::Sha1;
 use sha2::{Digest, Sha256};
 use sqlx::{PgPool, postgres::PgPoolOptions};
-use std::{collections::HashMap, env, net::SocketAddr, sync::Arc};
+use std::{
+    collections::HashMap,
+    env,
+    net::{IpAddr, SocketAddr},
+    sync::Arc,
+};
 use tokio::sync::RwLock;
 use tower_http::services::ServeDir;
 use uuid::Uuid;
@@ -264,6 +269,56 @@ async fn require_user(app: &App, headers: &HeaderMap) -> Result<Uuid, StatusCode
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
     .ok_or(StatusCode::UNAUTHORIZED)
 }
+fn client_ip(headers: &HeaderMap) -> Result<String, StatusCode> {
+    let raw = headers
+        .get("x-forwarded-for")
+        .or_else(|| headers.get("x-real-ip"))
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(',').next())
+        .map(str::trim)
+        .ok_or(StatusCode::FORBIDDEN)?;
+    raw.parse::<IpAddr>()
+        .map(|ip| ip.to_string())
+        .map_err(|_| StatusCode::FORBIDDEN)
+}
+async fn check_or_lock_admin_ip(
+    app: &App,
+    headers: &HeaderMap,
+    lock_if_empty: bool,
+) -> Result<(), StatusCode> {
+    let ip = client_ip(headers)?;
+    if let Ok(configured) = env::var("RETONE_ADMIN_ALLOWED_IP") {
+        return if configured.trim() == ip {
+            Ok(())
+        } else {
+            Err(StatusCode::FORBIDDEN)
+        };
+    }
+    let existing: Option<String> =
+        sqlx::query_scalar("SELECT allowed_ip FROM retone_v2.admin_ip_lock WHERE id=1")
+            .fetch_optional(&app.db)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    match existing {
+        Some(allowed) if allowed == ip => Ok(()),
+        Some(_) => Err(StatusCode::FORBIDDEN),
+        None if lock_if_empty => {
+            sqlx::query("INSERT INTO retone_v2.admin_ip_lock(id,allowed_ip) VALUES(1,$1) ON CONFLICT (id) DO NOTHING")
+                .bind(ip).execute(&app.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            let allowed: String =
+                sqlx::query_scalar("SELECT allowed_ip FROM retone_v2.admin_ip_lock WHERE id=1")
+                    .fetch_one(&app.db)
+                    .await
+                    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            if allowed == client_ip(headers)? {
+                Ok(())
+            } else {
+                Err(StatusCode::FORBIDDEN)
+            }
+        }
+        None => Err(StatusCode::FORBIDDEN),
+    }
+}
 fn phone_hash(phone: &str) -> String {
     format!(
         "phone:{}",
@@ -366,12 +421,17 @@ async fn login(
         session_token,
     }))
 }
-async fn admin_login(Json(input): Json<AdminLogin>) -> Result<Json<PublicUser>, StatusCode> {
+async fn admin_login(
+    State(app): State<App>,
+    headers: HeaderMap,
+    Json(input): Json<AdminLogin>,
+) -> Result<Json<PublicUser>, StatusCode> {
     let password = env::var("RETONE_ADMIN_PASSWORD").unwrap_or_else(|_| "3612asdf!!".into());
     let two_factor = env::var("RETONE_ADMIN_2FA").unwrap_or_else(|_| "7812".into());
     if input.password != password || input.two_factor != two_factor {
         return Err(StatusCode::UNAUTHORIZED);
     }
+    check_or_lock_admin_ip(&app, &headers, true).await?;
     Ok(Json(PublicUser {
         id: "admin".into(),
         name: "Re:Tone 관리자".into(),
@@ -1288,6 +1348,7 @@ async fn report_ai(
 }
 async fn admin_reports(
     State(app): State<App>,
+    headers: HeaderMap,
     Query(input): Query<AdminQuery>,
 ) -> Result<Json<Vec<AdminReportOut>>, StatusCode> {
     let password = env::var("RETONE_ADMIN_PASSWORD").unwrap_or_else(|_| "3612asdf!!".into());
@@ -1295,6 +1356,7 @@ async fn admin_reports(
     if input.password != password || input.two_factor != two_factor {
         return Err(StatusCode::UNAUTHORIZED);
     }
+    check_or_lock_admin_ip(&app, &headers, false).await?;
     let rows = sqlx::query_as::<_, (Uuid, String, String, Option<String>, String, String)>("SELECT id,reporter_name,original_text,ai_result,TO_CHAR(created_at AT TIME ZONE 'Asia/Seoul','YYYY-MM-DD HH24:MI'),status FROM retone_v2.ai_reports ORDER BY created_at DESC LIMIT 80")
         .fetch_all(&app.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(

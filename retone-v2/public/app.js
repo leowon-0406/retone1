@@ -72,17 +72,36 @@ function sensitivityState() {
         ]),
       ),
       overrides: saved.overrides || {},
+      learning: saved.learning || {},
     };
   } catch {
     return {
       overall: 50,
       categories: Object.fromEntries(sensitivityKeys.map((key) => [key, 50])),
       overrides: {},
+      learning: {},
     };
   }
 }
 function saveSensitivity(state) {
   localStorage.setItem("retone-ai-sensitivity", JSON.stringify(state));
+}
+function learnFromSendAnyway(category) {
+  const state = sensitivityState();
+  const learning = state.learning[category] || { bypasses: 0, adjustments: 0 };
+  learning.bypasses += 1;
+  if (learning.bypasses % 3 === 0 && state.categories[category] > 15) {
+    state.categories[category] = Math.max(15, state.categories[category] - 5);
+    learning.adjustments += 1;
+  }
+  state.learning[category] = learning;
+  saveSensitivity(state);
+}
+function learningNote() {
+  const entries = Object.entries(sensitivityState().learning || {}).filter(([, value]) => value.bypasses);
+  if (!entries.length) return "‘그냥 보내기’ 선택이 쌓이면 같은 종류의 경고를 조금 덜 보여줘요.";
+  const [name, value] = entries.sort((a, b) => b[1].bypasses - a[1].bypasses)[0];
+  return `최근 ‘${name}’ 경고를 ${value.bypasses}번 그냥 보냈어요. 이 선택은 이 기기에서만 민감도 조절에 반영돼요.`;
 }
 function sensitivityWord(name, value) {
   if (value <= 0) return "끄기";
@@ -580,7 +599,7 @@ function renderDetailedAiSettings() {
     const [, desc, options] = aiCategories.find(([title]) => title === name);
     return `<article class="ai-category"><span><b>${name}</b><small>${desc}</small></span><div class="ai-choice-row">${options.map((option) => `<button class="${saved[name] === option ? "selected" : ""}" onclick="saveAiDetail('${name}','${option}')">${option}</button>`).join("")}</div></article>`;
   };
-  root.innerHTML = `<section class="overall-sensitivity"><span>기본 AI 민감도</span><b id="overall-sensitivity-label">${sensitivityLabel(sensitivity.overall)} · ${sensitivity.overall}</b><input type="range" min="0" max="100" value="${sensitivity.overall}" style="--sensitivity:${sensitivity.overall}%" oninput="previewOverallSensitivity(this.value,this)" onchange="setOverallSensitivity(this.value)"><small>모든 채팅방의 기본값이에요. 친한 친구 방은 방 설정에서 따로 낮출 수 있어요.</small></section><details class="ai-advanced-settings"><summary><span><b>세부 AI 항목 조절</b><small>필요할 때만 열어 항목별로 바꿔요.</small></span><i>⌄</i></summary><div class="ai-setting-intro"><b>세부 민감도는 AI가 조절해요</b><span>‘그냥 보내기’ 선택 패턴을 보고 항목별 수치를 조정합니다.</span></div>${aiGroups.map(([title, desc, names]) => `<details class="ai-setting-group"><summary><span><b>${title}</b><small>${desc}</small></span><i>⌄</i></summary><div class="ai-category-list">${names.map(card).join("")}</div></details>`).join("")}</details><section class="settings-actions"><button class="theme-toggle" onclick="toggleTheme()">${document.body.classList.contains("dark") ? "☀️ 라이트 모드" : "🌙 다크 모드"}</button><button class="notification-toggle" onclick="toggleBrowserNotifications()">${browserNotificationsEnabled() ? "🔔 새 메시지 알림 켬" : "🔕 새 메시지 알림 켜기"}</button><button class="danger-action" onclick="openDeleteAccount()">계정 삭제</button></section>`;
+  root.innerHTML = `<section class="overall-sensitivity"><span>기본 AI 민감도</span><b id="overall-sensitivity-label">${sensitivityLabel(sensitivity.overall)} · ${sensitivity.overall}</b><input type="range" min="0" max="100" value="${sensitivity.overall}" style="--sensitivity:${sensitivity.overall}%" oninput="previewOverallSensitivity(this.value,this)" onchange="setOverallSensitivity(this.value)"><small>모든 채팅방의 기본값이에요. 친한 친구 방은 방 설정에서 따로 낮출 수 있어요.</small></section><details class="ai-advanced-settings"><summary><span><b>세부 AI 항목 조절</b><small>필요할 때만 열어 항목별로 바꿔요.</small></span><i>⌄</i></summary><div class="ai-setting-intro"><b>내 선택을 반영해요</b><span>${esc(learningNote())}</span></div>${aiGroups.map(([title, desc, names]) => `<details class="ai-setting-group"><summary><span><b>${title}</b><small>${desc}</small></span><i>⌄</i></summary><div class="ai-category-list">${names.map(card).join("")}</div></details>`).join("")}</details><section class="settings-actions"><button class="theme-toggle" onclick="toggleTheme()">${document.body.classList.contains("dark") ? "☀️ 라이트 모드" : "🌙 다크 모드"}</button><button class="notification-toggle" onclick="toggleBrowserNotifications()">${browserNotificationsEnabled() ? "🔔 새 메시지 알림 켬" : "🔕 새 메시지 알림 켜기"}</button><button class="danger-action" onclick="openDeleteAccount()">계정 삭제</button></section>`;
 }
 function saveAiDetail(name, value) {
   const state = sensitivityState();
@@ -1195,17 +1214,11 @@ function showCheckResult(result) {
 }
 function sendDespiteWarning() {
   if (pendingSend?.result?.verdict === "WARN") {
-    const state = sensitivityState();
     const category =
       pendingSend.result.source === "dictionary"
         ? "강한 공격 표현"
         : "비꼼·압박 표현";
-    state.overrides[category] = (state.overrides[category] || 0) + 1;
-    if (state.overrides[category] >= 3) {
-      state.categories[category] = Math.max(0, state.categories[category] - 5);
-      state.overrides[category] = 0;
-    }
-    saveSensitivity(state);
+    learnFromSendAnyway(category);
   }
   sendApproved();
 }
