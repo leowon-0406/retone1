@@ -1443,7 +1443,7 @@ async fn messages(
     .execute(&app.db)
     .await;
     let d = app.data.read().await;
-    let output = d
+    let mut output = d
         .messages
         .iter()
         .filter(|m| m.room_id == id)
@@ -1453,6 +1453,31 @@ async fn messages(
             message
         })
         .collect::<Vec<_>>();
+    drop(d);
+    let own_message_ids = output
+        .iter()
+        .filter(|message| message.mine)
+        .filter_map(|message| Uuid::parse_str(&message.id).ok())
+        .collect::<Vec<_>>();
+    if !own_message_ids.is_empty() {
+        let rows = sqlx::query_as::<_, (Uuid, i64)>(
+            "SELECT m.id,COUNT(rm.user_id)::BIGINT FROM retone_v2.messages m JOIN retone_v2.room_members rm ON rm.room_id=m.room_id WHERE m.id = ANY($1) AND rm.user_id<>$2 AND (rm.last_read_at IS NULL OR rm.last_read_at<m.created_at) GROUP BY m.id",
+        )
+        .bind(&own_message_ids)
+        .bind(user_id)
+        .fetch_all(&app.db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let unread = rows
+            .into_iter()
+            .map(|(message_id, count)| (message_id.to_string(), count.min(255) as u8))
+            .collect::<HashMap<_, _>>();
+        for message in &mut output {
+            if message.mine {
+                message.unread = *unread.get(&message.id).unwrap_or(&0);
+            }
+        }
+    }
     Ok(Json(output))
 }
 fn looks_like_alignment(text: &str) -> bool {
@@ -1504,7 +1529,7 @@ async fn send(
         Some(data_url) => Some(upload_to_cloudinary(data_url, "retone/messages").await?),
         None => None,
     };
-    let message = Message {
+    let mut message = Message {
         id: Uuid::new_v4().to_string(),
         room_id: id.clone(),
         sender: sqlx::query_scalar(
@@ -1528,6 +1553,15 @@ async fn send(
         .bind(Uuid::parse_str(&message.id).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?)
         .bind(room_uuid).bind(sender_id).bind(&message.body).bind(&message.intent).bind(&message.image_url)
         .execute(&app.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let unread: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*)::BIGINT FROM retone_v2.room_members WHERE room_id=$1 AND user_id<>$2",
+    )
+    .bind(room_uuid)
+    .bind(sender_id)
+    .fetch_one(&app.db)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    message.unread = unread.min(255) as u8;
     let mut d = app.data.write().await;
     d.messages.push(message.clone());
     if let Some(room) = d.rooms.iter_mut().find(|r| r.id == id) {
