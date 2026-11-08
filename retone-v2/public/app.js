@@ -289,19 +289,16 @@ function stopRoomPolling() {
 }
 function startRoomPolling(id, initialMessages) {
   let knownCount = initialMessages.length;
-  let knownReactions = JSON.stringify(initialMessages.map((message) => [message.id, message.reactions || []]));
   roomPollTimer = setInterval(async () => {
     if (roomId !== id) return;
     try {
       const latest = await api(
         `/api/rooms/${id}/messages?user_id=${encodeURIComponent(signedInId)}`,
       );
-      const latestReactions = JSON.stringify(latest.map((message) => [message.id, message.reactions || []]));
-      if (latest.length !== knownCount || latestReactions !== knownReactions) {
+      if (latest.length !== knownCount) {
         const incoming = latest.slice(knownCount).filter((message) => !message.mine);
         incoming.forEach((message) => notifyNewMessage(message));
         knownCount = latest.length;
-        knownReactions = latestReactions;
         openRoom(id);
       }
     } catch {}
@@ -400,6 +397,7 @@ async function startDirect(name, inviteeId = "") {
       name,
       creator_id: signedInId,
       invitee_ids: inviteeId ? [inviteeId] : [],
+      direct: true,
     }),
   });
   data = await api(`/api/bootstrap?user_id=${encodeURIComponent(signedInId)}`);
@@ -837,21 +835,7 @@ function view(m) {
     finding?.status === "check"
       ? `<button class="fact-cue" title="출처 확인 안내" onclick="event.stopPropagation();openFactFinding('${m.id}')">ⓘ</button>`
       : "";
-  const reactions = m.reactions || [];
-  const reactionNames = { "👍": "좋아요", "❤️": "하트", "😂": "웃겨요", "👏": "박수" };
-  const reactionBar = `<div class="reaction-bar" onclick="event.stopPropagation()"><div class="reaction-list">${reactions.map((reaction) => `<button class="reaction-count ${reaction.mine ? "mine" : ""}" title="${reactionNames[reaction.emoji] || "반응"}" onclick="toggleReaction('${m.room_id}','${m.id}','${reaction.emoji}')">${reaction.emoji}<b>${reaction.count}</b></button>`).join("")}</div><div class="reaction-picker">${["👍", "❤️", "😂", "👏"].map((emoji) => `<button title="${reactionNames[emoji]}" aria-label="${reactionNames[emoji]}" onclick="toggleReaction('${m.room_id}','${m.id}','${emoji}')">${emoji}</button>`).join("")}</div></div>`;
-  return `<article class="bubble ${m.mine ? "mine" : ""}" ${m.mine ? "" : `onclick="inspectMessage(${JSON.stringify(m.body)})"`}><div class="meta">${esc(m.sender)}${m.intent ? ` · <span class="intent-tag">${esc(m.intent)}</span>` : ""}</div>${m.image_url ? `<img class="chat-image" src="${m.image_url}" alt="보낸 사진">` : ""}${m.body ? `<span>${esc(m.body)}</span>` : ""}${factCue}${m.mine && m.unread ? `<span class="read">${m.unread}</span>` : ""}${m.mine ? `<button class="delete-message" title="메시지 삭제" onclick="removeMessage('${m.id}')">×</button>` : ""}${reactionBar}</article>`;
-}
-async function toggleReaction(room, message, emoji) {
-  try {
-    await api(`/api/rooms/${room}/messages/${message}/reactions`, {
-      method: "POST",
-      body: JSON.stringify({ emoji }),
-    });
-    if (roomId === room) openRoom(room);
-  } catch {
-    alert("반응을 저장하지 못했어요. 잠시 후 다시 시도해주세요.");
-  }
+  return `<article class="bubble ${m.mine ? "mine" : ""}" ${m.mine ? "" : `onclick="inspectMessage(${JSON.stringify(m.body)})"`}><div class="meta">${esc(m.sender)}${m.intent ? ` · <span class="intent-tag">${esc(m.intent)}</span>` : ""}</div>${m.image_url ? `<img class="chat-image" src="${m.image_url}" alt="보낸 사진">` : ""}${m.body ? `<span>${esc(m.body)}</span>` : ""}${factCue}${m.mine && m.unread ? `<span class="read">${m.unread}</span>` : ""}${m.mine ? `<button class="delete-message" title="메시지 삭제" onclick="removeMessage('${m.id}')">×</button>` : ""}</article>`;
 }
 function toneCard(messages) {
   const strongCount = conversationSignals(messages).filter((signal) => signal === 2).length;

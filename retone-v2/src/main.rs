@@ -45,13 +45,6 @@ struct Message {
     intent: Option<String>,
     alignment_hint: bool,
     image_url: Option<String>,
-    reactions: Vec<Reaction>,
-}
-#[derive(Clone, Serialize)]
-struct Reaction {
-    emoji: String,
-    count: i64,
-    mine: bool,
 }
 #[derive(Clone, Serialize)]
 struct Agreement {
@@ -115,15 +108,12 @@ struct NewRoom {
     name: String,
     creator_id: Option<String>,
     invitee_ids: Option<Vec<String>>,
+    direct: Option<bool>,
 }
 #[derive(Deserialize)]
 struct AddRoomMembers {
     inviter_id: Uuid,
     invitee_ids: Vec<Uuid>,
-}
-#[derive(Deserialize)]
-struct ReactionInput {
-    emoji: String,
 }
 #[derive(Deserialize)]
 struct NewAgreement {
@@ -1427,24 +1417,6 @@ struct DataOut {
     reflections: Vec<Reflection>,
     insights: Vec<ConversationInsight>,
 }
-async fn reactions_for(
-    app: &App,
-    message_id: Uuid,
-    user_id: Uuid,
-) -> Result<Vec<Reaction>, StatusCode> {
-    let rows = sqlx::query_as::<_, (String, i64, bool)>(
-        "SELECT emoji,COUNT(*)::BIGINT,BOOL_OR(user_id=$2) FROM retone_v2.message_reactions WHERE message_id=$1 GROUP BY emoji ORDER BY MIN(created_at)",
-    )
-    .bind(message_id)
-    .bind(user_id)
-    .fetch_all(&app.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(rows
-        .into_iter()
-        .map(|(emoji, count, mine)| Reaction { emoji, count, mine })
-        .collect())
-}
 async fn messages(
     State(app): State<App>,
     Path(id): Path<String>,
@@ -1471,7 +1443,7 @@ async fn messages(
     .execute(&app.db)
     .await;
     let d = app.data.read().await;
-    let mut output = d
+    let output = d
         .messages
         .iter()
         .filter(|m| m.room_id == id)
@@ -1481,12 +1453,6 @@ async fn messages(
             message
         })
         .collect::<Vec<_>>();
-    drop(d);
-    for message in &mut output {
-        let message_id =
-            Uuid::parse_str(&message.id).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        message.reactions = reactions_for(&app, message_id, user_id).await?;
-    }
     Ok(Json(output))
 }
 fn looks_like_alignment(text: &str) -> bool {
@@ -1557,7 +1523,6 @@ async fn send(
         intent: input.intent.filter(|value| !value.trim().is_empty()),
         alignment_hint: looks_like_alignment(input.body.trim()),
         image_url,
-        reactions: vec![],
     };
     sqlx::query("INSERT INTO retone_v2.messages(id,room_id,sender_id,body,intent,image_url) VALUES($1,$2,$3,$4,$5,$6)")
         .bind(Uuid::parse_str(&message.id).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?)
@@ -1570,41 +1535,6 @@ async fn send(
         room.updated = message.created;
     }
     Ok(Json(message))
-}
-async fn toggle_reaction(
-    State(app): State<App>,
-    Path((room_id, message_id)): Path<(Uuid, Uuid)>,
-    headers: HeaderMap,
-    Json(input): Json<ReactionInput>,
-) -> Result<Json<Vec<Reaction>>, StatusCode> {
-    if !["👍", "❤️", "😂", "👏"].contains(&input.emoji.as_str()) {
-        return Err(StatusCode::BAD_REQUEST);
-    }
-    let user_id = require_user(&app, &headers).await?;
-    let allowed: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM retone_v2.room_members WHERE room_id=$1 AND user_id=$2) AND EXISTS(SELECT 1 FROM retone_v2.messages WHERE id=$3 AND room_id=$1 AND deleted_at IS NULL)",
-    ).bind(room_id).bind(user_id).bind(message_id).fetch_one(&app.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    if !allowed {
-        return Err(StatusCode::FORBIDDEN);
-    }
-    let existing: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM retone_v2.message_reactions WHERE message_id=$1 AND user_id=$2 AND emoji=$3)",
-    ).bind(message_id).bind(user_id).bind(&input.emoji).fetch_one(&app.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    if existing {
-        sqlx::query("DELETE FROM retone_v2.message_reactions WHERE message_id=$1 AND user_id=$2 AND emoji=$3")
-            .bind(message_id).bind(user_id).bind(&input.emoji).execute(&app.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    } else {
-        sqlx::query(
-            "INSERT INTO retone_v2.message_reactions(message_id,user_id,emoji) VALUES($1,$2,$3)",
-        )
-        .bind(message_id)
-        .bind(user_id)
-        .bind(&input.emoji)
-        .execute(&app.db)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    }
-    Ok(Json(reactions_for(&app, message_id, user_id).await?))
 }
 async fn create_conversation_insight(
     State(app): State<App>,
@@ -1837,6 +1767,10 @@ async fn create_room(
         return Err(StatusCode::BAD_REQUEST);
     }
     let invitees = input.invitee_ids.clone().unwrap_or_default();
+    let is_direct = input.direct.unwrap_or(false);
+    if is_direct && invitees.len() != 1 {
+        return Err(StatusCode::BAD_REQUEST);
+    }
     let room = Room {
         id: Uuid::new_v4().to_string(),
         name: name.chars().take(30).collect(),
@@ -1861,12 +1795,34 @@ async fn create_room(
             return Err(StatusCode::FORBIDDEN);
         }
     }
+    if is_direct {
+        let peer_id = Uuid::parse_str(&invitees[0]).map_err(|_| StatusCode::BAD_REQUEST)?;
+        let existing = sqlx::query_as::<_, (Uuid, String, i64)>(
+            "SELECT r.id,r.name,FLOOR(EXTRACT(EPOCH FROM r.created_at)*1000)::BIGINT FROM retone_v2.rooms r WHERE (SELECT COUNT(*) FROM retone_v2.room_members rm WHERE rm.room_id=r.id)=2 AND EXISTS(SELECT 1 FROM retone_v2.room_members rm WHERE rm.room_id=r.id AND rm.user_id=$1) AND EXISTS(SELECT 1 FROM retone_v2.room_members rm WHERE rm.room_id=r.id AND rm.user_id=$2) ORDER BY r.created_at DESC LIMIT 1",
+        )
+        .bind(creator)
+        .bind(peer_id)
+        .fetch_optional(&app.db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        if let Some((id, name, updated)) = existing {
+            return Ok(Json(Room {
+                id: id.to_string(),
+                name,
+                members: 2,
+                unread: 0,
+                pinned: false,
+                last: "이전 대화를 이어가세요.".into(),
+                updated,
+            }));
+        }
+    }
     let room_uuid = Uuid::parse_str(&room.id).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     sqlx::query("INSERT INTO retone_v2.rooms(id,name,created_by,is_group) VALUES($1,$2,$3,$4)")
         .bind(room_uuid)
         .bind(&room.name)
         .bind(creator)
-        .bind(true)
+        .bind(!is_direct)
         .execute(&app.db)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -1987,7 +1943,7 @@ async fn restore_data(db: &PgPool) -> Data {
     let rooms = sqlx::query_as::<_, (Uuid, String, i64, String, i64)>("SELECT r.id,r.name,(SELECT COUNT(*) FROM retone_v2.room_members rm WHERE rm.room_id=r.id),COALESCE((SELECT m.body FROM retone_v2.messages m WHERE m.room_id=r.id AND m.deleted_at IS NULL ORDER BY m.created_at DESC LIMIT 1),'새 대화를 시작해 보세요.'),FLOOR(EXTRACT(EPOCH FROM r.created_at)*1000)::BIGINT FROM retone_v2.rooms r ORDER BY r.created_at")
         .fetch_all(db).await.unwrap_or_default().into_iter().map(|(id,name,members,last,updated)| Room { id:id.to_string(),name,members:members.min(255) as u8,unread:0,pinned:false,last,updated }).collect();
     let messages = sqlx::query_as::<_, (Uuid, Uuid, Option<String>, Option<Uuid>, String, i64, Option<String>, Option<String>)>("SELECT m.id,m.room_id,u.name,m.sender_id,m.body,FLOOR(EXTRACT(EPOCH FROM m.created_at)*1000)::BIGINT,m.intent,m.image_url FROM retone_v2.messages m LEFT JOIN retone_v2.users u ON u.id=m.sender_id WHERE m.deleted_at IS NULL ORDER BY m.created_at")
-        .fetch_all(db).await.unwrap_or_default().into_iter().map(|(id,room_id,sender,sender_id,body,created,intent,image_url)| { let alignment_hint = looks_like_alignment(&body); Message { id:id.to_string(),room_id:room_id.to_string(),sender:sender.unwrap_or_else(|| "알 수 없는 사용자".into()),sender_id:sender_id.map(|value| value.to_string()),mine:false,body,created,unread:0,intent,alignment_hint,image_url,reactions:vec![] } }).collect();
+        .fetch_all(db).await.unwrap_or_default().into_iter().map(|(id,room_id,sender,sender_id,body,created,intent,image_url)| { let alignment_hint = looks_like_alignment(&body); Message { id:id.to_string(),room_id:room_id.to_string(),sender:sender.unwrap_or_else(|| "알 수 없는 사용자".into()),sender_id:sender_id.map(|value| value.to_string()),mine:false,body,created,unread:0,intent,alignment_hint,image_url } }).collect();
     Data {
         rooms,
         messages,
@@ -2039,10 +1995,6 @@ async fn main() {
         .route("/api/appointments", post(create_appointment))
         .route("/api/reflections", post(create_reflection))
         .route("/api/rooms/{id}/messages", get(messages).post(send))
-        .route(
-            "/api/rooms/{room_id}/messages/{message_id}/reactions",
-            post(toggle_reaction),
-        )
         .route("/api/rooms/{id}/leave", delete(leave_room))
         .route("/api/rooms/{id}/insight", post(create_conversation_insight))
         .route(
