@@ -250,6 +250,16 @@ async function home() {
   app.innerHTML = `<main class="layout">${rail()}<section class="page"><header class="head"><h1>채팅</h1><button class="new-room" onclick="newRoom()">＋ 새 대화</button></header><div class="content"><div class="intro"><h2>${esc(signedIn)}님, 반가워요.</h2><p>친구를 초대해 첫 대화를 시작해 보세요.</p></div><div class="dash"><section class="focus"><b>오늘의 공동 확인</b><span>채팅방에서 함께 확인할 일을 만들어 보세요.</span></section><section class="focus schedule"><b>다음 약속 <button onclick="newAppointment()">＋</button></b><span>친구들과 약속을 정하면 여기에 보여요.</span></section></div><div class="rooms">${rooms.length ? rooms.map((r) => `<button class="room" onclick="openRoom('${r.id}')"><span class="avatar">${esc(r.name[0])}</span><span class="copy"><b>${r.pinned ? "📌 " : ""}${esc(r.name)}</b><span>${esc(r.last)}</span></span>${r.unread ? `<span class="badge">${r.unread}</span>` : ""}</button>`).join("") : `<button class="empty-chat" onclick="newRoom()"><b>아직 대화가 없어요</b><span>친구를 초대하거나 단체 채팅을 만들어 보세요. ＋</span></button>`}</div></div></section></main>`;
 }
 async function openRoom(id) {
+  const refreshingCurrentRoom = roomId === id;
+  const previousInput = refreshingCurrentRoom ? document.querySelector("#text") : null;
+  const draft = previousInput?.value || "";
+  const inputWasFocused = document.activeElement === previousInput;
+  const cursor = previousInput?.selectionStart ?? draft.length;
+  const previousList = refreshingCurrentRoom ? document.querySelector("#messages") : null;
+  const previousScrollTop = previousList?.scrollTop || 0;
+  const wasNearBottom = previousList
+    ? previousList.scrollHeight - previousList.scrollTop - previousList.clientHeight < 96
+    : true;
   stopRoomPolling();
   roomId = id;
   const room = data.rooms.find((r) => r.id === id),
@@ -268,7 +278,7 @@ async function openRoom(id) {
       item.room_id === id &&
       (item.has_conflict || aiDetails()["대화 흐름 요약"] === "항상"),
   );
-  app.innerHTML = `<main class="layout">${rail()}<section class="chat"><header class="head"><button class="back-button" title="채팅 목록으로" aria-label="채팅 목록으로" onclick="home()"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14.5 5-7 7 7 7M8 12h9"/></svg></button><div class="room-title"><h1>${esc(room.name)}</h1><span>참여자 ${room.members}명 · AI ${roomRule(id)} · ${isRoomMuted(id) ? "알림 끔" : "연결됨"}</span></div><div class="chat-actions"><button title="친구 초대" onclick="inviteFriends()">＋</button><button title="AI 도움받기" onclick="openAiHelp()">✦</button><button title="회고 카드" onclick="newReflection()">↻</button><button title="채팅방 설정" onclick="roomSettings()">⋯</button><button title="공동 확인" onclick="newAgreement()">✓</button></div></header><section class="messages" id="messages">${emotionTimeline(messages)}${toneCard(messages)}${insights.map(viewInsight).join("")}${messages.map(view).join("")}${alignmentCard(messages)}${appointments.map(viewAppointment).join("")}${reflections.map(viewReflection).join("")}${data.agreements
+  app.innerHTML = `<main class="layout">${rail()}<section class="chat"><header class="head"><button class="back-button" title="채팅 목록으로" aria-label="채팅 목록으로" onclick="home()"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14.5 5-7 7 7 7M8 12h9"/></svg></button><div class="room-title"><h1>${esc(room.name)}</h1><span>참여자 ${room.members}명 · AI ${roomRule(id)} · ${isRoomMuted(id) ? "알림 끔" : "연결됨"}</span>${conversationPulse(messages)}</div><div class="chat-actions"><button title="친구 초대" onclick="inviteFriends()">＋</button><button title="AI 도움받기" onclick="openAiHelp()">✦</button><button title="회고 카드" onclick="newReflection()">↻</button><button title="채팅방 설정" onclick="roomSettings()">⋯</button><button title="공동 확인" onclick="newAgreement()">✓</button></div></header><section class="messages" id="messages">${insights.map(viewInsight).join("")}${messages.map(view).join("")}${alignmentCard(messages)}${appointments.map(viewAppointment).join("")}${reflections.map(viewReflection).join("")}${data.agreements
     .slice(0, 1)
     .map(
       (a) =>
@@ -277,7 +287,15 @@ async function openRoom(id) {
     .join(
       "",
     )}</section><form class="sendbar" onsubmit="send(event)"><button type="button" class="intent-button" title="의도 표시" onclick="chooseIntent()">${selectedIntent ? "◎" : "＋"}</button><label class="image-upload" title="사진 보내기" aria-label="사진 보내기"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="3"/><circle cx="9" cy="10" r="1.5"/><path d="m5.5 17 4.5-4 3.2 2.7 2.4-2 2.9 3.3"/></svg><input hidden type="file" accept="image/*" onchange="sendImage(this)"></label><input id="text" placeholder="메시지를 입력하세요" autocomplete="off" oninput="queueAiCheck(this.value)"><span id="ai-status" class="ai-status"></span><button>↑</button></form></section></main>`;
-  document.querySelector("#messages").scrollTop = 999999;
+  const list = document.querySelector("#messages");
+  if (refreshingCurrentRoom && !wasNearBottom) list.scrollTop = previousScrollTop;
+  else list.scrollTop = list.scrollHeight;
+  const input = document.querySelector("#text");
+  input.value = draft;
+  if (inputWasFocused) {
+    input.focus();
+    input.setSelectionRange(cursor, cursor);
+  }
   startRoomPolling(id, messages);
   queueFactChecks(messages);
 }
@@ -837,11 +855,6 @@ function view(m) {
       : "";
   return `<article class="bubble ${m.mine ? "mine" : ""}" ${m.mine ? "" : `onclick="inspectMessage(${JSON.stringify(m.body)})"`}><div class="meta">${esc(m.sender)}${m.intent ? ` · <span class="intent-tag">${esc(m.intent)}</span>` : ""}</div>${m.image_url ? `<img class="chat-image" src="${m.image_url}" alt="보낸 사진">` : ""}${m.body ? `<span>${esc(m.body)}</span>` : ""}${factCue}${m.mine && m.unread ? `<span class="read">${m.unread}</span>` : ""}${m.mine ? `<button class="delete-message" title="메시지 삭제" onclick="removeMessage('${m.id}')">×</button>` : ""}</article>`;
 }
-function toneCard(messages) {
-  const strongCount = conversationSignals(messages).filter((signal) => signal === 2).length;
-  if (strongCount < 2) return "";
-  return `<button class="tone-card careful" onclick="openConflictGuide()"><span>대화 흐름 참고</span><b>강한 표현이 반복되어, 서로의 의도가 엇갈릴 수 있어요.</b><small>누가 잘못했는지 판단하지 않아요 · 필요할 때만 눌러 정리해 보세요</small></button>`;
-}
 function conversationSignals(messages) {
   return messages.slice(-8).map((message) => {
     const text = message.body || "";
@@ -850,33 +863,17 @@ function conversationSignals(messages) {
     return 0;
   });
 }
-function emotionTimeline(messages) {
-  if (aiDetails()["대화 흐름 참고"] === "끄기" || messages.length < 6)
-    return "";
-  const recent = messages.slice(-8);
-  const points = conversationSignals(recent);
-  const signalCount = points.filter(Boolean).length;
+function conversationPulse(messages) {
+  if (aiDetails()["대화 흐름 참고"] === "끄기") return "";
+  const points = conversationSignals(messages);
   const strongCount = points.filter((point) => point === 2).length;
-  if (signalCount < 2) return "";
-  const recovery =
-    strongCount >= 2 &&
-    aiDetails()["대화 복구 문장"] !== "끄기" &&
-    !localStorage.getItem(`retone-recovery-dismissed-${roomId}`)
-      ? `<button onclick="fillRecoveryMessage()">부드럽게 이어가기</button><i onclick="dismissRecoveryMessage()">×</i>`
-      : "";
-  return `<section class="emotion-timeline" title="최근 표현 중 일부가 서로 다르게 읽힐 수 있다는 참고 표시예요. 감정이나 잘잘못을 판단하지 않아요."><span>대화 흐름 참고</span><div>${points.map((point) => `<i class="${point ? "low" : "mid"}"></i>`).join("")}</div>${recovery}</section>`;
+  const caution = strongCount >= 2;
+  return `<button class="conversation-pulse ${caution ? "careful" : ""}" onclick="${caution ? "openConflictGuide()" : "openConversationPulse()"}"><span>대화 흐름</span><b>${caution ? "조금 조심" : "차분하게 이어지는 중"}</b></button>`;
 }
-function fillRecoveryMessage() {
-  const input = document.querySelector("#text");
-  if (input) {
-    input.value =
-      "내 의도는 비난이 아니었어. 잠깐 정리하고 다시 이야기해도 될까?";
-    input.focus();
-  }
-}
-function dismissRecoveryMessage() {
-  localStorage.setItem(`retone-recovery-dismissed-${roomId}`, "1");
-  openRoom(roomId);
+function openConversationPulse() {
+  popup(
+    `<div class="ai-check info"><span>대화 흐름 참고</span><h2>현재 대화는 차분하게 이어지고 있어요.</h2><p>이 표시는 최근 표현을 참고해 보여주는 안내일 뿐, 감정이나 사람을 판단하지 않아요.</p><button onclick="closePopup()">확인</button></div>`,
+  );
 }
 async function openConflictGuide() {
   popup(
