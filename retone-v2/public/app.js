@@ -1353,47 +1353,6 @@ function popup(inner) {
 function closePopup() {
   document.querySelector(".modal")?.remove();
 }
-function newRoom() {
-  popup(
-    `<h2>새 단체 채팅</h2><p>팀·친구와 함께할 대화 공간을 만들어요.</p><input id="roomName" placeholder="예: 과학 수행평가 조"><button onclick="saveRoom()">채팅방 만들기</button>`,
-  );
-}
-async function saveRoom() {
-  const name = document.querySelector("#roomName").value.trim();
-  if (!name) return;
-  await api("/api/rooms", { method: "POST", body: JSON.stringify({ name }) });
-  closePopup();
-  home();
-}
-function newAgreement() {
-  popup(
-    `<h2>공동 확인 만들기</h2><p>할 일, 담당자, 기한을 함께 확인해요.</p><input id="task" placeholder="할 일"><input id="assignee" placeholder="담당자"><input id="deadline" placeholder="예: 내일 18:00"><button onclick="saveAgreement()">공동 확인 카드 만들기</button>`,
-  );
-}
-async function saveAgreement() {
-  const task = document.querySelector("#task").value.trim();
-  if (!task) return;
-  await api("/api/agreements", {
-    method: "POST",
-    body: JSON.stringify({
-      task,
-      room_id: roomId,
-      assignee: document.querySelector("#assignee").value,
-      deadline: document.querySelector("#deadline").value,
-    }),
-  });
-  closePopup();
-  openRoom(roomId);
-}
-function popup(inner) {
-  document.body.insertAdjacentHTML(
-    "beforeend",
-    `<div class="modal" onclick="if(event.target===this){if(pendingSend){editPendingSend()}else this.remove()}"><section>${inner}</section></div>`,
-  );
-}
-function closePopup() {
-  document.querySelector(".modal")?.remove();
-}
 async function newRoom() {
   const users = (await api(`/api/friends?user_id=${encodeURIComponent(signedInId)}`)).friends;
   popup(

@@ -97,8 +97,6 @@ struct App {
 }
 #[derive(Deserialize)]
 struct Send {
-    sender: String,
-    sender_id: Option<String>,
     body: String,
     intent: Option<String>,
     image_url: Option<String>,
@@ -106,19 +104,16 @@ struct Send {
 #[derive(Deserialize)]
 struct NewRoom {
     name: String,
-    creator_id: Option<String>,
     invitee_ids: Option<Vec<String>>,
     direct: Option<bool>,
 }
 #[derive(Deserialize)]
 struct AddRoomMembers {
-    inviter_id: Uuid,
     invitee_ids: Vec<Uuid>,
 }
 #[derive(Deserialize)]
 struct NewAgreement {
     task: String,
-    room_id: Option<String>,
     assignee: String,
     deadline: String,
 }
@@ -146,10 +141,6 @@ struct Credentials {
 #[derive(Deserialize)]
 struct PhoneCheck {
     phone: String,
-}
-#[derive(Deserialize)]
-struct SessionQuery {
-    user_id: Option<Uuid>,
 }
 #[derive(Deserialize)]
 struct ImageInput {
@@ -217,7 +208,6 @@ struct Preferences {
 }
 #[derive(Deserialize)]
 struct RelationshipAction {
-    user_id: Uuid,
     target_id: Uuid,
 }
 #[derive(Serialize)]
@@ -1684,17 +1674,12 @@ async fn delete_message(
         return StatusCode::NOT_FOUND;
     }
     let mut d = app.data.write().await;
-    let before = d.messages.len();
     d.messages.retain(|m| {
         !(m.room_id == room_id
             && m.id == message_id
             && m.sender_id.as_deref() == Some(user_id.to_string().as_str()))
     });
-    if d.messages.len() < before {
-        StatusCode::NO_CONTENT
-    } else {
-        StatusCode::NO_CONTENT
-    }
+    StatusCode::NO_CONTENT
 }
 async fn leave_room(
     State(app): State<App>,
