@@ -262,8 +262,13 @@ async function openRoom(id) {
     : true;
   stopRoomPolling();
   roomId = id;
-  const room = data.rooms.find((r) => r.id === id),
-    messages = await api(
+  const room = data.rooms.find((r) => r.id === id);
+  if (!room) {
+    roomId = null;
+    alert("이 채팅방을 더 이상 찾을 수 없어요. 채팅 목록을 새로 불러올게요.");
+    return home();
+  }
+  const messages = await api(
       `/api/rooms/${id}/messages?user_id=${encodeURIComponent(signedInId)}`,
     );
   currentRoomMessages = messages;
@@ -307,16 +312,23 @@ function stopRoomPolling() {
 }
 function startRoomPolling(id, initialMessages) {
   let knownCount = initialMessages.length;
+  let knownReadState = JSON.stringify(
+    initialMessages.map((message) => [message.id, message.unread || 0]),
+  );
   roomPollTimer = setInterval(async () => {
     if (roomId !== id) return;
     try {
       const latest = await api(
         `/api/rooms/${id}/messages?user_id=${encodeURIComponent(signedInId)}`,
       );
-      if (latest.length !== knownCount) {
+      const latestReadState = JSON.stringify(
+        latest.map((message) => [message.id, message.unread || 0]),
+      );
+      if (latest.length !== knownCount || latestReadState !== knownReadState) {
         const incoming = latest.slice(knownCount).filter((message) => !message.mine);
         incoming.forEach((message) => notifyNewMessage(message));
         knownCount = latest.length;
+        knownReadState = latestReadState;
         openRoom(id);
       }
     } catch {}
@@ -1338,11 +1350,15 @@ function editPendingSend() {
 }
 async function removeMessage(id) {
   if (!confirm("이 메시지를 삭제할까요?")) return;
-  await api(
-    `/api/rooms/${roomId}/messages/${id}?user_id=${encodeURIComponent(signedInId)}`,
-    { method: "DELETE" },
-  );
-  openRoom(roomId);
+  try {
+    await api(
+      `/api/rooms/${roomId}/messages/${id}?user_id=${encodeURIComponent(signedInId)}`,
+      { method: "DELETE" },
+    );
+    openRoom(roomId);
+  } catch {
+    alert("메시지를 삭제하지 못했어요. 잠시 후 다시 시도해주세요.");
+  }
 }
 function popup(inner) {
   document.body.insertAdjacentHTML(
@@ -1388,16 +1404,20 @@ async function confirmInviteFriends() {
 async function saveRoom() {
   const name = document.querySelector("#roomName").value.trim();
   if (!name) return;
-  await api("/api/rooms", {
-    method: "POST",
-    body: JSON.stringify({
-      name,
-      creator_id: signedInId,
-      invitee_ids: selectedInvitees(),
-    }),
-  });
-  closePopup();
-  home();
+  try {
+    await api("/api/rooms", {
+      method: "POST",
+      body: JSON.stringify({
+        name,
+        creator_id: signedInId,
+        invitee_ids: selectedInvitees(),
+      }),
+    });
+    closePopup();
+    home();
+  } catch {
+    alert("채팅방을 만들지 못했어요. 초대할 친구와 서버 연결을 다시 확인해주세요.");
+  }
 }
 function newAgreement() {
   popup(
