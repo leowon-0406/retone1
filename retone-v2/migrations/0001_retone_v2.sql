@@ -56,6 +56,27 @@ CREATE TABLE IF NOT EXISTS retone_v2.appointments (
   place TEXT,
   created_by UUID REFERENCES retone_v2.users(id)
 );
+CREATE TABLE IF NOT EXISTS retone_v2.reflections (
+  id UUID PRIMARY KEY,
+  room_id UUID NOT NULL REFERENCES retone_v2.rooms(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  keep TEXT NOT NULL DEFAULT '',
+  next_step TEXT NOT NULL DEFAULT '',
+  created_by UUID REFERENCES retone_v2.users(id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE TABLE IF NOT EXISTS retone_v2.conversation_insights (
+  id UUID PRIMARY KEY,
+  room_id UUID NOT NULL REFERENCES retone_v2.rooms(id) ON DELETE CASCADE,
+  checkpoint INTEGER NOT NULL,
+  has_conflict BOOLEAN NOT NULL DEFAULT FALSE,
+  topic TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  reason TEXT NOT NULL DEFAULT '',
+  suggestion TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(room_id, checkpoint)
+);
 CREATE TABLE IF NOT EXISTS retone_v2.ai_cache (
   message_hash TEXT PRIMARY KEY,
   verdict TEXT NOT NULL,
@@ -127,3 +148,7 @@ ALTER TABLE retone_v2.ai_cache ADD COLUMN IF NOT EXISTS info_queries TEXT[] NOT 
 ALTER TABLE retone_v2.users ADD COLUMN IF NOT EXISTS ai_intervention TEXT NOT NULL DEFAULT 'standard';
 ALTER TABLE retone_v2.messages ADD COLUMN IF NOT EXISTS image_url TEXT;
 ALTER TABLE retone_v2.messages ADD COLUMN IF NOT EXISTS intent TEXT;
+ALTER TABLE retone_v2.agreements ADD COLUMN IF NOT EXISTS assignee_name TEXT NOT NULL DEFAULT '미정';
+ALTER TABLE retone_v2.agreements ADD COLUMN IF NOT EXISTS deadline_text TEXT NOT NULL DEFAULT '미정';
+ALTER TABLE retone_v2.agreements ADD COLUMN IF NOT EXISTS confirmations INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE retone_v2.agreements ADD COLUMN IF NOT EXISTS revisions INTEGER NOT NULL DEFAULT 0;

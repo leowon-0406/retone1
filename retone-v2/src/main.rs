@@ -49,6 +49,7 @@ struct Message {
 #[derive(Clone, Serialize)]
 struct Agreement {
     id: String,
+    room_id: String,
     task: String,
     assignee: String,
     deadline: String,
@@ -61,6 +62,8 @@ struct Appointment {
     title: String,
     date: String,
     place: String,
+    #[serde(skip_serializing)]
+    owner_id: String,
 }
 #[derive(Clone, Serialize)]
 struct Reflection {
@@ -113,6 +116,7 @@ struct AddRoomMembers {
 }
 #[derive(Deserialize)]
 struct NewAgreement {
+    room_id: String,
     task: String,
     assignee: String,
     deadline: String,
@@ -185,7 +189,6 @@ struct RewriteRequest {
 }
 #[derive(Deserialize)]
 struct AiReport {
-    reporter_name: String,
     original_text: String,
     ai_result: Option<String>,
 }
@@ -254,6 +257,17 @@ async fn require_user(app: &App, headers: &HeaderMap) -> Result<Uuid, StatusCode
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
     .ok_or(StatusCode::UNAUTHORIZED)
+}
+async fn require_room_member(app: &App, room_id: Uuid, user_id: Uuid) -> Result<(), StatusCode> {
+    let member = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM retone_v2.room_members WHERE room_id=$1 AND user_id=$2)",
+    )
+    .bind(room_id)
+    .bind(user_id)
+    .fetch_one(&app.db)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if member { Ok(()) } else { Err(StatusCode::FORBIDDEN) }
 }
 fn client_ip(headers: &HeaderMap) -> Result<String, StatusCode> {
     let raw = headers
@@ -439,7 +453,7 @@ async fn clear_user_data(
         return Err(StatusCode::BAD_REQUEST);
     }
     check_or_lock_admin_ip(&app, &headers, false).await?;
-    sqlx::query("TRUNCATE TABLE retone_v2.ai_reports,retone_v2.ai_cache,retone_v2.appointments,retone_v2.agreements,retone_v2.message_reactions,retone_v2.messages,retone_v2.room_members,retone_v2.rooms,retone_v2.friend_requests,retone_v2.friendships,retone_v2.blocks,retone_v2.auth_sessions,retone_v2.users RESTART IDENTITY CASCADE")
+    sqlx::query("TRUNCATE TABLE retone_v2.ai_reports,retone_v2.ai_cache,retone_v2.conversation_insights,retone_v2.reflections,retone_v2.appointments,retone_v2.agreements,retone_v2.message_reactions,retone_v2.messages,retone_v2.room_members,retone_v2.rooms,retone_v2.friend_requests,retone_v2.friendships,retone_v2.blocks,retone_v2.auth_sessions,retone_v2.users RESTART IDENTITY CASCADE")
         .execute(&app.db)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -457,6 +471,7 @@ async fn clear_user_data(
 async fn clear_single_user(
     State(app): State<App>,
     Path(user_id): Path<Uuid>,
+    headers: HeaderMap,
     Json(input): Json<AdminLogin>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     let password = env::var("RETONE_ADMIN_PASSWORD").unwrap_or_else(|_| "3612asdf!!".into());
@@ -464,6 +479,7 @@ async fn clear_single_user(
     if input.password != password || input.two_factor != two_factor {
         return Err(StatusCode::UNAUTHORIZED);
     }
+    check_or_lock_admin_ip(&app, &headers, false).await?;
     let mut tx = app
         .db
         .begin()
@@ -484,6 +500,11 @@ async fn clear_single_user(
         .execute(&mut *tx)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    sqlx::query("DELETE FROM retone_v2.reflections WHERE created_by=$1")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     sqlx::query("UPDATE retone_v2.rooms SET created_by=NULL WHERE created_by=$1")
         .bind(user_id)
         .execute(&mut *tx)
@@ -491,6 +512,10 @@ async fn clear_single_user(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     sqlx::query("DELETE FROM retone_v2.room_members WHERE user_id=$1")
         .bind(user_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    sqlx::query("DELETE FROM retone_v2.rooms r WHERE NOT EXISTS(SELECT 1 FROM retone_v2.room_members rm WHERE rm.room_id=r.id)")
         .execute(&mut *tx)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -506,6 +531,8 @@ async fn clear_single_user(
     if deleted == 0 {
         return Err(StatusCode::NOT_FOUND);
     }
+    let restored = restore_data(&app.db).await;
+    *app.data.write().await = restored;
     Ok(Json(
         serde_json::json!({"ok":true,"ai_cache_preserved":true}),
     ))
@@ -623,21 +650,6 @@ async fn block_user(
     tx.commit()
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(serde_json::json!({"ok":true})))
-}
-async fn reset_v2(
-    State(app): State<App>,
-    Json(input): Json<Credentials>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    let row=sqlx::query_as::<_,(bool,String)>("SELECT is_admin,password_hash FROM retone_v2.users WHERE phone_hash=$1 AND name=$2 AND deleted_at IS NULL").bind(phone_hash(&input.phone)).bind(input.name.trim()).fetch_optional(&app.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?.ok_or(StatusCode::UNAUTHORIZED)?;
-    let parsed = PasswordHash::new(&row.1).map_err(|_| StatusCode::UNAUTHORIZED)?;
-    Argon2::default()
-        .verify_password(input.password.as_bytes(), &parsed)
-        .map_err(|_| StatusCode::UNAUTHORIZED)?;
-    if !row.0 {
-        return Err(StatusCode::FORBIDDEN);
-    };
-    sqlx::query("TRUNCATE TABLE retone_v2.ai_reports,retone_v2.ai_cache,retone_v2.appointments,retone_v2.agreements,retone_v2.messages,retone_v2.room_members,retone_v2.rooms,retone_v2.users RESTART IDENTITY CASCADE").execute(&app.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(serde_json::json!({"ok":true})))
 }
 async fn delete_account(
@@ -1329,12 +1341,20 @@ async fn ai_support(Json(input): Json<RewriteRequest>) -> Json<serde_json::Value
 }
 async fn report_ai(
     State(app): State<App>,
+    headers: HeaderMap,
     Json(input): Json<AiReport>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    if input.reporter_name.trim().is_empty() || input.original_text.trim().is_empty() {
+    if input.original_text.trim().is_empty() {
         return Err(StatusCode::BAD_REQUEST);
     };
-    sqlx::query("INSERT INTO retone_v2.ai_reports(id,reporter_name,original_text,ai_result) VALUES($1,$2,$3,$4)").bind(Uuid::new_v4()).bind(input.reporter_name.trim()).bind(input.original_text.trim()).bind(input.ai_result).execute(&app.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;
+    let user_id = require_user(&app, &headers).await?;
+    let reporter_name: String = sqlx::query_scalar("SELECT name FROM retone_v2.users WHERE id=$1 AND deleted_at IS NULL")
+        .bind(user_id)
+        .fetch_optional(&app.db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+    sqlx::query("INSERT INTO retone_v2.ai_reports(id,reporter_name,original_text,ai_result) VALUES($1,$2,$3,$4)").bind(Uuid::new_v4()).bind(reporter_name).bind(input.original_text.trim()).bind(input.ai_result).execute(&app.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;
     Ok(Json(serde_json::json!({"ok":true})))
 }
 async fn admin_reports(
@@ -1370,6 +1390,7 @@ async fn bootstrap(
     let user_id = require_user(&app, &headers).await?;
     let d = app.data.read().await;
     let mut rooms = d.rooms.clone();
+    let mut member_rooms = std::collections::HashSet::new();
     {
         if let Ok(member_rows) = sqlx::query_scalar::<_, Uuid>(
             "SELECT room_id FROM retone_v2.room_members WHERE user_id=$1",
@@ -1378,7 +1399,7 @@ async fn bootstrap(
         .fetch_all(&app.db)
         .await
         {
-            let member_rooms = member_rows
+            member_rooms = member_rows
                 .into_iter()
                 .map(|id| id.to_string())
                 .collect::<std::collections::HashSet<_>>();
@@ -1393,10 +1414,32 @@ async fn bootstrap(
     }
     Ok(Json(DataOut {
         rooms,
-        agreements: d.agreements.clone(),
-        appointments: d.appointments.clone(),
-        reflections: d.reflections.clone(),
-        insights: d.insights.clone(),
+        agreements: d
+            .agreements
+            .iter()
+            .filter(|item| member_rooms.contains(&item.room_id))
+            .cloned()
+            .collect(),
+        appointments: d
+            .appointments
+            .iter()
+            .filter(|item| {
+                member_rooms.contains(&item.room_id) || item.owner_id == user_id.to_string()
+            })
+            .cloned()
+            .collect(),
+        reflections: d
+            .reflections
+            .iter()
+            .filter(|item| member_rooms.contains(&item.room_id))
+            .cloned()
+            .collect(),
+        insights: d
+            .insights
+            .iter()
+            .filter(|item| member_rooms.contains(&item.room_id))
+            .cloned()
+            .collect(),
     }))
 }
 #[derive(Serialize)]
@@ -1563,7 +1606,11 @@ async fn send(
 async fn create_conversation_insight(
     State(app): State<App>,
     Path(room_id): Path<String>,
-) -> Json<serde_json::Value> {
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    let user_id = require_user(&app, &headers).await?;
+    let room_uuid = Uuid::parse_str(&room_id).map_err(|_| StatusCode::BAD_REQUEST)?;
+    require_room_member(&app, room_uuid, user_id).await?;
     let (checkpoint, history, previous_summary) = {
         let d = app.data.read().await;
         let messages = d
@@ -1577,7 +1624,7 @@ async fn create_conversation_insight(
                 .iter()
                 .any(|item| item.room_id == room_id && item.checkpoint == checkpoint)
         {
-            return Json(serde_json::json!({"created":false}));
+            return Ok(Json(serde_json::json!({"created":false})));
         }
         let history = messages
             .iter()
@@ -1597,7 +1644,7 @@ async fn create_conversation_insight(
         (checkpoint, history, previous_summary)
     };
     let Some(key) = env::var("OPENAI_API_KEY").ok() else {
-        return Json(serde_json::json!({"created":false}));
+        return Ok(Json(serde_json::json!({"created":false})));
     };
     let prompt = format!(
         "너는 Re:Tone의 중립적 대화 정리 도우미다. 이 요청은 메시지 10개마다 실행되지만, 분석은 아래 최근 30개 메시지에서 주제가 이어지는 흐름을 찾아 하나의 맥락으로 취합한다. 바로 전 취합의 주제와 이어지는 내용이면 같은 대화 흐름으로 보고, 관련 없는 주제는 억지로 섞지 마라. 갈등·싸움·오해가 명확히 보일 때만 has_conflict=true로 해라. 누구의 잘못인지 판단하거나 비난하지 마라. 갈등이 있다면 reason에는 왜 부딪히는지 한 문장으로, suggestion에는 바로 해볼 수 있는 해소 방법을 한 문장으로 쓴다. 갈등이 없으면 has_conflict=false, reason과 suggestion은 빈 문자열. topic은 대화 주제를 짧게, summary는 해당 주제 흐름을 1문장으로 쓴다. JSON만 출력: {{\"has_conflict\":boolean,\"topic\":string,\"summary\":string,\"reason\":string,\"suggestion\":string}}\n\n{previous_summary}\n\n최근 대화:\n{history}"
@@ -1609,7 +1656,7 @@ async fn create_conversation_insight(
         .send()
         .await;
     let Ok(response) = response else {
-        return Json(serde_json::json!({"created":false}));
+        return Ok(Json(serde_json::json!({"created":false})));
     };
     let value = response
         .json::<serde_json::Value>()
@@ -1649,8 +1696,20 @@ async fn create_conversation_insight(
             .take(220)
             .collect(),
     };
+    sqlx::query("INSERT INTO retone_v2.conversation_insights(id,room_id,checkpoint,has_conflict,topic,summary,reason,suggestion) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(room_id,checkpoint) DO NOTHING")
+        .bind(Uuid::parse_str(&insight.id).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?)
+        .bind(room_uuid)
+        .bind(insight.checkpoint as i32)
+        .bind(insight.has_conflict)
+        .bind(&insight.topic)
+        .bind(&insight.summary)
+        .bind(&insight.reason)
+        .bind(&insight.suggestion)
+        .execute(&app.db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     app.data.write().await.insights.push(insight.clone());
-    Json(serde_json::json!({"created":true,"insight":insight}))
+    Ok(Json(serde_json::json!({"created":true,"insight":insight})))
 }
 async fn delete_message(
     State(app): State<App>,
@@ -1862,13 +1921,18 @@ async fn create_room(
 }
 async fn create_agreement(
     State(app): State<App>,
+    headers: HeaderMap,
     Json(input): Json<NewAgreement>,
 ) -> Result<Json<Agreement>, StatusCode> {
-    if input.task.trim().is_empty() {
+    if input.task.trim().is_empty() || input.room_id.trim().is_empty() {
         return Err(StatusCode::BAD_REQUEST);
     }
+    let user_id = require_user(&app, &headers).await?;
+    let room_id = Uuid::parse_str(&input.room_id).map_err(|_| StatusCode::BAD_REQUEST)?;
+    require_room_member(&app, room_id, user_id).await?;
     let agreement = Agreement {
         id: Uuid::new_v4().to_string(),
+        room_id: room_id.to_string(),
         task: input.task.trim().chars().take(100).collect(),
         assignee: if input.assignee.trim().is_empty() {
             "미정".into()
@@ -1883,35 +1947,80 @@ async fn create_agreement(
         confirmations: 0,
         revisions: 0,
     };
+    sqlx::query("INSERT INTO retone_v2.agreements(id,room_id,task,assignee_name,deadline_text) VALUES($1,$2,$3,$4,$5)")
+        .bind(Uuid::parse_str(&agreement.id).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?)
+        .bind(room_id)
+        .bind(&agreement.task)
+        .bind(&agreement.assignee)
+        .bind(&agreement.deadline)
+        .execute(&app.db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     app.data.write().await.agreements.push(agreement.clone());
     Ok(Json(agreement))
 }
 async fn update_agreement(
     State(app): State<App>,
     Path((id, action)): Path<(String, String)>,
+    headers: HeaderMap,
 ) -> Result<Json<Agreement>, StatusCode> {
-    let mut data = app.data.write().await;
-    let agreement = data
-        .agreements
-        .iter_mut()
-        .find(|item| item.id == id)
+    let user_id = require_user(&app, &headers).await?;
+    let agreement_id = Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
+    let room_id: Uuid = sqlx::query_scalar("SELECT room_id FROM retone_v2.agreements WHERE id=$1")
+        .bind(agreement_id)
+        .fetch_optional(&app.db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
-    match action.as_str() {
-        "confirm" => agreement.confirmations = agreement.confirmations.saturating_add(1),
-        "revise" => agreement.revisions = agreement.revisions.saturating_add(1),
+    require_room_member(&app, room_id, user_id).await?;
+    let query = match action.as_str() {
+        "confirm" => "UPDATE retone_v2.agreements SET confirmations=confirmations+1 WHERE id=$1 RETURNING id,room_id,task,assignee_name,deadline_text,confirmations,revisions",
+        "revise" => "UPDATE retone_v2.agreements SET revisions=revisions+1 WHERE id=$1 RETURNING id,room_id,task,assignee_name,deadline_text,confirmations,revisions",
         _ => return Err(StatusCode::BAD_REQUEST),
+    };
+    let row = sqlx::query_as::<_, (Uuid, Uuid, String, String, String, i32, i32)>(query)
+        .bind(agreement_id)
+        .fetch_one(&app.db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let agreement = Agreement {
+        id: row.0.to_string(),
+        room_id: row.1.to_string(),
+        task: row.2,
+        assignee: row.3,
+        deadline: row.4,
+        confirmations: row.5.clamp(0, u8::MAX as i32) as u8,
+        revisions: row.6.clamp(0, u8::MAX as i32) as u8,
+    };
+    let mut data = app.data.write().await;
+    if let Some(item) = data.agreements.iter_mut().find(|item| item.id == id) {
+        *item = agreement.clone();
     }
-    Ok(Json(agreement.clone()))
+    Ok(Json(agreement))
 }
 async fn create_appointment(
     State(app): State<App>,
+    headers: HeaderMap,
     Json(input): Json<NewAppointment>,
 ) -> Result<Json<Appointment>, StatusCode> {
     if input.title.trim().is_empty() || input.date.trim().is_empty() {
         return Err(StatusCode::BAD_REQUEST);
     }
+    let user_id = require_user(&app, &headers).await?;
+    let room_id = input.room_id.filter(|value| !value.trim().is_empty());
+    let room_uuid = match room_id.as_deref() {
+        Some(value) => {
+            let id = Uuid::parse_str(value).map_err(|_| StatusCode::BAD_REQUEST)?;
+            require_room_member(&app, id, user_id).await?;
+            Some(id)
+        }
+        None => None,
+    };
+    let starts_at = chrono::NaiveDateTime::parse_from_str(&input.date, "%Y-%m-%d %H:%M")
+        .map_err(|_| StatusCode::BAD_REQUEST)?
+        .and_utc();
     let appointment = Appointment {
-        room_id: input.room_id.unwrap_or_default(),
+        room_id: room_uuid.map(|value| value.to_string()).unwrap_or_default(),
         title: input.title.trim().chars().take(80).collect(),
         date: input.date.trim().chars().take(30).collect(),
         place: if input.place.trim().is_empty() {
@@ -1919,7 +2028,18 @@ async fn create_appointment(
         } else {
             input.place.trim().chars().take(50).collect()
         },
+        owner_id: user_id.to_string(),
     };
+    sqlx::query("INSERT INTO retone_v2.appointments(id,room_id,title,starts_at,place,created_by) VALUES($1,$2,$3,$4,$5,$6)")
+        .bind(Uuid::new_v4())
+        .bind(room_uuid)
+        .bind(&appointment.title)
+        .bind(starts_at)
+        .bind(&appointment.place)
+        .bind(user_id)
+        .execute(&app.db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     app.data
         .write()
         .await
@@ -1929,18 +2049,32 @@ async fn create_appointment(
 }
 async fn create_reflection(
     State(app): State<App>,
+    headers: HeaderMap,
     Json(input): Json<NewReflection>,
 ) -> Result<Json<Reflection>, StatusCode> {
     if input.room_id.trim().is_empty() || input.title.trim().is_empty() {
         return Err(StatusCode::BAD_REQUEST);
     }
+    let user_id = require_user(&app, &headers).await?;
+    let room_id = Uuid::parse_str(&input.room_id).map_err(|_| StatusCode::BAD_REQUEST)?;
+    require_room_member(&app, room_id, user_id).await?;
     let reflection = Reflection {
         id: Uuid::new_v4().to_string(),
-        room_id: input.room_id,
+        room_id: room_id.to_string(),
         title: input.title.trim().chars().take(80).collect(),
         keep: input.keep.trim().chars().take(120).collect(),
         next: input.next.trim().chars().take(120).collect(),
     };
+    sqlx::query("INSERT INTO retone_v2.reflections(id,room_id,title,keep,next_step,created_by) VALUES($1,$2,$3,$4,$5,$6)")
+        .bind(Uuid::parse_str(&reflection.id).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?)
+        .bind(room_id)
+        .bind(&reflection.title)
+        .bind(&reflection.keep)
+        .bind(&reflection.next)
+        .bind(user_id)
+        .execute(&app.db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     app.data.write().await.reflections.push(reflection.clone());
     Ok(Json(reflection))
 }
@@ -1963,13 +2097,21 @@ async fn restore_data(db: &PgPool) -> Data {
         .fetch_all(db).await.unwrap_or_default().into_iter().map(|(id,name,members,last,updated)| Room { id:id.to_string(),name,members:members.min(255) as u8,unread:0,pinned:false,last,updated }).collect();
     let messages = sqlx::query_as::<_, (Uuid, Uuid, Option<String>, Option<Uuid>, String, i64, Option<String>, Option<String>)>("SELECT m.id,m.room_id,u.name,m.sender_id,m.body,FLOOR(EXTRACT(EPOCH FROM m.created_at)*1000)::BIGINT,m.intent,m.image_url FROM retone_v2.messages m LEFT JOIN retone_v2.users u ON u.id=m.sender_id WHERE m.deleted_at IS NULL ORDER BY m.created_at")
         .fetch_all(db).await.unwrap_or_default().into_iter().map(|(id,room_id,sender,sender_id,body,created,intent,image_url)| { let alignment_hint = looks_like_alignment(&body); Message { id:id.to_string(),room_id:room_id.to_string(),sender:sender.unwrap_or_else(|| "알 수 없는 사용자".into()),sender_id:sender_id.map(|value| value.to_string()),mine:false,body,created,unread:0,intent,alignment_hint,image_url } }).collect();
+    let agreements = sqlx::query_as::<_, (Uuid, Uuid, String, String, String, i32, i32)>("SELECT id,room_id,task,assignee_name,deadline_text,confirmations,revisions FROM retone_v2.agreements WHERE completed_at IS NULL")
+        .fetch_all(db).await.unwrap_or_default().into_iter().map(|(id,room_id,task,assignee,deadline,confirmations,revisions)| Agreement { id:id.to_string(), room_id:room_id.to_string(), task, assignee, deadline, confirmations:confirmations.clamp(0,u8::MAX as i32) as u8, revisions:revisions.clamp(0,u8::MAX as i32) as u8 }).collect();
+    let appointments = sqlx::query_as::<_, (Option<Uuid>, String, String, String, Uuid)>("SELECT room_id,title,to_char(starts_at,'YYYY-MM-DD HH24:MI'),place,created_by FROM retone_v2.appointments ORDER BY starts_at")
+        .fetch_all(db).await.unwrap_or_default().into_iter().map(|(room_id,title,date,place,owner_id)| Appointment { room_id:room_id.map(|value| value.to_string()).unwrap_or_default(), title, date, place, owner_id:owner_id.to_string() }).collect();
+    let reflections = sqlx::query_as::<_, (Uuid, Uuid, String, String, String)>("SELECT id,room_id,title,keep,next_step FROM retone_v2.reflections ORDER BY created_at")
+        .fetch_all(db).await.unwrap_or_default().into_iter().map(|(id,room_id,title,keep,next)| Reflection { id:id.to_string(),room_id:room_id.to_string(),title,keep,next }).collect();
+    let insights = sqlx::query_as::<_, (Uuid, Uuid, i32, bool, String, String, String, String)>("SELECT id,room_id,checkpoint,has_conflict,topic,summary,reason,suggestion FROM retone_v2.conversation_insights ORDER BY created_at")
+        .fetch_all(db).await.unwrap_or_default().into_iter().map(|(id,room_id,checkpoint,has_conflict,topic,summary,reason,suggestion)| ConversationInsight { id:id.to_string(),room_id:room_id.to_string(),checkpoint:checkpoint.max(0) as usize,has_conflict,topic,summary,reason,suggestion }).collect();
     Data {
         rooms,
         messages,
-        agreements: vec![],
-        appointments: vec![],
-        reflections: vec![],
-        insights: vec![],
+        agreements,
+        appointments,
+        reflections,
+        insights,
     }
 }
 
@@ -1992,7 +2134,6 @@ async fn main() {
         .route("/api/friends/request", post(request_friend))
         .route("/api/friends/accept", post(accept_friend))
         .route("/api/blocks", post(block_user))
-        .route("/api/admin/reset-v2", post(reset_v2))
         .route("/api/admin/clear-user-data", post(clear_user_data))
         .route("/api/admin/users/{id}/clear", post(clear_single_user))
         .route("/api/users/{id}", delete(delete_account))

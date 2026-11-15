@@ -240,14 +240,25 @@ async function api(url, options = {}) {
 function rail() {
   return `<aside class="rail"><div class="brand">Re:<i>Tone</i></div><p>더 나은 대화를 위한<br>새로운 작업 공간</p><nav><button class="${nav === "chat" ? "active" : ""}" onclick="nav='chat';home()">채팅</button><button class="${nav === "friends" ? "active" : ""}" onclick="nav='friends';friends()">친구</button><button onclick="settings()">설정</button></nav><small>${esc(signedIn || "Re:Tone")} · v2</small></aside>`;
 }
+function connectionIssue(title, retry) {
+  return `<main class="layout">${rail()}<section class="page"><header class="head"><h1>${esc(title)}</h1></header><div class="content"><section class="empty-chat connection-issue"><b>연결을 확인하지 못했어요</b><span>인터넷 또는 서버 상태를 확인한 뒤 다시 시도해주세요.</span><button onclick="${retry}">다시 시도</button></section></div></section></main>`;
+}
 async function home() {
   stopRoomPolling();
-  data = await api(`/api/bootstrap?user_id=${encodeURIComponent(signedInId)}`);
+  try {
+    data = await api(`/api/bootstrap?user_id=${encodeURIComponent(signedInId)}`);
+  } catch {
+    app.innerHTML = connectionIssue("채팅", "home()");
+    return;
+  }
   roomId = null;
   const rooms = data.rooms.filter(
     (r) => !["science", "friends"].includes(r.id) && !hasLeftRoom(r.id),
   );
-  app.innerHTML = `<main class="layout">${rail()}<section class="page"><header class="head"><h1>채팅</h1><button class="new-room" onclick="newRoom()">＋ 새 대화</button></header><div class="content"><div class="intro"><h2>${esc(signedIn)}님, 반가워요.</h2><p>친구를 초대해 첫 대화를 시작해 보세요.</p></div><div class="dash"><section class="focus"><b>오늘의 공동 확인</b><span>채팅방에서 함께 확인할 일을 만들어 보세요.</span></section><section class="focus schedule"><b>다음 약속 <button onclick="newAppointment()">＋</button></b><span>친구들과 약속을 정하면 여기에 보여요.</span></section></div><div class="rooms">${rooms.length ? rooms.map((r) => `<button class="room" onclick="openRoom('${r.id}')"><span class="avatar">${esc(r.name[0])}</span><span class="copy"><b>${r.pinned ? "📌 " : ""}${esc(r.name)}</b><span>${esc(r.last)}</span></span>${r.unread ? `<span class="badge">${r.unread}</span>` : ""}</button>`).join("") : `<button class="empty-chat" onclick="newRoom()"><b>아직 대화가 없어요</b><span>친구를 초대하거나 단체 채팅을 만들어 보세요. ＋</span></button>`}</div></div></section></main>`;
+  const upcoming = (data.appointments || [])
+    .slice()
+    .sort((a, b) => a.date.localeCompare(b.date))[0];
+  app.innerHTML = `<main class="layout">${rail()}<section class="page"><header class="head"><h1>채팅</h1><button class="new-room" onclick="newRoom()">＋ 새 대화</button></header><div class="content"><div class="intro"><h2>${esc(signedIn)}님, 반가워요.</h2><p>친구를 초대해 첫 대화를 시작해 보세요.</p></div><div class="dash"><section class="focus"><b>오늘의 공동 확인</b><span>채팅방에서 함께 확인할 일을 만들어 보세요.</span></section><section class="focus schedule"><b>다음 약속 <button onclick="newAppointment()">＋</button></b><span>${upcoming ? `${esc(upcoming.title)} · ${esc(upcoming.date)}` : "친구들과 약속을 정하면 여기에 보여요."}</span></section></div><div class="rooms">${rooms.length ? rooms.map((r) => `<button class="room" onclick="openRoom('${r.id}')"><span class="avatar">${esc(r.name[0])}</span><span class="copy"><b>${r.pinned ? "📌 " : ""}${esc(r.name)}</b><span>${esc(r.last)}</span></span>${r.unread ? `<span class="badge">${r.unread}</span>` : ""}</button>`).join("") : `<button class="empty-chat" onclick="newRoom()"><b>아직 대화가 없어요</b><span>친구를 초대하거나 단체 채팅을 만들어 보세요. ＋</span></button>`}</div></div></section></main>`;
 }
 async function openRoom(id) {
   const refreshingCurrentRoom = roomId === id;
@@ -284,6 +295,7 @@ async function openRoom(id) {
       (item.has_conflict || aiDetails()["대화 흐름 요약"] === "항상"),
   );
   app.innerHTML = `<main class="layout">${rail()}<section class="chat"><header class="head"><button class="back-button" title="채팅 목록으로" aria-label="채팅 목록으로" onclick="home()"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14.5 5-7 7 7 7M8 12h9"/></svg></button><div class="room-title"><h1>${esc(room.name)}</h1><span>참여자 ${room.members}명 · AI ${roomRule(id)} · ${isRoomMuted(id) ? "알림 끔" : "연결됨"}</span>${conversationPulse(messages)}</div><div class="chat-actions"><button title="친구 초대" onclick="inviteFriends()">＋</button><button title="AI 도움받기" onclick="openAiHelp()">✦</button><button title="회고 카드" onclick="newReflection()">↻</button><button title="채팅방 설정" onclick="roomSettings()">⋯</button><button title="공동 확인" onclick="newAgreement()">✓</button></div></header><section class="messages" id="messages">${insights.map(viewInsight).join("")}${messages.map(view).join("")}${alignmentCard(messages)}${appointments.map(viewAppointment).join("")}${reflections.map(viewReflection).join("")}${data.agreements
+    .filter((agreement) => agreement.room_id === id)
     .slice(0, 1)
     .map(
       (a) =>
@@ -347,10 +359,16 @@ function notifyNewMessage(message) {
 }
 async function friends() {
   stopRoomPolling();
-  const [users, relations] = await Promise.all([
-    api("/api/users"),
-    api(`/api/friends?user_id=${encodeURIComponent(signedInId)}`),
-  ]);
+  let users, relations;
+  try {
+    [users, relations] = await Promise.all([
+      api("/api/users"),
+      api(`/api/friends?user_id=${encodeURIComponent(signedInId)}`),
+    ]);
+  } catch {
+    app.innerHTML = connectionIssue("친구", "friends()");
+    return;
+  }
   const known = new Set([
     ...relations.friends.map((user) => user.id),
     ...relations.incoming.map((user) => user.id),
@@ -1281,7 +1299,6 @@ async function reportAiResult() {
   await api("/api/ai/reports", {
     method: "POST",
     body: JSON.stringify({
-      reporter_name: signedIn,
       original_text: pendingSend.body,
       ai_result: JSON.stringify(pendingSend.result || {}),
     }),
@@ -1427,21 +1444,31 @@ function newAgreement() {
 async function saveAgreement() {
   const task = document.querySelector("#task").value.trim();
   if (!task) return;
-  await api("/api/agreements", {
-    method: "POST",
-    body: JSON.stringify({
-      task,
-      room_id: roomId,
-      assignee: document.querySelector("#assignee").value,
-      deadline: document.querySelector("#deadline").value,
-    }),
-  });
-  closePopup();
-  openRoom(roomId);
+  try {
+    await api("/api/agreements", {
+      method: "POST",
+      body: JSON.stringify({
+        task,
+        room_id: roomId,
+        assignee: document.querySelector("#assignee").value,
+        deadline: document.querySelector("#deadline").value,
+      }),
+    });
+    data = await api(`/api/bootstrap?user_id=${encodeURIComponent(signedInId)}`);
+    closePopup();
+    openRoom(roomId);
+  } catch {
+    alert("공동 확인을 만들지 못했어요. 이 방의 참여 상태와 연결을 확인해주세요.");
+  }
 }
 async function answerAgreement(id, action) {
-  await api(`/api/agreements/${id}/${action}`, { method: "POST" });
-  openRoom(roomId);
+  try {
+    await api(`/api/agreements/${id}/${action}`, { method: "POST" });
+    data = await api(`/api/bootstrap?user_id=${encodeURIComponent(signedInId)}`);
+    openRoom(roomId);
+  } catch {
+    alert("공동 확인을 업데이트하지 못했어요. 잠시 후 다시 시도해주세요.");
+  }
 }
 function newAppointment() {
   popup(
@@ -1452,17 +1479,22 @@ async function saveAppointment() {
   const title = document.querySelector("#appointmentTitle").value.trim(),
     date = document.querySelector("#appointmentDate").value;
   if (!title || !date) return;
-  await api("/api/appointments", {
-    method: "POST",
-    body: JSON.stringify({
-      title,
-      room_id: roomId,
-      date: date.replace("T", " "),
-      place: document.querySelector("#appointmentPlace").value,
-    }),
-  });
-  closePopup();
-  home();
+  try {
+    await api("/api/appointments", {
+      method: "POST",
+      body: JSON.stringify({
+        title,
+        room_id: roomId,
+        date: date.replace("T", " "),
+        place: document.querySelector("#appointmentPlace").value,
+      }),
+    });
+    data = await api(`/api/bootstrap?user_id=${encodeURIComponent(signedInId)}`);
+    closePopup();
+    home();
+  } catch {
+    alert("약속을 저장하지 못했어요. 날짜와 연결 상태를 확인해주세요.");
+  }
 }
 function newReflection() {
   popup(
@@ -1472,18 +1504,22 @@ function newReflection() {
 async function saveReflection() {
   const title = document.querySelector("#reflection-title").value.trim();
   if (!title) return alert("돌아볼 내용을 입력해주세요.");
-  await api("/api/reflections", {
-    method: "POST",
-    body: JSON.stringify({
-      room_id: roomId,
-      title,
-      keep: document.querySelector("#reflection-keep").value.trim(),
-      next: document.querySelector("#reflection-next").value.trim(),
-    }),
-  });
-  closePopup();
-  data = await api(`/api/bootstrap?user_id=${encodeURIComponent(signedInId)}`);
-  openRoom(roomId);
+  try {
+    await api("/api/reflections", {
+      method: "POST",
+      body: JSON.stringify({
+        room_id: roomId,
+        title,
+        keep: document.querySelector("#reflection-keep").value.trim(),
+        next: document.querySelector("#reflection-next").value.trim(),
+      }),
+    });
+    closePopup();
+    data = await api(`/api/bootstrap?user_id=${encodeURIComponent(signedInId)}`);
+    openRoom(roomId);
+  } catch {
+    alert("회고 카드를 저장하지 못했어요. 이 방의 참여 상태와 연결을 확인해주세요.");
+  }
 }
 function showAiPolicy() {
   popup(
