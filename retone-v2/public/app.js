@@ -890,7 +890,10 @@ function view(m) {
     finding?.status === "check" || hasSources
       ? `<button class="fact-cue ${finding.status === "check" ? "needs-check" : ""}" title="${finding.status === "check" ? "출처를 한 번 더 확인해 보세요" : "관련 출처 보기"}" onclick="event.stopPropagation();openFactFinding('${m.id}')">ⓘ<span>출처</span></button>`
       : "";
-  return `<article class="bubble ${m.mine ? "mine" : ""}" ${m.mine ? "" : `onclick="inspectMessage(${JSON.stringify(m.body)})"`}><div class="meta">${esc(m.sender)}${m.intent ? ` · <span class="intent-tag">${esc(m.intent)}</span>` : ""}</div>${m.image_url ? `<img class="chat-image" src="${m.image_url}" alt="보낸 사진">` : ""}${m.body ? `<span>${esc(m.body)}</span>` : ""}${factCue}${m.mine && m.unread ? `<span class="read">${m.unread}</span>` : ""}${m.mine ? `<button class="delete-message" title="메시지 삭제" onclick="removeMessage('${m.id}')">×</button>` : ""}</article>`;
+  const messageMenu = m.mine
+    ? `<button class="message-menu" title="메시지 관리" aria-label="메시지 관리" onclick="event.stopPropagation();openMessageActions('${m.id}')"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg></button>`
+    : "";
+  return `<article class="bubble ${m.mine ? "mine" : ""}" ${m.mine ? "" : `onclick="inspectMessage(${JSON.stringify(m.body)})"`}><div class="meta"><span>${esc(m.sender)}${m.intent ? ` · <span class="intent-tag">${esc(m.intent)}</span>` : ""}</span>${messageMenu}</div>${m.image_url ? `<img class="chat-image" src="${m.image_url}" alt="보낸 사진">` : ""}${m.body ? `<span>${esc(m.body)}</span>` : ""}${factCue}${m.mine && m.unread ? `<span class="read">${m.unread}</span>` : ""}</article>`;
 }
 function conversationSignals(messages) {
   return messages.slice(-8).map((message) => {
@@ -1377,8 +1380,17 @@ function editPendingSend() {
     queueAiCheck(body);
   }
 }
+function openMessageActions(id) {
+  const message = currentRoomMessages.find((item) => item.id === id);
+  const preview = message?.body
+    ? `<p class="message-action-preview">${esc(message.body)}</p>`
+    : `<p class="message-action-preview image">사진을 보낸 메시지</p>`;
+  popup(
+    `<div class="message-action-sheet"><span>메시지 관리</span><h2>이 메시지를 삭제할까요?</h2>${preview}<p class="message-action-note">삭제하면 채팅방 참여자에게 더 이상 보이지 않아요.</p><div class="modal-actions"><button class="quiet" onclick="closePopup()">취소</button><button class="danger-action" onclick="removeMessage('${id}')">메시지 삭제</button></div></div>`,
+  );
+}
 async function removeMessage(id) {
-  if (!confirm("이 메시지를 삭제할까요?")) return;
+  closePopup();
   try {
     await api(
       `/api/rooms/${roomId}/messages/${id}?user_id=${encodeURIComponent(signedInId)}`,
@@ -1386,7 +1398,9 @@ async function removeMessage(id) {
     );
     openRoom(roomId);
   } catch {
-    alert("메시지를 삭제하지 못했어요. 잠시 후 다시 시도해주세요.");
+    popup(
+      `<div class="ai-check warn"><span>삭제하지 못했어요</span><h2>메시지가 그대로 남아 있어요.</h2><p>연결 상태를 확인한 뒤 다시 시도해주세요.</p><button onclick="closePopup()">확인</button></div>`,
+    );
   }
 }
 function popup(inner) {
