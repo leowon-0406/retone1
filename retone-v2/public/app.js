@@ -234,7 +234,11 @@ async function api(url, options = {}) {
     ...options,
     headers,
   });
-  if (!r.ok) throw new Error();
+  if (!r.ok) {
+    const error = new Error(`Request failed: ${r.status}`);
+    error.status = r.status;
+    throw error;
+  }
   if (r.status === 204) return {};
   return r.json();
 }
@@ -1799,8 +1803,16 @@ async function finishAdminLogin() {
     sessionStorage.setItem("retone-v2-ai-level", "off");
     sessionStorage.setItem("retone-v2-admin", "yes");
     settings();
-  } catch {
-    alert("관리자 비밀번호 또는 2차 인증 코드가 맞지 않아요.");
+  } catch (error) {
+    if (error?.status === 403) {
+      alert(
+        "관리자 접속은 처음 승인된 컴퓨터·네트워크에서만 가능해요. 현재 접속 위치가 바뀌었다면 Render의 RETONE_ADMIN_ALLOWED_IP 설정 또는 관리자 IP 잠금을 확인해주세요.",
+      );
+    } else if (error?.status === 401) {
+      alert("관리자 비밀번호 또는 2차 인증 코드가 맞지 않아요.");
+    } else {
+      alert("관리자 로그인을 확인하지 못했어요. 서버가 배포 중인지 잠시 후 다시 시도해주세요.");
+    }
   }
 }
 function setSignupAiDetail(button, name, value) {
