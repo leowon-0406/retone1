@@ -32,6 +32,7 @@ let factFindings = (() => {
   }
 })();
 const factChecksInFlight = new Set();
+const FACT_FINDING_VERSION = 2;
 const aiCategoryDefaults = {
   "강한 공격 표현": "강한 표현만",
   "비꼼·압박 표현": "균형 있게",
@@ -860,16 +861,21 @@ async function queueFactChecks(messages) {
     .filter((message) => !message.mine && likelyFactualClaim(message.body))
     .slice(-3);
   for (const message of candidates) {
-    if (factFindings[message.id] || factChecksInFlight.has(message.id)) continue;
+    if (
+      factFindings[message.id]?.version === FACT_FINDING_VERSION ||
+      factChecksInFlight.has(message.id)
+    )
+      continue;
     factChecksInFlight.add(message.id);
     try {
       const result = await api("/api/ai/fact-check", {
         method: "POST",
         body: JSON.stringify({ text: message.body }),
       });
-      factFindings[message.id] = result;
+      factFindings[message.id] = { ...result, version: FACT_FINDING_VERSION };
       saveFactFindings();
-      if (roomId === message.room_id && result.status === "check") openRoom(roomId);
+      if (roomId === message.room_id && (result.status === "check" || result.sources?.length))
+        openRoom(roomId);
     } catch {
       // 연결 실패는 조용히 넘기며, 사용자가 다시 눌러 확인할 수 있게 둡니다.
     } finally {
@@ -879,9 +885,10 @@ async function queueFactChecks(messages) {
 }
 function view(m) {
   const finding = !m.mine ? factFindings[m.id] : null;
+  const hasSources = Array.isArray(finding?.sources) && finding.sources.length > 0;
   const factCue =
-    finding?.status === "check"
-      ? `<button class="fact-cue" title="출처 확인 안내" onclick="event.stopPropagation();openFactFinding('${m.id}')">ⓘ</button>`
+    finding?.status === "check" || hasSources
+      ? `<button class="fact-cue ${finding.status === "check" ? "needs-check" : ""}" title="${finding.status === "check" ? "출처를 한 번 더 확인해 보세요" : "관련 출처 보기"}" onclick="event.stopPropagation();openFactFinding('${m.id}')">ⓘ<span>출처</span></button>`
       : "";
   return `<article class="bubble ${m.mine ? "mine" : ""}" ${m.mine ? "" : `onclick="inspectMessage(${JSON.stringify(m.body)})"`}><div class="meta">${esc(m.sender)}${m.intent ? ` · <span class="intent-tag">${esc(m.intent)}</span>` : ""}</div>${m.image_url ? `<img class="chat-image" src="${m.image_url}" alt="보낸 사진">` : ""}${m.body ? `<span>${esc(m.body)}</span>` : ""}${factCue}${m.mine && m.unread ? `<span class="read">${m.unread}</span>` : ""}${m.mine ? `<button class="delete-message" title="메시지 삭제" onclick="removeMessage('${m.id}')">×</button>` : ""}</article>`;
 }
@@ -1033,14 +1040,19 @@ function safeLink(url) {
   return /^https?:\/\//i.test(value) ? value.replace(/"/g, "%22") : "";
 }
 function factFindingMarkup(result) {
+  const needsCheck = result.status === "check";
   const sources = (result.sources || [])
     .map((source) => {
       const url = safeLink(source.url);
       if (!url) return "";
-      return `<a href="${url}" target="_blank" rel="noreferrer"><b>${esc(source.title || "출처 열기")}</b>${source.date ? `<small>${esc(source.date)}</small>` : ""}<span>열기 ↗</span></a>`;
+      return `<a href="${url}" target="_blank" rel="noreferrer"><b>${esc(source.title || "출처 열기")}</b>${source.note ? `<p>${esc(source.note)}</p>` : ""}${source.date ? `<small>${esc(source.date)}</small>` : ""}<span>열기 ↗</span></a>`;
     })
     .join("");
-  return `<div class="ai-check info fact-finding"><span>출처 확인 안내</span><h2>한 번 더 확인해 볼까요?</h2><p>${esc(result.summary || "서로 다른 출처와 게시 날짜를 함께 확인해 보세요.")}</p>${sources ? `<div class="fact-sources">${sources}</div>` : ""}<small>이 표시는 사람이나 메시지를 판정하지 않으며, 출처가 부족하거나 엇갈릴 때만 보여요.</small><button onclick="closePopup()">확인</button></div>`;
+  const heading = needsCheck ? "출처를 한 번 더 확인해 볼까요?" : "관련 출처를 찾았어요";
+  const fallback = needsCheck
+    ? "출처마다 내용이나 날짜가 다를 수 있어요. 아래 자료를 함께 확인해 보세요."
+    : "이 메시지와 관련된 출처를 모아봤어요. 어떤 출처가 무엇을 말하는지 직접 확인해 보세요.";
+  return `<div class="ai-check info fact-finding ${needsCheck ? "needs-check" : ""}"><span>${needsCheck ? "출처 확인 제안" : "출처 찾아보기"}</span><h2>${heading}</h2><p>${esc(result.summary || fallback)}</p>${sources ? `<div class="fact-sources">${sources}</div>` : ""}<small>각 출처의 내용을 참고용으로 모은 것이며, Re:Tone은 이 메시지가 사실인지 거짓인지 판정하지 않아요.</small><button onclick="closePopup()">확인</button></div>`;
 }
 function openFactFinding(id) {
   const result = factFindings[id];
@@ -1051,8 +1063,8 @@ async function factCheck(text) {
     method: "POST",
     body: JSON.stringify({ text }),
   });
-  if (result.status === "check") return popup(factFindingMarkup(result));
-  popup(`<div class="ai-check info"><span>출처 확인</span><h2>별도 안내가 필요하지 않아 보여요</h2><p>검색된 신뢰 가능한 출처들이 현재 문장을 대체로 뒷받침했어요. 그래도 중요한 결정 전에는 원문과 날짜를 확인해 주세요.</p><button onclick="closePopup()">확인</button></div>`);
+  if (result.status === "check" || result.sources?.length) return popup(factFindingMarkup(result));
+  popup(`<div class="ai-check info"><span>출처 찾아보기</span><h2>관련 출처를 찾지 못했어요</h2><p>이 메시지의 출처나 작성 날짜를 직접 물어보거나, 조금 더 구체적인 검색어로 확인해 보세요.</p><small>Re:Tone은 이 메시지가 사실인지 거짓인지 판정하지 않아요.</small><button onclick="closePopup()">확인</button></div>`);
 }
 function openAiHelp() {
   if (aiDetails()["감정 도움 AI"] === "끄기") return;
