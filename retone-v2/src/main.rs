@@ -1127,44 +1127,38 @@ async fn ai_check(State(app): State<App>, Json(input): Json<AiCheck>) -> Json<se
             serde_json::json!({"verdict":"PASS","suggestion":null,"info":{"level":"none","note":null,"queries":[]},"source":"light"}),
         );
     }
-    let review_signals = [
-        "죽",
-        "꺼져",
-        "닥쳐",
-        "싫어",
-        "짜증",
-        "최악",
-        "한심",
-        "못해",
-        "왜이래",
-        "뭐하냐",
-        "비꼬",
-        "조롱",
-        "사기",
-        "확정",
-        "속보",
-        "뉴스",
-        "병원",
-        "약",
-        "법",
-        "벌금",
-        "투자",
-        "주식",
-        "대출",
-        "재난",
-        "통계",
+    // 흔한 감탄사·질문·친구 사이의 가벼운 말에는 모델을 호출하지 않아요.
+    // 검토는 명백한 공격 대상이 있거나, 중요한 사실 주장일 때만 시작합니다.
+    let tone_signals = [
+        "꺼져", "닥쳐", "한심", "최악", "왜이래", "뭐하냐", "비꼬", "조롱", "쓸모없",
+        "한심해", "어이없", "정신차려",
     ];
-    let looks_like_claim = text.contains("?")
-        || text.contains("래")
-        || text.contains("다고")
-        || text.contains("라던데");
-    if level == "standard"
-        && sarcasm_level != "민감하게"
-        && !looks_like_claim
-        && !review_signals
-            .iter()
-            .any(|signal| normalized.contains(signal))
-    {
+    let direct_target = ["너", "네가", "니가", "당신", "쟤", "얘", "너희", "왜이래", "뭐하냐"];
+    let directed_tone = tone_signals.iter().any(|signal| normalized.contains(signal))
+        && direct_target.iter().any(|target| normalized.contains(target));
+    let important_topics = [
+        "응급", "사망", "중독", "백신", "병원", "약품", "복용", "의약", "처벌", "벌금", "대출",
+        "투자", "주식", "재난", "통계", "속보", "금리",
+    ];
+    let assertion_markers = [
+        "확정", "발표", "주의", "위험", "발생", "사실", "수익", "상승", "하락", "유행",
+    ];
+    let is_question = text.trim_end().ends_with('?');
+    let fact_claim = !is_question
+        && important_topics.iter().any(|topic| normalized.contains(topic))
+        && assertion_markers.iter().any(|marker| normalized.contains(marker));
+    let tone_review = match sarcasm_level {
+        "끄기" | "꺼짐" => false,
+        "민감하게" => tone_signals.iter().any(|signal| normalized.contains(signal))
+            && direct_target.iter().any(|target| normalized.contains(target)),
+        _ => directed_tone,
+    };
+    let source_review = match source_level {
+        "끄기" | "꺼짐" => false,
+        "민감하게" => !is_question && important_topics.iter().any(|topic| normalized.contains(topic)),
+        _ => fact_claim,
+    };
+    if !tone_review && !source_review {
         return Json(
             serde_json::json!({"verdict":"PASS","suggestion":null,"info":{"level":"none","note":null,"queries":[]},"source":"selective"}),
         );
@@ -1172,7 +1166,7 @@ async fn ai_check(State(app): State<App>, Json(input): Json<AiCheck>) -> Json<se
     let hash = format!(
         "{:x}",
         Sha256::digest(
-            format!("v3:{level}:{attack_level}:{sarcasm_level}:{source_level}:{normalized}")
+            format!("v4:{level}:{attack_level}:{sarcasm_level}:{source_level}:{normalized}")
                 .as_bytes()
         )
     );
@@ -1183,7 +1177,7 @@ async fn ai_check(State(app): State<App>, Json(input): Json<AiCheck>) -> Json<se
         );
     };
     let prompt = format!(
-        "너는 Re:Tone의 대화 거울이다. 판정자·검열자·사실확인 기관이 아니다. 현재 문장을 오직 '이렇게 들릴 수도 있어요'라는 제안으로만 비춘다.\n1) 비꼼·압박 개입 수준은 {sarcasm_level}이다. 끄기이면 비꼼만으로 WARN하지 않는다. 친한 사이의 가벼운 농담은 WARN하지 않는다. 특히 '야', '야야', '얘들아' 같은 친근한 호칭은 그 단어 하나만으로 무례·압박·비하로 판단하거나 WARN하지 않는다. 문장 전체에 명백한 공격·조롱이 있을 때만 검토한다.\n2) WARN일 때 suggestion은 반드시 이 문장에 맞춰 두 문장으로 쓴다. 첫 문장은 실제 문제 지점(단어·어조·비꼼)을 따옴표로 구체적으로 짚고 왜 상대가 압박·비난·조롱으로 느낄 수 있는지 설명한다. 둘째 문장은 원래 의도를 살린 짧은 대체 표현을 제안한다.\n3) 출처 확인 개입 수준은 {source_level}이다. 끄기이면 정보 확인을 절대 제안하지 않는다. 중요 정보만이면 건강·안전·법·돈·정치·재난·통계·속보성 주장만, 균형 있게면 중요한 출처 없는 사실 주장도, 민감하게면 대부분의 출처 없는 사실 주장도 info.level=check로 제안한다. 진실·거짓은 절대 판단하지 않는다.\n4) 전체 개입 강도는 {level}이다. standard는 뚜렷한 경우만, careful은 비꼼·오해 가능성까지 조금 더 꼼꼼히 본다.\n5) JSON만 출력: {{\"verdict\":\"PASS|WARN\",\"suggestion\":string|null,\"info\":{{\"level\":\"none|check\",\"note\":string|null,\"queries\":[string]}}}}. queries는 확인할 검색어 0~2개.\n문장: {text}"
+        "너는 Re:Tone의 대화 거울이다. 판정자·검열자·사실확인 기관이 아니다. 현재 문장을 오직 '이렇게 들릴 수도 있어요'라는 제안으로만 비춘다.\n1) 최종 판단 대상은 현재 문장 하나다. 인사, 질문, 약속 잡기, 가벼운 불평, '야/야야/얘들아', ㅋㅋ, ㅠㅠ 같은 일상 표현은 PASS다. 친한 사이의 농담은 명백한 공격·조롱이 아닌 한 WARN하지 않는다.\n2) WARN은 현재 문장에 상대를 향한 뚜렷한 공격·조롱·압박이 있을 때만 쓴다. 애매하면 반드시 PASS다. WARN일 때 suggestion은 두 문장으로 쓴다. 첫 문장은 실제 문제 지점(단어·어조)을 따옴표로 짚고 어떻게 들릴 수 있는지 설명한다. 둘째 문장은 원래 의도를 살린 짧은 대체 표현이다.\n3) 출처 확인 개입 수준은 {source_level}이다. 중요한 정보 주장일 때만 info.level=check를 제안하며, 질문·추측·일상 경험에는 제안하지 않는다. 진실·거짓은 절대 판단하지 않는다.\n4) 비꼼·압박 개입 수준은 {sarcasm_level}, 전체 개입 강도는 {level}이다. 단, 설정이 꼼꼼해도 모호한 문장은 PASS한다.\n5) JSON만 출력: {{\"verdict\":\"PASS|WARN\",\"suggestion\":string|null,\"info\":{{\"level\":\"none|check\",\"note\":string|null,\"queries\":[string]}}}}. queries는 확인할 검색어 0~2개.\n문장: {text}"
     );
     let res = reqwest::Client::new()
         .post("https://api.openai.com/v1/responses")
@@ -1362,7 +1356,7 @@ async fn analyze_conversation(Json(input): Json<ConversationAnalysis>) -> Json<s
         return Json(fallback);
     };
     let prompt = format!(
-        "너는 Re:Tone의 중립적 대화 흐름 도우미다. 아래 대화만 바탕으로, 사람의 성격·잘잘못·진실을 판단하지 말고 현재 대화의 맥락을 정리한다. tone은 '편안함', '조금 조심스러움', '오해 가능성', '정리해 보면 좋음' 중 하나다. summary는 대화의 실제 주제와 흐름을 2문장 이내로 정리한다. reason은 갈등이 명확하거나 오해될 지점이 있을 때만, 특정 사람을 탓하지 않고 왜 엇갈릴 수 있는지 1문장으로 적는다. suggestion은 바로 해볼 수 있는 대처 1개를 제안한다. draft는 필요할 때 쓸 수 있는 자연스러운 한국어 문장 1개다. 갈등 신호가 없으면 억지로 문제를 만들지 말고 reason은 빈 문자열로 한다. JSON만 출력: {{\"tone\":string,\"summary\":string,\"reason\":string,\"suggestion\":string,\"draft\":string}}\n\n최근 대화:\n{}",
+        "너는 Re:Tone의 중립적 대화 흐름 도우미다. 아래 대화만 바탕으로, 사람의 성격·잘잘못·진실을 판단하지 말고 실제 대화의 맥락을 정리한다.\n1) 먼저 누가 무엇을 정하려 하거나, 설명·질문·요청 중 무엇이 이어지는지 찾는다. 대화 주제가 바뀐 것은 갈등이 아니다.\n2) tone은 '편안함', '조금 조심스러움', '오해 가능성', '정리해 보면 좋음' 중 하나다. 텍스트의 짧은 말투만 보고 감정 온도나 관계를 단정하지 마라.\n3) summary는 구체적인 주제와 현재 단계(정하는 중/확인 중/의견이 다른 지점)를 2문장 이내로 적는다. 뭉뚱그린 ‘서로 이해 중’ 표현만 쓰지 마라.\n4) reason은 같은 사건·약속·요청을 두고 서로 다른 이해를 반복하거나, 직접 반박이 오갈 때만 쓴다. 한 사람의 불평, 단순 질문, 말투 차이만으로는 reason을 만들지 말고 빈 문자열로 둔다.\n5) suggestion은 실제 주제에 맞춘 작은 다음 행동 1개다. draft는 reason이 있을 때만 자연스러운 한국어 한 문장으로 준다. 갈등 신호가 없으면 reason과 draft는 빈 문자열이어야 한다.\nJSON만 출력: {{\"tone\":string,\"summary\":string,\"reason\":string,\"suggestion\":string,\"draft\":string}}\n\n최근 대화:\n{}",
         history.join("\n")
     );
     let response = reqwest::Client::new()
@@ -1767,7 +1761,7 @@ async fn create_conversation_insight(
         return Ok(Json(serde_json::json!({"created":false})));
     };
     let prompt = format!(
-        "너는 Re:Tone의 중립적 대화 정리 도우미다. 이 요청은 메시지 10개마다 실행되지만, 분석은 아래 최근 30개 메시지에서 주제가 이어지는 흐름을 찾아 하나의 맥락으로 취합한다. 바로 전 취합의 주제와 이어지는 내용이면 같은 대화 흐름으로 보고, 관련 없는 주제는 억지로 섞지 마라. 갈등·싸움·오해가 명확히 보일 때만 has_conflict=true로 해라. 누구의 잘못인지 판단하거나 비난하지 마라. 갈등이 있다면 reason에는 왜 부딪히는지 한 문장으로, suggestion에는 바로 해볼 수 있는 해소 방법을 한 문장으로 쓴다. 갈등이 없으면 has_conflict=false, reason과 suggestion은 빈 문자열. topic은 대화 주제를 짧게, summary는 해당 주제 흐름을 1문장으로 쓴다. JSON만 출력: {{\"has_conflict\":boolean,\"topic\":string,\"summary\":string,\"reason\":string,\"suggestion\":string}}\n\n{previous_summary}\n\n최근 대화:\n{history}"
+        "너는 Re:Tone의 중립적 대화 정리 도우미다. 이 요청은 메시지 10개마다 실행되지만, 분석은 최근 30개 메시지와 바로 전 취합을 연결해 하나의 이어지는 흐름으로 본다.\n1) 바로 전 취합과 같은 약속·과제·질문·의견을 이어 말하고 있으면 같은 주제로 누적해 정리한다. 새 주제가 등장했으면 억지로 섞지 않는다.\n2) topic은 실제 주제를 3~10글자로 구체적으로 쓴다. summary에는 ‘무엇을 두고 어느 단계까지 이야기했는지’를 한 문장으로 적는다.\n3) has_conflict=true는 같은 사건·요청·약속을 서로 다르게 이해한다고 반복해서 드러나거나, 직접적인 반박이 이어질 때만 쓴다. 단순 질문, 장난, 짧은 불평, 주제 전환은 갈등이 아니다.\n4) 갈등이 있다면 reason에는 서로 엇갈린 사실·기대·다음 행동을 한 문장으로 짚고, suggestion에는 그 주제에 맞춘 해소 행동을 한 문장으로 쓴다. 누구의 잘못인지 말하지 않는다. 갈등이 없으면 reason과 suggestion은 빈 문자열이다.\nJSON만 출력: {{\"has_conflict\":boolean,\"topic\":string,\"summary\":string,\"reason\":string,\"suggestion\":string}}\n\n{previous_summary}\n\n최근 대화:\n{history}"
     );
     let response = reqwest::Client::new()
         .post("https://api.openai.com/v1/responses")

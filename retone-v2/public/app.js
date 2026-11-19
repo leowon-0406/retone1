@@ -10,7 +10,9 @@ let aiIntervention = sessionStorage.getItem("retone-v2-ai-level") || "standard";
 let pendingSend = null;
 let replyingTo = null;
 let messagePressTimer = null;
+let messageSwipe = null;
 let suppressMessageTapUntil = 0;
+let rewrittenDraftBypass = "";
 let pendingAnalysisDraft = "";
 let currentRoomMessages = [];
 let signupAiDetails = null;
@@ -66,17 +68,49 @@ const sensitivityKeys = [
   "대화 흐름 참고",
   "대화 복구 문장",
 ];
+const initialCategorySensitivity = {
+  "강한 공격 표현": 25,
+  "비꼼·압박 표현": 20,
+  "출처 확인 제안": 25,
+  "표현 바꾸기": 50,
+  "입력 중 선검사": 50,
+  "감정 도움 AI": 50,
+  "확인 결과 재사용": 50,
+  "말맞춤 카드": 50,
+  "대화 흐름 요약": 45,
+  "이미지 안전 안내": 50,
+  "대화 흐름 참고": 35,
+  "대화 복구 문장": 35,
+};
+function defaultSensitivityCategories() {
+  return Object.fromEntries(
+    sensitivityKeys.map((key) => [key, initialCategorySensitivity[key] ?? 50]),
+  );
+}
 function sensitivityState() {
   try {
     const saved = JSON.parse(
       localStorage.getItem("retone-ai-sensitivity") || "{}",
     );
+    // 이전 버전은 모든 항목을 50으로 저장해 일상 대화까지 과하게 확인했어요.
+    // 사용자가 직접 세부 설정을 만진 적이 없는 기존값만 새 기본값으로 부드럽게 옮겨요.
+    const legacyDefault =
+      saved.categoryVersion !== 2 &&
+      sensitivityKeys.every((key) => saved.categories?.[key] === 50);
     return {
-      overall: Number.isFinite(saved.overall) ? saved.overall : 50,
+      overall: Number.isFinite(saved.overall)
+        ? legacyDefault && saved.overall === 50
+          ? 35
+          : saved.overall
+        : 35,
       categories: Object.fromEntries(
         sensitivityKeys.map((key) => [
           key,
-          Number.isFinite(saved.categories?.[key]) ? saved.categories[key] : 50,
+          legacyDefault
+            ? initialCategorySensitivity[key]
+            : Number.isFinite(saved.categories?.[key])
+              ? saved.categories[key]
+              : initialCategorySensitivity[key],
         ]),
       ),
       overrides: saved.overrides || {},
@@ -84,15 +118,18 @@ function sensitivityState() {
     };
   } catch {
     return {
-      overall: 50,
-      categories: Object.fromEntries(sensitivityKeys.map((key) => [key, 50])),
+      overall: 35,
+      categories: defaultSensitivityCategories(),
       overrides: {},
       learning: {},
     };
   }
 }
 function saveSensitivity(state) {
-  localStorage.setItem("retone-ai-sensitivity", JSON.stringify(state));
+  localStorage.setItem(
+    "retone-ai-sensitivity",
+    JSON.stringify({ ...state, categoryVersion: 2 }),
+  );
 }
 function learnFromSendAnyway(category) {
   const state = sensitivityState();
@@ -716,16 +753,7 @@ function settings() {
     standard: ["균형 있게", "말투·출처가 중요한 주장만 확인해요"],
     careful: ["꼼꼼하게", "중요 정보와 표현을 조금 더 살펴봐요"],
   };
-  const toggles = [
-    ["강한 공격 표현", "필요한 경우만"],
-    ["비꼼·압박 표현", "균형 있게"],
-    ["출처 확인 제안", "중요한 정보만"],
-    ["표현 바꾸기", "요청할 때만"],
-    ["입력 중 선검사", "필요한 경우만"],
-    ["감정 도움 AI", "요청할 때만"],
-    ["확인 결과 재사용", "균형 있게"],
-  ];
-  app.innerHTML = `<main class="layout">${rail()}<section class="page"><header class="head"><h1>설정</h1></header><div class="content"><div class="intro"><h2>${esc(signedIn)}님</h2><p>프로필과 앱 사용 환경을 관리해요.</p></div><div class="rooms"><label class="room"><span class="avatar">${avatar ? `<img src="${avatar}">` : esc(signedIn[0])}</span><span class="copy"><b>프로필 사진 바꾸기</b><span>사진을 선택하면 이 기기에서 바로 적용돼요.</span></span><input hidden type="file" accept="image/*" onchange="setAvatar(this)"></label><section class="ai-preferences"><b>AI 개입 정도</b><p>빠른 선택 또는 세부 항목을 조절할 수 있어요.</p><div>${Object.entries(
+  app.innerHTML = `<main class="layout">${rail()}<section class="page"><header class="head"><h1>설정</h1></header><div class="content settings-page"><header class="settings-intro"><span>나에게 맞춘 Re:Tone</span><h2>${esc(signedIn)}님, 필요한 순간에만 도울게요.</h2><p>전체 기본값은 간단하게 정하고, 필요한 항목만 열어 조절할 수 있어요.</p></header><section class="settings-card settings-profile-card"><label class="room"><span class="avatar">${avatar ? `<img src="${avatar}">` : esc(signedIn[0])}</span><span class="copy"><b>프로필 사진</b><span>사진을 선택하면 이 기기에서 바로 적용돼요.</span></span><span class="settings-card-action">변경</span><input hidden type="file" accept="image/*" onchange="setAvatar(this)"></label></section><section class="ai-preferences settings-card"><header><span>AI 대화 도움</span><h2>얼마나 세심하게 볼까요?</h2><p>일상적인 말은 그대로 두고, 필요한 부분만 조용히 제안해요.</p></header><div class="ai-level-grid">${Object.entries(
     levels,
   )
     .map(
@@ -734,7 +762,7 @@ function settings() {
     )
     .join(
       "",
-    )}</div><div class="ai-toggles">${toggles.map((t, i) => `<label><input type="checkbox" ${i < 6 ? "checked" : ""}>${t}</label>`).join("")}</div></section><button class="room" onclick="logout()"><span class="avatar">↪</span><span class="copy"><b>로그아웃</b><span>이 기기에서 안전하게 로그아웃해요.</span></span></button></div></div></section></main>`;
+    )}</div><div class="ai-toggles"></div></section><section id="settings-app-actions" class="settings-app-actions"></section><button class="room settings-logout" onclick="logout()"><span class="avatar">↪</span><span class="copy"><b>로그아웃</b><span>이 기기에서 안전하게 로그아웃해요.</span></span></button></div></section></main>`;
   renderDetailedAiSettings();
   startInboxPolling(data);
 }
@@ -930,7 +958,10 @@ function renderDetailedAiSettings() {
     const [, desc, options] = aiCategories.find(([title]) => title === name);
     return `<article class="ai-category"><span><b>${name}</b><small>${desc}</small></span><div class="ai-choice-row">${options.map((option) => `<button class="${saved[name] === option ? "selected" : ""}" onclick="saveAiDetail('${name}','${option}')">${option}</button>`).join("")}</div></article>`;
   };
-  root.innerHTML = `<section class="overall-sensitivity"><span>기본 AI 민감도</span><b id="overall-sensitivity-label">${sensitivityLabel(sensitivity.overall)} · ${sensitivity.overall}</b><input type="range" min="0" max="100" value="${sensitivity.overall}" style="--sensitivity:${sensitivity.overall}%" oninput="previewOverallSensitivity(this.value,this)" onchange="setOverallSensitivity(this.value)"><small>모든 채팅방의 기본값이에요. 친한 친구 방은 방 설정에서 따로 낮출 수 있어요.</small></section><details class="ai-advanced-settings"><summary><span><b>세부 AI 항목 조절</b><small>필요할 때만 열어 항목별로 바꿔요.</small></span><i>⌄</i></summary><div class="ai-setting-intro"><b>내 선택을 반영해요</b><span>${esc(learningNote())}</span></div>${aiGroups.map(([title, desc, names]) => `<details class="ai-setting-group"><summary><span><b>${title}</b><small>${desc}</small></span><i>⌄</i></summary><div class="ai-category-list">${names.map(card).join("")}</div></details>`).join("")}</details><section class="settings-actions"><button class="theme-toggle" onclick="toggleTheme()">${document.body.classList.contains("dark") ? "☀️ 라이트 모드" : "🌙 다크 모드"}</button><button class="notification-toggle" onclick="toggleBrowserNotifications()">${browserNotificationsEnabled() ? "🔔 새 메시지 알림 켬" : "🔕 새 메시지 알림 켜기"}</button><button class="danger-action" onclick="openDeleteAccount()">회원 탈퇴</button></section>`;
+  root.innerHTML = `<section class="overall-sensitivity"><span>기본 AI 민감도</span><b id="overall-sensitivity-label">${sensitivityLabel(sensitivity.overall)} · ${sensitivity.overall}</b><input type="range" min="0" max="100" value="${sensitivity.overall}" style="--sensitivity:${sensitivity.overall}%" oninput="previewOverallSensitivity(this.value,this)" onchange="setOverallSensitivity(this.value)"><small>모든 채팅방의 기본값이에요. 친한 친구 방은 방 설정에서 따로 낮출 수 있어요.</small></section><details class="ai-advanced-settings"><summary><span><b>세부 항목 조절</b><small>필요한 항목만 열어, 내 대화 방식에 맞춰요.</small></span><i>⌄</i></summary><div class="ai-setting-intro"><b>‘그냥 보내기’ 선택도 반영해요</b><span>${esc(learningNote())}</span></div>${aiGroups.map(([title, desc, names]) => `<details class="ai-setting-group"><summary><span><b>${title}</b><small>${desc}</small></span><i>⌄</i></summary><div class="ai-category-list">${names.map(card).join("")}</div></details>`).join("")}</details>`;
+  const actions = document.querySelector("#settings-app-actions");
+  if (actions)
+    actions.innerHTML = `<section class="settings-actions"><button class="theme-toggle" onclick="toggleTheme()">${document.body.classList.contains("dark") ? "☀️ 라이트 모드" : "🌙 다크 모드"}</button><button class="notification-toggle" onclick="toggleBrowserNotifications()">${browserNotificationsEnabled() ? "🔔 새 메시지 알림 켬" : "🔕 새 메시지 알림 켜기"}</button><button class="danger-action" onclick="openDeleteAccount()">회원 탈퇴</button></section>`;
 }
 function saveAiDetail(name, value) {
   const state = sensitivityState();
@@ -1020,9 +1051,13 @@ async function setAiIntervention(level) {
   const next = levelToSensitivity[level] ?? 50;
   const state = sensitivityState();
   state.overall = next;
-  sensitivityKeys.forEach((key) => {
-    state.categories[key] = next;
-  });
+  const presets = {
+    off: Object.fromEntries(sensitivityKeys.map((key) => [key, 0])),
+    light: { ...defaultSensitivityCategories(), "강한 공격 표현": 25, "비꼼·압박 표현": 0, "출처 확인 제안": 0, "대화 흐름 참고": 0, "대화 복구 문장": 0 },
+    standard: defaultSensitivityCategories(),
+    careful: Object.fromEntries(sensitivityKeys.map((key) => [key, 75])),
+  };
+  state.categories = presets[level] || defaultSensitivityCategories();
   saveSensitivity(state);
   const user = await api(`/api/users/${signedInId}/preferences`, {
     method: "PATCH",
@@ -1154,24 +1189,75 @@ function view(m) {
   const quote = m.reply_to
     ? `<button class="reply-quote" onpointerdown="event.stopPropagation()" onclick="event.stopPropagation();focusReply('${m.reply_to}')"><b>${esc(original?.sender || "삭제된 메시지")}</b><span>${esc(original?.body || (original?.image_url ? "사진" : "원문을 찾을 수 없어요"))}</span></button>`
     : "";
-  const replyButton = `<button class="reply-shortcut" title="답장" aria-label="답장" onpointerdown="event.stopPropagation()" onclick="event.stopPropagation();startReply('${m.id}')">↩</button>`;
+  const replyButton = `<button class="reply-shortcut" title="답장" aria-label="답장" onpointerdown="event.stopPropagation()" onclick="event.stopPropagation();startReply('${m.id}')"><span>↩</span><em>답장</em></button>`;
   const tap = m.mine ? "" : `onclick="handleMessageTap('${m.id}')"`;
-  const press = `onpointerdown="beginMessagePress(event,'${m.id}')" onpointerup="cancelMessagePress()" onpointerleave="cancelMessagePress()" onpointermove="cancelMessagePress()" onpointercancel="cancelMessagePress()" oncontextmenu="return false"`;
+  const press = `onpointerdown="beginMessagePress(event,'${m.id}',${m.mine})" onpointerup="endMessageGesture(event,'${m.id}',${m.mine})" onpointerleave="endMessageGesture(event,'${m.id}',${m.mine})" onpointermove="trackMessageSwipe(event,'${m.id}',${m.mine})" onpointercancel="cancelMessagePress(true)" oncontextmenu="return false"`;
   return `<article class="bubble ${m.mine ? "mine" : ""}" data-message-id="${esc(m.id)}" ${tap} ${press}><div class="meta"><span>${esc(m.sender)}${m.intent ? ` · <span class="intent-tag">${esc(m.intent)}</span>` : ""}</span>${messageMenu}</div>${quote}${m.image_url ? `<img class="chat-image" src="${m.image_url}" alt="보낸 사진">` : ""}${m.body ? `<span>${esc(m.body)}</span>` : ""}<div class="bubble-tools">${factCue}${replyButton}${m.mine && m.unread ? `<span class="read">${m.unread}</span>` : ""}</div></article>`;
 }
-function beginMessagePress(event, id) {
-  if (event.pointerType === "mouse") return;
+function beginMessagePress(event, id, mine) {
   cancelMessagePress();
-  messagePressTimer = setTimeout(() => {
-    messagePressTimer = null;
-    suppressMessageTapUntil = Date.now() + 700;
-    navigator.vibrate?.(10);
-    openPressedMessageActions(id);
-  }, 480);
+  messageSwipe = {
+    id,
+    mine,
+    pointerId: event.pointerId,
+    startX: event.clientX,
+    startY: event.clientY,
+    horizontal: false,
+    activated: false,
+    target: event.currentTarget,
+  };
+  // 마우스는 드래그로 답장하고, 터치에서는 꾹 눌러도 기존 작업 메뉴를 열 수 있어요.
+  if (event.pointerType !== "mouse") {
+    messagePressTimer = setTimeout(() => {
+      if (!messageSwipe || messageSwipe.id !== id || messageSwipe.horizontal) return;
+      messagePressTimer = null;
+      suppressMessageTapUntil = Date.now() + 700;
+      navigator.vibrate?.(10);
+      openPressedMessageActions(id);
+    }, 480);
+  }
 }
-function cancelMessagePress() {
+function trackMessageSwipe(event, id, mine) {
+  const swipe = messageSwipe;
+  if (!swipe || swipe.id !== id || swipe.pointerId !== event.pointerId) return;
+  const dx = event.clientX - swipe.startX;
+  const dy = event.clientY - swipe.startY;
+  if (!swipe.horizontal && (Math.abs(dx) > 7 || Math.abs(dy) > 7)) {
+    cancelMessagePress();
+    swipe.horizontal = Math.abs(dx) > Math.abs(dy) * 1.15;
+  }
+  if (!swipe.horizontal) return;
+  const expected = mine ? Math.min(0, dx) : Math.max(0, dx);
+  const distance = Math.min(66, Math.abs(expected));
+  swipe.activated = distance >= 42;
+  swipe.target.classList.toggle("reply-swipe-ready", swipe.activated);
+  swipe.target.style.setProperty("--reply-swipe", `${expected * 0.42}px`);
+  event.preventDefault();
+}
+function endMessageGesture(event, id, mine) {
+  const swipe = messageSwipe;
+  if (!swipe || swipe.id !== id || swipe.pointerId !== event.pointerId) {
+    cancelMessagePress();
+    return;
+  }
+  const shouldReply = swipe.horizontal && swipe.activated;
+  swipe.target.style.removeProperty("--reply-swipe");
+  swipe.target.classList.remove("reply-swipe-ready");
+  messageSwipe = null;
+  cancelMessagePress();
+  if (shouldReply) {
+    suppressMessageTapUntil = Date.now() + 500;
+    startReply(id);
+  }
+}
+function cancelMessagePress(resetSwipe = false) {
   if (messagePressTimer) clearTimeout(messagePressTimer);
   messagePressTimer = null;
+  if (resetSwipe && messageSwipe) {
+    messageSwipe.target?.style.removeProperty("--reply-swipe");
+    messageSwipe.target?.classList.remove("reply-swipe-ready");
+    messageSwipe = null;
+  }
 }
 function handleMessageTap(id) {
   if (Date.now() < suppressMessageTapUntil) return;
@@ -1212,24 +1298,21 @@ function focusReply(id) {
   target.classList.add("reply-focused");
   setTimeout(() => target.classList.remove("reply-focused"), 900);
 }
-function conversationSignals(messages) {
-  return messages.slice(-8).map((message) => {
-    const text = message.body || "";
-    if (/(시발|씨발|병신|꺼져|죽어|닥쳐|개새|좆|한심해|최악이야|뭐하는거야)/.test(text)) return 2;
-    if (/(서운해|답답해|오해한 것 같|말이 안|무슨 말이야|왜 그렇게 말해)/.test(text)) return 1;
-    return 0;
-  });
+function latestConversationInsight() {
+  return (data?.insights || [])
+    .filter((item) => item.room_id === roomId)
+    .sort((a, b) => (b.checkpoint || 0) - (a.checkpoint || 0))[0];
 }
-function conversationPulse(messages) {
+function conversationPulse() {
   if (aiDetails()["대화 흐름 참고"] === "끄기") return "";
-  const points = conversationSignals(messages);
-  const strongCount = points.filter((point) => point === 2).length;
-  const caution = strongCount >= 2;
-  return `<button class="conversation-pulse ${caution ? "careful" : ""}" onclick="${caution ? "openConflictGuide()" : "openConversationPulse()"}"><span>대화 흐름</span><b>${caution ? "조금 조심" : "차분하게 이어지는 중"}</b></button>`;
+  const insight = latestConversationInsight();
+  const caution = Boolean(insight?.has_conflict);
+  const label = insight?.topic || "필요할 때 살펴보기";
+  return `<button class="conversation-pulse ${caution ? "careful" : ""}" onclick="openConflictGuide()"><span>대화 흐름</span><b>${caution ? "엇갈림 가능성" : esc(label)}</b></button>`;
 }
 function openConversationPulse() {
   popup(
-    `<div class="ai-check info"><span>대화 흐름 참고</span><h2>현재 대화는 차분하게 이어지고 있어요.</h2><p>이 표시는 최근 표현을 참고해 보여주는 안내일 뿐, 감정이나 사람을 판단하지 않아요.</p><button onclick="closePopup()">확인</button></div>`,
+    `<div class="ai-check info"><span>대화 흐름 참고</span><h2>필요할 때만 최근 맥락을 정리해요.</h2><p>대화 온도나 사람의 감정을 단정하지 않고, 실제 주제와 엇갈릴 수 있는 지점만 참고로 보여줘요.</p><button onclick="closePopup()">확인</button></div>`,
   );
 }
 async function openConflictGuide() {
@@ -1500,6 +1583,8 @@ async function send(event) {
   const input = document.querySelector("#text"),
     body = input.value.trim();
   if (!body) return;
+  const skipAiOnce = rewrittenDraftBypass === body;
+  rewrittenDraftBypass = "";
   pendingSend = { body, room: roomId, intent: selectedIntent, replyTo: replyingTo?.id || null };
   replyingTo = null;
   input.value = "";
@@ -1512,6 +1597,11 @@ async function send(event) {
         ? "이전 확인 결과를 사용해요…"
         : "AI가 확인 중이에요…";
   addPendingBubble(body);
+  if (skipAiOnce) {
+    setAiStatus("AI가 다듬은 문장을 보내고 있어요…", true);
+    await sendApproved();
+    return;
+  }
   try {
     showCheckResult(await checkForSend(body));
   } catch {
@@ -1623,7 +1713,7 @@ async function rewritePending() {
     });
     if (out.suggestion) {
       pendingSend.body = out.suggestion;
-      editPendingSend();
+      editPendingSend(true);
     } else {
       button.textContent = "표현 바꾸기";
     }
@@ -1685,7 +1775,7 @@ async function sendApproved() {
       })
       .catch(() => {});
 }
-function editPendingSend() {
+function editPendingSend(allowOnePass = false) {
   const body = pendingSend?.body || "";
   const replyTo = pendingSend?.replyTo;
   // 경고창에서 입력창으로 돌아가는 것은 '취소'가 아니라 새 문장의 편집입니다.
@@ -1704,7 +1794,13 @@ function editPendingSend() {
     input.placeholder = "메시지를 입력하세요";
     input.value = body;
     input.focus();
-    queueAiCheck(body);
+    if (allowOnePass) {
+      rewrittenDraftBypass = body;
+      setAiStatus("AI가 다듬은 문장이에요. 그대로 보내거나 더 고쳐도 돼요.");
+    } else {
+      rewrittenDraftBypass = "";
+      queueAiCheck(body);
+    }
     if (replyingTo) openRoom(roomId);
   }
 }
