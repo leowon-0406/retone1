@@ -522,10 +522,10 @@ function showFriendAddPanel(mode) {
     return;
   }
   if (mode === "code") {
-    panel.innerHTML = `<label>친구코드<input id="friend-code" autocapitalize="characters" autocomplete="off" placeholder="예: RT-1234ABCD"></label><small>친구가 직접 알려준 코드를 입력해주세요.</small><button onclick="lookupFriend('code')">친구 찾기</button><div id="friend-search-result"></div>`;
+    panel.innerHTML = `<label>친구코드<input id="friend-code" autocapitalize="characters" autocomplete="off" maxlength="6" placeholder="예: A7K9Q2"></label><small>친구가 직접 알려준 6자리 코드를 입력해주세요.</small><button onclick="lookupFriend('code')">친구 찾기</button><div id="friend-search-result"></div>`;
     return;
   }
-  panel.innerHTML = `<div class="my-qr-card" id="my-friend-qr"><div class="thinking-loader"><i></i><i></i><i></i></div><small>내 QR 코드를 준비하고 있어요.</small></div><div class="qr-actions"><button class="quiet" onclick="copyFriendCode()">친구코드 복사</button><button onclick="shareFriendCode()">공유하기</button></div><label class="qr-scan-button">QR 사진으로 친구 추가<input type="file" accept="image/*" capture="environment" onchange="scanFriendQr(this)"></label><small class="qr-help">상대의 Re:Tone QR을 카메라로 찍거나, 저장한 QR 사진을 선택하세요.</small>`;
+  panel.innerHTML = `<div class="my-qr-card" id="my-friend-qr"><div class="thinking-loader"><i></i><i></i><i></i></div><small>내 QR 코드를 준비하고 있어요.</small></div><div class="qr-actions"><button class="quiet" onclick="copyFriendCode()">코드 복사</button><button onclick="shareFriendCode()">친구에게 공유</button></div><label class="qr-scan-button"><span>⌁</span> QR 사진으로 친구 추가<input type="file" accept="image/*" capture="environment" onchange="scanFriendQr(this)"></label><small class="qr-help">상대의 Re:Tone QR을 카메라로 찍거나 저장한 사진을 선택하세요.</small>`;
   loadMyFriendQr();
 }
 async function loadMyFriendQr() {
@@ -534,7 +534,7 @@ async function loadMyFriendQr() {
   try {
     const profile = await api("/api/friends/me");
     card.dataset.friendCode = profile.friend_code;
-    card.innerHTML = `<div class="qr-image">${profile.qr_svg}</div><b>${esc(profile.friend_code)}</b><small>상대가 이 QR을 스캔하면 나를 바로 찾을 수 있어요.</small>`;
+    card.innerHTML = `<div class="qr-copy"><span>나의 친구 QR</span><b>스캔하면 바로<br>친구 요청을 보낼 수 있어요.</b><small>상대가 수락하면 채팅을 시작해요.</small></div><div class="qr-image">${profile.qr_svg}</div><button class="friend-code-chip" onclick="copyFriendCode()"><span>친구코드</span><b>${esc(profile.friend_code)}</b><i>복사</i></button>`;
   } catch {
     card.innerHTML = `<b>QR 코드를 불러오지 못했어요.</b><small>잠시 후 다시 열어주세요.</small>`;
   }

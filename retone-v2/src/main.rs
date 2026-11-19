@@ -304,12 +304,15 @@ fn friend_code_for(id: Uuid, attempt: u8) -> String {
     let mut hasher = Sha256::new();
     hasher.update(format!("retone-v2-friend-code:{id}:{attempt}"));
     let digest = hasher.finalize();
-    let compact = digest
-        .iter()
-        .take(6)
-        .map(|value| format!("{value:02X}"))
-        .collect::<String>();
-    format!("RT-{compact}")
+    // Similar-looking characters are deliberately excluded, so this stays easy to read aloud.
+    const ALPHABET: &[u8] = b"23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
+    let mut number = u64::from_be_bytes(digest[..8].try_into().unwrap());
+    let mut compact = String::with_capacity(6);
+    for _ in 0..6 {
+        compact.push(ALPHABET[(number & 31) as usize] as char);
+        number >>= 5;
+    }
+    compact
 }
 async fn allocate_friend_code(db: &PgPool, id: Uuid) -> Result<String, StatusCode> {
     for attempt in 0..20 {
@@ -329,7 +332,7 @@ async fn allocate_friend_code(db: &PgPool, id: Uuid) -> Result<String, StatusCod
 }
 async fn ensure_friend_codes(db: &PgPool) -> Result<(), StatusCode> {
     let ids = sqlx::query_scalar::<_, Uuid>(
-        "SELECT id FROM retone_v2.users WHERE friend_code IS NULL OR friend_code=''",
+        "SELECT id FROM retone_v2.users WHERE friend_code IS NULL OR friend_code='' OR length(replace(friend_code,'-',''))>6",
     )
     .fetch_all(db)
     .await
