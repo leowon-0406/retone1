@@ -284,9 +284,18 @@ async function openRoom(id) {
     alert("이 채팅방을 더 이상 찾을 수 없어요. 채팅 목록을 새로 불러올게요.");
     return home();
   }
-  const messages = await api(
+  let messages;
+  try {
+    messages = await api(
       `/api/rooms/${id}/messages?user_id=${encodeURIComponent(signedInId)}`,
     );
+  } catch {
+    if (roomId === id) {
+      stopRoomPolling();
+      app.innerHTML = connectionIssue("채팅방", `openRoom('${id}')`);
+    }
+    return;
+  }
   currentRoomMessages = messages;
   const reflections = (data.reflections || []).filter(
     (item) => item.room_id === id,
@@ -327,8 +336,29 @@ function stopRoomPolling() {
     roomPollTimer = null;
   }
 }
+function updateReadReceipts(messages) {
+  const unreadByMessage = new Map(
+    messages
+      .filter((message) => message.mine)
+      .map((message) => [message.id, Number(message.unread || 0)]),
+  );
+  document.querySelectorAll(".bubble.mine[data-message-id]").forEach((bubble) => {
+    const messageId = bubble.dataset.messageId;
+    const unread = unreadByMessage.get(messageId) || 0;
+    const receipt = bubble.querySelector(".read");
+    if (!unread) {
+      receipt?.remove();
+      return;
+    }
+    if (receipt) {
+      receipt.textContent = unread;
+      return;
+    }
+    bubble.insertAdjacentHTML("beforeend", `<span class="read">${unread}</span>`);
+  });
+}
 function startRoomPolling(id, initialMessages) {
-  let knownCount = initialMessages.length;
+  let knownMessageIds = new Set(initialMessages.map((message) => message.id));
   let knownReadState = JSON.stringify(
     initialMessages.map((message) => [message.id, message.unread || 0]),
   );
@@ -341,12 +371,22 @@ function startRoomPolling(id, initialMessages) {
       const latestReadState = JSON.stringify(
         latest.map((message) => [message.id, message.unread || 0]),
       );
-      if (latest.length !== knownCount || latestReadState !== knownReadState) {
-        const incoming = latest.slice(knownCount).filter((message) => !message.mine);
+      const structureChanged =
+        latest.length !== knownMessageIds.size ||
+        latest.some((message) => !knownMessageIds.has(message.id));
+      if (structureChanged) {
+        const incoming = latest.filter(
+          (message) => !knownMessageIds.has(message.id) && !message.mine,
+        );
         incoming.forEach((message) => notifyNewMessage(message));
-        knownCount = latest.length;
+        knownMessageIds = new Set(latest.map((message) => message.id));
         knownReadState = latestReadState;
+        currentRoomMessages = latest;
         openRoom(id);
+      } else if (latestReadState !== knownReadState) {
+        knownReadState = latestReadState;
+        currentRoomMessages = latest;
+        updateReadReceipts(latest);
       }
     } catch {}
   }, 3500);
@@ -460,7 +500,7 @@ function settings() {
   stopRoomPolling();
   nav = "settings";
   if (isAdmin) {
-    app.innerHTML = `<main class="layout">${rail()}<section class="page"><header class="head"><h1>관리자</h1></header><div class="content"><div class="intro"><h2>Re:Tone 관리자 계정</h2><p>사용자별 계정과 AI 문의를 관리하는 공간이에요.</p></div><section class="admin-panel"><b>관리자 로그인 완료</b><span>일반 사용자 대화에는 관리자 권한이 자동으로 개입하지 않아요.</span><button onclick="openAdminReports()">AI 문의 확인</button></section><section class="admin-users"><div><b>가입 사용자</b><span>초기화할 계정을 개별로 선택하세요.</span></div><div id="admin-users-list" class="admin-users-list"><small>사용자 목록을 불러오는 중…</small></div></section><section class="admin-danger"><b>전체 서비스 데이터 초기화</b><p>모든 계정, 친구 관계, 채팅, 사진, 일정, 반응, AI 문의와 확인 기록을 삭제합니다. 관리자 IP 잠금은 유지됩니다.</p><button onclick="openGlobalReset()">전체 데이터 초기화</button></section><button class="room" onclick="logout()"><span class="avatar">↪</span><span class="copy"><b>로그아웃</b><span>관리자 세션을 안전하게 종료해요.</span></span></button></div></section></main>`;
+    app.innerHTML = `<main class="layout">${rail()}<section class="page"><header class="head"><h1>관리자</h1></header><div class="content"><div class="intro"><h2>Re:Tone 관리자 계정</h2><p>사용자별 계정과 AI 문의를 관리하는 공간이에요.</p></div><section class="admin-panel"><b>관리자 로그인 완료</b><span>일반 사용자 대화에는 관리자 권한이 자동으로 개입하지 않아요.</span><button onclick="openAdminReports()">AI 문의 확인</button></section><section class="admin-users"><div><b>가입 사용자</b><span>초기화할 계정을 개별로 선택하세요.</span></div><div id="admin-users-list" class="admin-users-list"><small>사용자 목록을 불러오는 중…</small></div></section><section class="admin-danger"><b>전체 서비스 데이터 초기화</b><p>모든 계정, 친구 관계, 채팅, 사진, 일정, 반응, AI 문의와 확인 기록을 삭제합니다.</p><button onclick="openGlobalReset()">전체 데이터 초기화</button></section><button class="room" onclick="logout()"><span class="avatar">↪</span><span class="copy"><b>로그아웃</b><span>관리자 세션을 안전하게 종료해요.</span></span></button></div></section></main>`;
     renderAdminUsers();
     return;
   }
@@ -529,7 +569,7 @@ async function loadAdminReports() {
 }
 function openGlobalReset() {
   popup(
-    `<div class="delete-account-card global-reset-card"><div class="delete-account-icon">!</div><span>되돌릴 수 없는 관리자 작업</span><h2>전체 서비스 데이터를 초기화할까요?</h2><p>모든 계정, 친구 관계, 채팅방, 메시지, 사진, 일정, 반응, AI 문의와 확인 기록을 삭제해요. 관리자 접근 IP 잠금은 유지돼요.</p><label>관리자 비밀번호<input id="global-reset-password" type="password" placeholder="관리자 비밀번호를 입력해주세요"></label><label>2차 인증 코드<input id="global-reset-two-factor" type="password" inputmode="numeric" placeholder="2차 인증 코드를 입력해주세요"></label><label>확인 문구<input id="global-reset-confirmation" placeholder="초기화 를 입력해주세요"></label><small>실행하려면 위 칸에 <b>초기화</b>를 정확히 입력해주세요.</small><div class="modal-actions"><button class="quiet" onclick="closePopup()">취소</button><button class="danger-action" id="global-reset-action" onclick="confirmGlobalReset()">전체 초기화</button></div></div>`,
+    `<div class="delete-account-card global-reset-card"><div class="delete-account-icon">!</div><span>되돌릴 수 없는 관리자 작업</span><h2>전체 서비스 데이터를 초기화할까요?</h2><p>모든 계정, 친구 관계, 채팅방, 메시지, 사진, 일정, 반응, AI 문의와 확인 기록을 삭제해요.</p><label>관리자 비밀번호<input id="global-reset-password" type="password" placeholder="관리자 비밀번호를 입력해주세요"></label><label>2차 인증 코드<input id="global-reset-two-factor" type="password" inputmode="numeric" placeholder="2차 인증 코드를 입력해주세요"></label><label>확인 문구<input id="global-reset-confirmation" placeholder="초기화 를 입력해주세요"></label><small>실행하려면 위 칸에 <b>초기화</b>를 정확히 입력해주세요.</small><div class="modal-actions"><button class="quiet" onclick="closePopup()">취소</button><button class="danger-action" id="global-reset-action" onclick="confirmGlobalReset()">전체 초기화</button></div></div>`,
   );
 }
 async function confirmGlobalReset() {
@@ -551,14 +591,14 @@ async function confirmGlobalReset() {
     if (!result.ok) throw new Error();
     closePopup();
     popup(
-      `<div class="ai-check info"><h2>전체 초기화가 완료됐어요.</h2><p>계정과 소통 데이터, AI 확인 기록을 모두 삭제했어요. 관리자 접근 IP 잠금은 유지돼요.</p><button onclick="closePopup();settings()">확인</button></div>`,
+      `<div class="ai-check info"><h2>전체 초기화가 완료됐어요.</h2><p>계정과 소통 데이터, AI 확인 기록을 모두 삭제했어요.</p><button onclick="closePopup();settings()">확인</button></div>`,
     );
   } catch {
     if (action) {
       action.disabled = false;
       action.textContent = "전체 초기화";
     }
-    alert("초기화하지 못했어요. 관리자 인증 정보와 현재 접속 IP를 확인해주세요.");
+    alert("초기화하지 못했어요. 관리자 인증 정보와 서버 상태를 확인해주세요.");
   }
 }
 function openAdminUserClear(id, encodedName) {
@@ -897,7 +937,7 @@ function view(m) {
   const messageMenu = m.mine
     ? `<button class="message-menu" title="메시지 관리" aria-label="메시지 관리" onclick="event.stopPropagation();openMessageActions('${m.id}')"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg></button>`
     : "";
-  return `<article class="bubble ${m.mine ? "mine" : ""}" ${m.mine ? "" : `onclick="inspectMessage(${JSON.stringify(m.body)})"`}><div class="meta"><span>${esc(m.sender)}${m.intent ? ` · <span class="intent-tag">${esc(m.intent)}</span>` : ""}</span>${messageMenu}</div>${m.image_url ? `<img class="chat-image" src="${m.image_url}" alt="보낸 사진">` : ""}${m.body ? `<span>${esc(m.body)}</span>` : ""}${factCue}${m.mine && m.unread ? `<span class="read">${m.unread}</span>` : ""}</article>`;
+  return `<article class="bubble ${m.mine ? "mine" : ""}" data-message-id="${esc(m.id)}" ${m.mine ? "" : `onclick="inspectMessage(${JSON.stringify(m.body)})"`}><div class="meta"><span>${esc(m.sender)}${m.intent ? ` · <span class="intent-tag">${esc(m.intent)}</span>` : ""}</span>${messageMenu}</div>${m.image_url ? `<img class="chat-image" src="${m.image_url}" alt="보낸 사진">` : ""}${m.body ? `<span>${esc(m.body)}</span>` : ""}${factCue}${m.mine && m.unread ? `<span class="read">${m.unread}</span>` : ""}</article>`;
 }
 function conversationSignals(messages) {
   return messages.slice(-8).map((message) => {
@@ -1806,7 +1846,7 @@ async function finishAdminLogin() {
   } catch (error) {
     if (error?.status === 403) {
       alert(
-        "관리자 접속은 처음 승인된 컴퓨터·네트워크에서만 가능해요. 현재 접속 위치가 바뀌었다면 Render의 RETONE_ADMIN_ALLOWED_IP 설정 또는 관리자 IP 잠금을 확인해주세요.",
+        "관리자 접근이 허용되지 않았어요. 관리자 계정 상태와 서버 설정을 확인해주세요.",
       );
     } else if (error?.status === 401) {
       alert("관리자 비밀번호 또는 2차 인증 코드가 맞지 않아요.");

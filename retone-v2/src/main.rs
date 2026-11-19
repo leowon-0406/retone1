@@ -1816,7 +1816,7 @@ async fn create_room(
     if is_direct {
         let peer_id = Uuid::parse_str(&invitees[0]).map_err(|_| StatusCode::BAD_REQUEST)?;
         let existing = sqlx::query_as::<_, (Uuid, String, i64)>(
-            "SELECT r.id,r.name,FLOOR(EXTRACT(EPOCH FROM r.created_at)*1000)::BIGINT FROM retone_v2.rooms r WHERE (SELECT COUNT(*) FROM retone_v2.room_members rm WHERE rm.room_id=r.id)=2 AND EXISTS(SELECT 1 FROM retone_v2.room_members rm WHERE rm.room_id=r.id AND rm.user_id=$1) AND EXISTS(SELECT 1 FROM retone_v2.room_members rm WHERE rm.room_id=r.id AND rm.user_id=$2) ORDER BY r.created_at DESC LIMIT 1",
+            "SELECT r.id,r.name,FLOOR(EXTRACT(EPOCH FROM r.created_at)*1000)::BIGINT FROM retone_v2.rooms r WHERE r.is_group=FALSE AND (SELECT COUNT(*) FROM retone_v2.room_members rm WHERE rm.room_id=r.id)=2 AND EXISTS(SELECT 1 FROM retone_v2.room_members rm WHERE rm.room_id=r.id AND rm.user_id=$1) AND EXISTS(SELECT 1 FROM retone_v2.room_members rm WHERE rm.room_id=r.id AND rm.user_id=$2) ORDER BY r.created_at DESC LIMIT 1",
         )
         .bind(creator)
         .bind(peer_id)
