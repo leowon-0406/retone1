@@ -60,6 +60,7 @@ struct Agreement {
 }
 #[derive(Clone, Serialize)]
 struct Appointment {
+    id: String,
     room_id: String,
     title: String,
     date: String,
@@ -128,6 +129,12 @@ struct NewAgreement {
 struct NewAppointment {
     title: String,
     room_id: Option<String>,
+    date: String,
+    place: String,
+}
+#[derive(Deserialize)]
+struct UpdateAppointment {
+    title: String,
     date: String,
     place: String,
 }
@@ -2133,7 +2140,9 @@ async fn create_appointment(
     let starts_at = chrono::NaiveDateTime::parse_from_str(&input.date, "%Y-%m-%d %H:%M")
         .map_err(|_| StatusCode::BAD_REQUEST)?
         .and_utc();
+    let appointment_id = Uuid::new_v4();
     let appointment = Appointment {
+        id: appointment_id.to_string(),
         room_id: room_uuid.map(|value| value.to_string()).unwrap_or_default(),
         title: input.title.trim().chars().take(80).collect(),
         date: input.date.trim().chars().take(30).collect(),
@@ -2145,7 +2154,7 @@ async fn create_appointment(
         owner_id: user_id.to_string(),
     };
     sqlx::query("INSERT INTO retone_v2.appointments(id,room_id,title,starts_at,place,created_by) VALUES($1,$2,$3,$4,$5,$6)")
-        .bind(Uuid::new_v4())
+        .bind(appointment_id)
         .bind(room_uuid)
         .bind(&appointment.title)
         .bind(starts_at)
@@ -2159,6 +2168,56 @@ async fn create_appointment(
         .await
         .appointments
         .push(appointment.clone());
+    Ok(Json(appointment))
+}
+async fn update_appointment(
+    State(app): State<App>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+    Json(input): Json<UpdateAppointment>,
+) -> Result<Json<Appointment>, StatusCode> {
+    if input.title.trim().is_empty() || input.date.trim().is_empty() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let user_id = require_user(&app, &headers).await?;
+    let (room_id, created_by) = sqlx::query_as::<_, (Option<Uuid>, Uuid)>(
+        "SELECT room_id,created_by FROM retone_v2.appointments WHERE id=$1",
+    )
+    .bind(id)
+    .fetch_optional(&app.db)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    .ok_or(StatusCode::NOT_FOUND)?;
+    if let Some(room_id) = room_id {
+        require_room_member(&app, room_id, user_id).await?;
+    } else if created_by != user_id {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    let starts_at = chrono::NaiveDateTime::parse_from_str(&input.date, "%Y-%m-%d %H:%M")
+        .map_err(|_| StatusCode::BAD_REQUEST)?
+        .and_utc();
+    let row = sqlx::query_as::<_, (Option<Uuid>, String, String, String, Uuid)>(
+        "UPDATE retone_v2.appointments SET title=$1,starts_at=$2,place=$3 WHERE id=$4 RETURNING room_id,title,TO_CHAR(starts_at,'YYYY-MM-DD HH24:MI'),COALESCE(place,'장소 미정'),created_by",
+    )
+    .bind(input.title.trim().chars().take(80).collect::<String>())
+    .bind(starts_at)
+    .bind(if input.place.trim().is_empty() { "장소 미정".to_string() } else { input.place.trim().chars().take(50).collect() })
+    .bind(id)
+    .fetch_one(&app.db)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let appointment = Appointment {
+        id: id.to_string(),
+        room_id: row.0.map(|value| value.to_string()).unwrap_or_default(),
+        title: row.1,
+        date: row.2,
+        place: row.3,
+        owner_id: row.4.to_string(),
+    };
+    let mut data = app.data.write().await;
+    if let Some(item) = data.appointments.iter_mut().find(|item| item.id == appointment.id) {
+        *item = appointment.clone();
+    }
     Ok(Json(appointment))
 }
 async fn create_reflection(
@@ -2214,8 +2273,8 @@ async fn restore_data(db: &PgPool) -> Data {
         .fetch_all(db).await.unwrap_or_default().into_iter().map(|(id,room_id,sender,sender_id,body,created,intent,image_url,reply_to)| { let alignment_hint = looks_like_alignment(&body); Message { id:id.to_string(),room_id:room_id.to_string(),sender:sender.unwrap_or_else(|| "알 수 없는 사용자".into()),sender_id:sender_id.map(|value| value.to_string()),mine:false,body,created,unread:0,intent,alignment_hint,image_url,reply_to:reply_to.map(|value| value.to_string()) } }).collect();
     let agreements = sqlx::query_as::<_, (Uuid, Uuid, String, String, String, i32, i32)>("SELECT id,room_id,task,assignee_name,deadline_text,confirmations,revisions FROM retone_v2.agreements WHERE completed_at IS NULL")
         .fetch_all(db).await.unwrap_or_default().into_iter().map(|(id,room_id,task,assignee,deadline,confirmations,revisions)| Agreement { id:id.to_string(), room_id:room_id.to_string(), task, assignee, deadline, confirmations:confirmations.clamp(0,u8::MAX as i32) as u8, revisions:revisions.clamp(0,u8::MAX as i32) as u8 }).collect();
-    let appointments = sqlx::query_as::<_, (Option<Uuid>, String, String, String, Uuid)>("SELECT room_id,title,to_char(starts_at,'YYYY-MM-DD HH24:MI'),place,created_by FROM retone_v2.appointments ORDER BY starts_at")
-        .fetch_all(db).await.unwrap_or_default().into_iter().map(|(room_id,title,date,place,owner_id)| Appointment { room_id:room_id.map(|value| value.to_string()).unwrap_or_default(), title, date, place, owner_id:owner_id.to_string() }).collect();
+    let appointments = sqlx::query_as::<_, (Uuid, Option<Uuid>, String, String, String, Uuid)>("SELECT id,room_id,title,to_char(starts_at,'YYYY-MM-DD HH24:MI'),place,created_by FROM retone_v2.appointments ORDER BY starts_at")
+        .fetch_all(db).await.unwrap_or_default().into_iter().map(|(id,room_id,title,date,place,owner_id)| Appointment { id:id.to_string(), room_id:room_id.map(|value| value.to_string()).unwrap_or_default(), title, date, place, owner_id:owner_id.to_string() }).collect();
     let reflections = sqlx::query_as::<_, (Uuid, Uuid, String, String, String)>("SELECT id,room_id,title,keep,next_step FROM retone_v2.reflections ORDER BY created_at")
         .fetch_all(db).await.unwrap_or_default().into_iter().map(|(id,room_id,title,keep,next)| Reflection { id:id.to_string(),room_id:room_id.to_string(),title,keep,next }).collect();
     let insights = sqlx::query_as::<_, (Uuid, Uuid, i32, bool, String, String, String, String)>("SELECT id,room_id,checkpoint,has_conflict,topic,summary,reason,suggestion FROM retone_v2.conversation_insights ORDER BY created_at")
@@ -2270,6 +2329,7 @@ async fn main() {
         .route("/api/agreements", post(create_agreement))
         .route("/api/agreements/{id}/{action}", post(update_agreement))
         .route("/api/appointments", post(create_appointment))
+        .route("/api/appointments/{id}", patch(update_appointment))
         .route("/api/reflections", post(create_reflection))
         .route("/api/rooms/{id}/messages", get(messages).post(send))
         .route("/api/rooms/{id}/leave", delete(leave_room))

@@ -250,6 +250,7 @@ const esc = (s) =>
     /[&<>]/g,
     (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c],
   );
+const escAttr = (s) => esc(s).replace(/"/g, "&quot;");
 const aiCacheKey = (text) =>
   `${activeAiIntervention()}|${JSON.stringify(aiDetails())}|${text.trim().toLowerCase()}`;
 function savedAiResult(text) {
@@ -359,7 +360,7 @@ async function openRoom(id) {
       item.room_id === id &&
       (item.has_conflict || aiDetails()["대화 흐름 요약"] === "항상"),
   );
-  app.innerHTML = `<main class="layout">${rail()}<section class="chat"><header class="head"><button class="back-button" title="채팅 목록으로" aria-label="채팅 목록으로" onclick="home()"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14.5 5-7 7 7 7M8 12h9"/></svg></button><div class="room-title"><h1>${esc(room.name)}</h1><span>참여자 ${room.members}명 · AI ${roomRule(id)} · ${isRoomMuted(id) ? "알림 끔" : "연결됨"}</span>${conversationPulse(messages)}</div><div class="chat-actions"><button title="친구 초대" onclick="inviteFriends()">＋</button><button title="AI 도움받기" onclick="openAiHelp()">✦</button><button title="회고 카드" onclick="newReflection()">↻</button><button title="채팅방 설정" onclick="roomSettings()">⋯</button><button title="공동 확인" onclick="newAgreement()">✓</button></div></header><section class="messages" id="messages">${insights.map(viewInsight).join("")}${messages.map(view).join("")}${alignmentCard(messages)}${appointments.map(viewAppointment).join("")}${reflections.map(viewReflection).join("")}${data.agreements
+  app.innerHTML = `<main class="layout">${rail()}<section class="chat"><header class="head"><button class="back-button" title="채팅 목록으로" aria-label="채팅 목록으로" onclick="home()"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14.5 5-7 7 7 7M8 12h9"/></svg></button><div class="room-title"><h1>${esc(room.name)}</h1><span>참여자 ${room.members}명 · AI ${roomRule(id)} · ${isRoomMuted(id) ? "알림 끔" : "연결됨"}</span>${conversationPulse(messages)}</div><div class="chat-actions"><button class="chat-primary-action" title="친구 초대" aria-label="친구 초대" onclick="inviteFriends()">＋</button><button class="chat-primary-action" title="AI 도움받기" aria-label="AI 도움받기" onclick="openAiHelp()">✦</button><button class="chat-secondary-action" title="약속 잡기" aria-label="약속 잡기" onclick="newAppointment()">◷</button><button class="chat-secondary-action" title="공동 확인" aria-label="공동 확인" onclick="newAgreement()">✓</button><button class="chat-secondary-action" title="회고 카드" aria-label="회고 카드" onclick="newReflection()">↻</button><button class="chat-secondary-action" title="채팅방 설정" aria-label="채팅방 설정" onclick="roomSettings()">⚙</button><button class="chat-more-action" title="더 보기" aria-label="더 보기" onclick="openChatMore()">⋯</button></div></header><section class="messages" id="messages">${insights.map(viewInsight).join("")}${messages.map(view).join("")}${alignmentCard(messages)}${appointments.map(viewAppointment).join("")}${reflections.map(viewReflection).join("")}${data.agreements
     .filter((agreement) => agreement.room_id === id)
     .slice(0, 1)
     .map(
@@ -374,7 +375,7 @@ async function openRoom(id) {
   else list.scrollTop = list.scrollHeight;
   const input = document.querySelector("#text");
   input.value = draft;
-  if (inputWasFocused) {
+  if (inputWasFocused || draft) {
     input.focus();
     input.setSelectionRange(cursor, cursor);
   }
@@ -529,26 +530,15 @@ async function friends() {
   roomLoadVersion += 1;
   stopRoomPolling();
   roomId = null;
-  let users, relations;
+  let relations;
   try {
-    [users, relations] = await Promise.all([
-      api("/api/users"),
-      api(`/api/friends?user_id=${encodeURIComponent(signedInId)}`),
-    ]);
+    relations = await api(`/api/friends?user_id=${encodeURIComponent(signedInId)}`);
   } catch {
     app.innerHTML = connectionIssue("친구", "friends()");
     return;
   }
-  const known = new Set([
-    ...relations.friends.map((user) => user.id),
-    ...relations.incoming.map((user) => user.id),
-    ...relations.outgoing.map((user) => user.id),
-    ...relations.blocked.map((user) => user.id),
-    signedInId,
-  ]);
-  const candidates = users.filter((user) => !known.has(user.id));
   const person = (user, action, detail) => `<article class="friend-row"><span class="avatar">${user.avatar_url ? `<img src="${user.avatar_url}" alt="">` : esc(user.name[0])}</span><span class="copy"><b>${esc(user.name)}</b><span>${detail}</span></span>${action}</article>`;
-  app.innerHTML = `<main class="layout">${rail()}<section class="page"><header class="head"><h1>친구</h1><div class="friend-head-actions"><button class="new-room" onclick="openFriendAdd()">＋ 친구 추가</button><button class="head-quiet" onclick="home()">채팅 목록</button></div></header><div class="content"><div class="intro"><h2>내 친구</h2><p>전화번호, 친구코드 또는 QR로 요청을 보내고, 수락한 사람과만 1:1 채팅을 시작할 수 있어요.</p></div>${relations.incoming.length ? `<section class="friend-section"><b>받은 친구 요청 <em>${relations.incoming.length}</em></b><div>${relations.incoming.map((user) => person(user, `<button onclick="acceptFriend('${user.id}')">수락</button><button class="soft" onclick="blockFriend('${user.id}')">차단</button>`, "친구 요청을 보냈어요")).join("")}</div></section>` : ""}<section class="friend-section"><b>친구 ${relations.friends.length}</b><div>${relations.friends.length ? relations.friends.map((user) => person(user, `<button onclick="startDirect('${esc(user.name)}','${user.id}')">채팅</button><button class="soft" onclick="blockFriend('${user.id}')">차단</button>`, "1:1 대화를 시작할 수 있어요")).join("") : `<div class="empty-chat"><b>아직 친구가 없어요</b><span>위의 ‘친구 추가’에서 전화번호, 코드 또는 QR로 요청을 보내보세요.</span></div>`}</div></section>${relations.outgoing.length ? `<section class="friend-section"><b>보낸 요청</b><div>${relations.outgoing.map((user) => person(user, `<span class="request-state">대기 중</span>`, "수락을 기다리고 있어요")).join("")}</div></section>` : ""}${candidates.length ? `<section class="friend-section friend-browse"><b>가입한 사용자</b><div>${candidates.map((user) => person(user, `<button onclick="requestFriend('${user.id}')">친구 요청</button>`, "Re:Tone에 가입했어요")).join("")}</div></section>` : ""}${relations.blocked.length ? `<details class="blocked-list"><summary>차단한 사용자 ${relations.blocked.length}명</summary><p>차단한 사용자는 친구 요청과 채팅을 시작할 수 없어요.</p></details>` : ""}</div></section></main>`;
+  app.innerHTML = `<main class="layout">${rail()}<section class="page"><header class="head"><h1>친구</h1><div class="friend-head-actions"><button class="new-room" onclick="openFriendAdd()">＋ 친구 추가</button><button class="head-quiet" onclick="home()">채팅 목록</button></div></header><div class="content"><div class="intro"><h2>내 친구</h2><p>전화번호, 친구코드 또는 QR로만 친구 요청을 보낼 수 있어요. 가입한 전체 사용자는 표시하지 않아요.</p></div>${relations.incoming.length ? `<section class="friend-section"><b>받은 친구 요청 <em>${relations.incoming.length}</em></b><div>${relations.incoming.map((user) => person(user, `<button onclick="acceptFriend('${user.id}')">수락</button><button class="soft" onclick="blockFriend('${user.id}')">차단</button>`, "친구 요청을 보냈어요")).join("")}</div></section>` : ""}<section class="friend-section"><b>친구 ${relations.friends.length}</b><div>${relations.friends.length ? relations.friends.map((user) => person(user, `<button onclick="startDirect('${esc(user.name)}','${user.id}')">채팅</button><button class="soft" onclick="blockFriend('${user.id}')">차단</button>`, "1:1 대화를 시작할 수 있어요")).join("") : `<div class="empty-chat"><b>아직 친구가 없어요</b><span>위의 ‘친구 추가’에서 전화번호, 코드 또는 QR로 요청을 보내보세요.</span></div>`}</div></section>${relations.outgoing.length ? `<section class="friend-section"><b>보낸 요청</b><div>${relations.outgoing.map((user) => person(user, `<span class="request-state">대기 중</span>`, "수락을 기다리고 있어요")).join("")}</div></section>` : ""}${relations.blocked.length ? `<details class="blocked-list"><summary>차단한 사용자 ${relations.blocked.length}명</summary><p>차단한 사용자는 친구 요청과 채팅을 시작할 수 없어요.</p></details>` : ""}</div></section></main>`;
   startInboxPolling(data);
 }
 function openFriendAdd() {
@@ -1021,7 +1011,7 @@ function toggleTheme() {
 }
 function openDeleteAccount() {
   popup(
-    `<div class="delete-account-card"><div class="delete-account-icon">!</div><span>회원 탈퇴</span><h2>정말 탈퇴할까요?</h2><p>탈퇴하면 이 계정으로 다시 로그인할 수 없고, 프로필 정보와 로그인 세션이 삭제돼요.</p><label>현재 이름<input id="delete-name" placeholder="이름을 입력해주세요"></label><label>현재 비밀번호<input id="delete-password" type="password" placeholder="비밀번호를 입력해주세요"></label><small>기존 대화는 상대방의 대화 기록을 위해 ‘탈퇴한 사용자’로만 남아요.</small><div class="modal-actions"><button class="quiet" onclick="closePopup()">취소</button><button class="danger-action" onclick="deleteMyAccount()">회원 탈퇴</button></div></div>`,
+    `<div class="delete-account-card"><div class="delete-account-icon">!</div><span>회원 탈퇴</span><h2>정말 탈퇴할까요?</h2><p>탈퇴하면 이 계정으로 다시 로그인할 수 없고, 프로필 정보와 로그인 세션이 삭제돼요.</p><label>현재 이름<input id="delete-name" placeholder="이름을 입력해주세요"></label><label>현재 비밀번호${passwordField("delete-password", "비밀번호를 입력해주세요", "autocomplete=\"current-password\"")}</label><small>기존 대화는 상대방의 대화 기록을 위해 ‘탈퇴한 사용자’로만 남아요.</small><div class="modal-actions"><button class="quiet" onclick="closePopup()">취소</button><button class="danger-action" onclick="deleteMyAccount()">회원 탈퇴</button></div></div>`,
   );
 }
 async function deleteMyAccount() {
@@ -1379,7 +1369,7 @@ function viewReflection(item) {
   return `<article class="reflection-card"><span>↻ 약속 회고</span><b>${esc(item.title)}</b><p><strong>계속할 점</strong> ${esc(item.keep || "아직 작성하지 않았어요")}</p><p><strong>다음에는</strong> ${esc(item.next || "아직 작성하지 않았어요")}</p></article>`;
 }
 function viewAppointment(item) {
-  return `<article class="appointment-card"><span>◷ 말맞춤 약속</span><b>${esc(item.title)}</b><p><strong>${esc(item.date)}</strong>${item.place ? ` · ${esc(item.place)}` : ""}</p></article>`;
+  return `<article class="appointment-card"><span>◷ 함께 정한 약속</span><b>${esc(item.title)}</b><p><strong>${esc(item.date)}</strong>${item.place ? ` · ${esc(item.place)}` : ""}</p><button class="quiet" onclick="editAppointment('${item.id}')">함께 수정</button></article>`;
 }
 function setQuickDate(inputId, offset) {
   const date = new Date();
@@ -1472,19 +1462,40 @@ async function factCheck(text) {
 function openAiHelp() {
   if (aiDetails()["감정 도움 AI"] === "끄기") return;
   popup(
-    `<div class="ai-check info"><span>AI 도움받기</span><h2>지금 마음이나 전하고 싶은 말을 적어봐요</h2><textarea id="ai-help-text" placeholder="예: 너무 서운한데 싸우고 싶진 않아"></textarea><button onclick="askAiHelp()">AI와 이야기하기</button></div>`,
+    `<div class="ai-check info ai-help-card"><span>AI 도움받기</span><h2>지금 마음이나 전하고 싶은 말을 적어봐요</h2><p>판단하지 않고, 감정을 정리하거나 상대에게 전할 말을 함께 찾아볼게요.</p><textarea id="ai-help-text" rows="4" placeholder="예: 너무 서운한데 싸우고 싶진 않아" onkeydown="if((event.ctrlKey||event.metaKey)&&event.key==='Enter'){event.preventDefault();askAiHelp()}"></textarea><small class="ai-help-hint">Ctrl/⌘ + Enter로 바로 보낼 수 있어요.</small><div id="ai-help-response" aria-live="polite"></div><button id="ai-help-submit" onclick="askAiHelp()">AI와 이야기하기</button></div>`,
   );
+  requestAnimationFrame(() => document.querySelector("#ai-help-text")?.focus());
 }
 async function askAiHelp() {
-  const text = document.querySelector("#ai-help-text")?.value.trim();
+  const input = document.querySelector("#ai-help-text");
+  const text = input?.value.trim();
   if (!text) return;
-  const out = await api("/api/ai/support", {
-    method: "POST",
-    body: JSON.stringify({ text }),
-  });
-  popup(
-    `<div class="ai-check info"><span>AI 도움받기</span><h2>이렇게 말해볼 수도 있어요</h2><p>${esc(out.reply || "지금 느끼는 마음을 차분히 적어보는 것부터 시작해 봐요.").replace(/\n/g, "<br>")}</p><button onclick="closePopup()">확인</button></div>`,
-  );
+  const button = document.querySelector("#ai-help-submit");
+  const result = document.querySelector("#ai-help-response");
+  if (button) {
+    button.disabled = true;
+    button.textContent = "생각하고 있어요…";
+  }
+  if (result)
+    result.innerHTML = `<div class="ai-help-loading"><span class="thinking-loader"><i></i><i></i><i></i></span>내 말을 정리하고 있어요.</div>`;
+  try {
+    const out = await api("/api/ai/support", {
+      method: "POST",
+      body: JSON.stringify({ text }),
+    });
+    if (result)
+      result.innerHTML = `<article class="ai-help-reply"><b>Re:Tone의 제안</b><p>${esc(out.reply || "지금 느끼는 마음을 차분히 적어보는 것부터 시작해 봐요.").replace(/\n/g, "<br>")}</p></article>`;
+    input.value = "";
+    input.focus();
+  } catch {
+    if (result)
+      result.innerHTML = `<div class="ai-help-error">지금은 도움을 불러오지 못했어요. 잠시 후 다시 시도해주세요.</div>`;
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = "AI와 이야기하기";
+    }
+  }
 }
 function setAiStatus(text, working = false) {
   const status = document.querySelector("#ai-status");
@@ -1836,6 +1847,19 @@ function popup(inner) {
 function closePopup() {
   document.querySelector(".modal")?.remove();
 }
+function passwordField(id, placeholder, attributes = "") {
+  return `<span class="password-field"><input id="${id}" type="password" ${attributes} placeholder="${placeholder}"><button type="button" class="password-visibility" aria-label="비밀번호 보기" title="비밀번호 보기" onclick="togglePasswordVisibility('${id}',this)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.7 12s3.3-5.3 9.3-5.3S21.3 12 21.3 12 18 17.3 12 17.3 2.7 12 2.7 12Z"/><circle cx="12" cy="12" r="2.7"/></svg></button></span>`;
+}
+function togglePasswordVisibility(id, button) {
+  const input = document.querySelector(`#${id}`);
+  if (!input) return;
+  const reveal = input.type === "password";
+  input.type = reveal ? "text" : "password";
+  button.classList.toggle("is-visible", reveal);
+  button.setAttribute("aria-label", reveal ? "비밀번호 숨기기" : "비밀번호 보기");
+  button.setAttribute("title", reveal ? "비밀번호 숨기기" : "비밀번호 보기");
+  input.focus();
+}
 async function newRoom() {
   const users = (await api(`/api/friends?user_id=${encodeURIComponent(signedInId)}`)).friends;
   popup(
@@ -1888,12 +1912,13 @@ async function saveRoom() {
 }
 function newAgreement() {
   popup(
-    `<h2>공동 확인 만들기</h2><p>할 일, 담당자, 기한을 함께 확인해요.</p><input id="task" placeholder="할 일"><input id="assignee" placeholder="담당자"><input id="deadline" placeholder="예: 내일 18:00"><button onclick="saveAgreement()">공동 확인 카드 만들기</button>`,
+    `<div class="schedule-editor"><span>공동 확인</span><h2>함께 확인할 일을 만들어요</h2><p>마감일은 달력에서 골라 정확하게 공유할 수 있어요.</p><label>할 일<input id="task" placeholder="예: 발표 자료 초안 정리"></label><label>담당자<input id="assignee" placeholder="예: 원준영"></label><label>마감 날짜와 시간<div class="quick-date"><button type="button" onclick="setQuickDate('deadline',0)">오늘</button><button type="button" onclick="setQuickDate('deadline',1)">내일</button></div><input id="deadline" type="datetime-local"></label><button onclick="saveAgreement()">공동 확인 카드 만들기</button></div>`,
   );
 }
 async function saveAgreement() {
   const task = document.querySelector("#task").value.trim();
-  if (!task) return;
+  const deadline = document.querySelector("#deadline").value;
+  if (!task || !deadline) return alert("할 일과 마감 날짜·시간을 선택해주세요.");
   try {
     await api("/api/agreements", {
       method: "POST",
@@ -1901,7 +1926,7 @@ async function saveAgreement() {
         task,
         room_id: roomId,
         assignee: document.querySelector("#assignee").value,
-        deadline: document.querySelector("#deadline").value,
+        deadline: deadline.replace("T", " "),
       }),
     });
     data = await api(`/api/bootstrap?user_id=${encodeURIComponent(signedInId)}`);
@@ -1921,30 +1946,42 @@ async function answerAgreement(id, action) {
   }
 }
 function newAppointment() {
-  popup(
-    `<h2>함께할 약속 잡기</h2><p>회의·보이스톡·만남 일정을 팀에 바로 공유해요.</p><input id="appointmentTitle" placeholder="예: 발표 방향 짧은 회의"><div class="quick-date"><button type="button" onclick="setQuickDate('appointmentDate',0)">오늘</button><button type="button" onclick="setQuickDate('appointmentDate',1)">내일</button></div><input id="appointmentDate" type="datetime-local"><input id="appointmentPlace" placeholder="장소 또는 채팅방"><button onclick="saveAppointment()">약속 공유하기</button>`,
-  );
+  popup(appointmentEditorMarkup());
 }
-async function saveAppointment() {
+function appointmentEditorMarkup(item = null) {
+  const editing = Boolean(item);
+  const date = item?.date ? String(item.date).replace(" ", "T").slice(0, 16) : "";
+  return `<div class="schedule-editor appointment-editor"><span>${editing ? "공동 약속 수정" : "함께할 약속"}</span><h2>${editing ? "서로 약속을 바꿔볼까요?" : "약속을 함께 정해요"}</h2><p>${editing ? "이 방의 참여자는 시간·장소·내용을 최신 계획으로 함께 바꿀 수 있어요." : "회의·보이스톡·만남 일정을 달력에서 골라 바로 공유해요."}</p><label>약속 이름<input id="appointmentTitle" value="${escAttr(item?.title || "")}" placeholder="예: 발표 방향 짧은 회의"></label><label>날짜와 시간<div class="quick-date"><button type="button" onclick="setQuickDate('appointmentDate',0)">오늘</button><button type="button" onclick="setQuickDate('appointmentDate',1)">내일</button></div><input id="appointmentDate" type="datetime-local" value="${escAttr(date)}"></label><label>장소 또는 온라인 링크<input id="appointmentPlace" value="${escAttr(item?.place === "장소 미정" ? "" : item?.place || "")}" placeholder="예: 교실, 디스코드, Google Meet"></label><button onclick="saveAppointment('${item?.id || ""}')">${editing ? "변경 사항 공유하기" : "약속 공유하기"}</button></div>`;
+}
+function editAppointment(id) {
+  const item = (data?.appointments || []).find((appointment) => appointment.id === id);
+  if (!item) return alert("이 약속을 찾지 못했어요. 화면을 새로고침한 뒤 다시 시도해주세요.");
+  popup(appointmentEditorMarkup(item));
+}
+async function saveAppointment(id = "") {
   const title = document.querySelector("#appointmentTitle").value.trim(),
     date = document.querySelector("#appointmentDate").value;
-  if (!title || !date) return;
+  if (!title || !date) return alert("약속 이름과 날짜·시간을 선택해주세요.");
   try {
-    await api("/api/appointments", {
-      method: "POST",
+    await api(id ? `/api/appointments/${id}` : "/api/appointments", {
+      method: id ? "PATCH" : "POST",
       body: JSON.stringify({
         title,
-        room_id: roomId,
+        ...(id ? {} : { room_id: roomId }),
         date: date.replace("T", " "),
-        place: document.querySelector("#appointmentPlace").value,
+        place: document.querySelector("#appointmentPlace").value.trim(),
       }),
     });
     data = await api(`/api/bootstrap?user_id=${encodeURIComponent(signedInId)}`);
     closePopup();
-    home();
+    if (roomId) openRoom(roomId);
+    else home();
   } catch {
-    alert("약속을 저장하지 못했어요. 날짜와 연결 상태를 확인해주세요.");
+    alert("약속을 저장하지 못했어요. 날짜와 채팅방 참여 상태를 확인해주세요.");
   }
+}
+function openChatMore() {
+  popup(`<div class="chat-more-sheet"><span>채팅방 도구</span><h2>무엇을 할까요?</h2><p>모바일에서도 약속, 공동 확인, 회고와 방 설정을 모두 사용할 수 있어요.</p><div><button onclick="closePopup();newAppointment()">◷ 약속 잡기</button><button onclick="closePopup();newAgreement()">✓ 공동 확인 만들기</button><button onclick="closePopup();newReflection()">↻ 회고 카드</button><button onclick="closePopup();roomSettings()">⚙ 채팅방 설정</button></div><button class="quiet" onclick="closePopup()">닫기</button></div>`);
 }
 function newReflection() {
   popup(
@@ -1987,7 +2024,7 @@ function start() {
   // would request a bootstrap for the synthetic "admin" id and hide the admin UI.
   if (signedIn && isAdmin) return settings();
   if (signedIn) return home();
-  app.innerHTML = `<main class="auth"><section class="auth-showcase"><div class="showcase-brand">Re:<i>Tone</i></div><div class="showcase-copy"><span>TEAM COMMUNICATION, RE:IMAGINED</span><h1>말하기 전에 한 번,<br><em>이해한 뒤에 한 번.</em></h1><p>대화의 온도를 함께 살피고,<br>팀의 중요한 약속을 놓치지 않도록 도와줘요.</p></div><div class="showcase-preview"><div><b>프로젝트 팀 채팅</b><small>AI가 필요한 순간에만 조심스럽게 도와요</small></div><p>“이 부분은 이렇게 정리해 보면 더 잘 전달될 것 같아요.”</p><span>Re:Tone의 제안 · 선택은 언제나 내가</span></div></section><section class="auth-panel"><section class="auth-card"><div class="auth-brand">Re:<i>Tone</i></div><p class="auth-copy">대화와 약속을 더 편안하게 이어가요.</p><div class="auth-tabs"><button class="selected" onclick="authForm('login')">로그인</button><button onclick="authForm('signup')">회원가입</button></div><div id="auth-form"><label>이름<input id="auth-name" placeholder="이름을 입력하세요"></label><label>전화번호<input id="auth-phone" inputmode="numeric" placeholder="전화번호를 입력하세요"></label><label>비밀번호<input id="auth-password" type="password" placeholder="비밀번호를 입력하세요"></label><button class="auth-submit" onclick="finishAuth('login')">로그인</button><button type="button" class="admin-login-link" onclick="authForm('admin')">관리자 로그인</button></div><small>더 나은 대화와 함께하는 작업 공간</small></section></section></main>`;
+  app.innerHTML = `<main class="auth"><section class="auth-showcase"><div class="showcase-brand">Re:<i>Tone</i></div><div class="showcase-copy"><span>TEAM COMMUNICATION, RE:IMAGINED</span><h1>말하기 전에 한 번,<br><em>이해한 뒤에 한 번.</em></h1><p>대화의 온도를 함께 살피고,<br>팀의 중요한 약속을 놓치지 않도록 도와줘요.</p></div><div class="showcase-preview"><div><b>프로젝트 팀 채팅</b><small>AI가 필요한 순간에만 조심스럽게 도와요</small></div><p>“이 부분은 이렇게 정리해 보면 더 잘 전달될 것 같아요.”</p><span>Re:Tone의 제안 · 선택은 언제나 내가</span></div></section><section class="auth-panel"><section class="auth-card"><div class="auth-brand">Re:<i>Tone</i></div><p class="auth-copy">대화와 약속을 더 편안하게 이어가요.</p><div class="auth-tabs"><button class="selected" onclick="authForm('login')">로그인</button><button onclick="authForm('signup')">회원가입</button></div><div id="auth-form"><label>이름<input id="auth-name" placeholder="이름을 입력하세요"></label><label>전화번호<input id="auth-phone" inputmode="numeric" placeholder="전화번호를 입력하세요"></label><label>비밀번호${passwordField("auth-password", "비밀번호를 입력하세요", "autocomplete=\"current-password\"")}</label><button class="auth-submit" onclick="finishAuth('login')">로그인</button><button type="button" class="admin-login-link" onclick="authForm('admin')">관리자 로그인</button></div><small>더 나은 대화와 함께하는 작업 공간</small></section></section></main>`;
   authForm("login");
 }
 function authForm(mode) {
@@ -2013,7 +2050,7 @@ function authForm(mode) {
   }
   if (mode === "admin") {
     document.querySelector("#auth-form").innerHTML =
-      `<div class="admin-auth"><span>관리자 전용</span><h2>관리자 로그인</h2><p>비밀번호와 2차 인증 코드를 모두 입력해주세요.</p><label>관리자 비밀번호<input id="admin-password" type="password" placeholder="관리자 비밀번호를 입력해주세요"></label><label>2차 인증 코드<input id="admin-two-factor" inputmode="numeric" type="password" placeholder="2차 인증 코드를 입력해주세요"></label><button class="auth-submit" onclick="finishAdminLogin()">관리자 로그인</button><button type="button" class="admin-back" onclick="authForm('login')">일반 로그인으로 돌아가기</button></div>`;
+      `<div class="admin-auth"><span>관리자 전용</span><h2>관리자 로그인</h2><p>비밀번호와 2차 인증 코드를 모두 입력해주세요.</p><label>관리자 비밀번호${passwordField("admin-password", "관리자 비밀번호를 입력해주세요", "autocomplete=\"current-password\"")}</label><label>2차 인증 코드${passwordField("admin-two-factor", "2차 인증 코드를 입력해주세요", "inputmode=\"numeric\"")}</label><button class="auth-submit" onclick="finishAdminLogin()">관리자 로그인</button><button type="button" class="admin-back" onclick="authForm('login')">일반 로그인으로 돌아가기</button></div>`;
     return;
   }
   if (join && !signupAiDetails) signupAiDetails = { ...aiDetails() };
@@ -2023,7 +2060,7 @@ function authForm(mode) {
   };
   const categorySetup = `<details class="auth-ai-details" open><summary>항목별 AI 민감도 설정</summary><p>각 항목에서 AI가 어느 정도까지 도울지 정해요. 가입 후에도 바꿀 수 있어요.</p>${aiGroups.map(([title, , names]) => `<section class="signup-ai-group"><b>${title}</b>${names.map(signupCard).join("")}</section>`).join("")}</details>`;
   document.querySelector("#auth-form").innerHTML =
-    `<label>이름<input id="auth-name" placeholder="이름을 입력하세요"></label><label>전화번호<input id="auth-phone" inputmode="numeric" maxlength="13" autocomplete="tel" oninput="formatPhoneInput(this)" placeholder="010-1234-5678"></label><label>비밀번호<input id="auth-password" type="password" placeholder="비밀번호를 입력하세요"></label>${join ? `<label>AI 개입 정도<select id="auth-ai-level"><option value="light">가볍게 · 강한 욕설만</option><option value="standard" selected>균형 있게 · 말투와 중요한 정보</option><option value="careful">꼼꼼하게 · 더 세심한 확인</option><option value="off">AI 끄기</option></select></label>${categorySetup}<button type="button" class="ai-policy-link" onclick="showAiPolicy()">AI가 개입하는 이유와 사용 범위 보기</button><label class="consent"><input id="auth-ai-consent" type="checkbox"> AI 사용 안내를 읽었고, 선택한 범위의 점검에 동의해요.</label><p class="auth-hint">동의하지 않아도 AI 끄기를 선택해 가입할 수 있고, 설정에서 언제든 변경할 수 있어요.</p>` : ""}<button class="auth-submit" onclick="finishAuth('${mode}')">${join ? "회원가입하고 시작하기" : "로그인"}</button>${join ? '<p class="auth-hint">같은 전화번호가 있으면 확인 절차가 안내돼요.</p>' : '<button type="button" class="admin-login-link" onclick="authForm(\'admin\')">관리자 로그인</button>'}`;
+    `<label>이름<input id="auth-name" placeholder="이름을 입력하세요"></label><label>전화번호<input id="auth-phone" inputmode="numeric" maxlength="13" autocomplete="tel" oninput="formatPhoneInput(this)" placeholder="010-1234-5678"></label><label>비밀번호${passwordField("auth-password", "비밀번호를 입력하세요", "autocomplete=\"current-password\"")}</label>${join ? `<label>AI 개입 정도<select id="auth-ai-level"><option value="light">가볍게 · 강한 욕설만</option><option value="standard" selected>균형 있게 · 말투와 중요한 정보</option><option value="careful">꼼꼼하게 · 더 세심한 확인</option><option value="off">AI 끄기</option></select></label>${categorySetup}<button type="button" class="ai-policy-link" onclick="showAiPolicy()">AI가 개입하는 이유와 사용 범위 보기</button><label class="consent"><input id="auth-ai-consent" type="checkbox"> AI 사용 안내를 읽었고, 선택한 범위의 점검에 동의해요.</label><p class="auth-hint">동의하지 않아도 AI 끄기를 선택해 가입할 수 있고, 설정에서 언제든 변경할 수 있어요.</p>` : ""}<button class="auth-submit" onclick="finishAuth('${mode}')">${join ? "회원가입하고 시작하기" : "로그인"}</button>${join ? '<p class="auth-hint">같은 전화번호가 있으면 확인 절차가 안내돼요.</p>' : '<button type="button" class="admin-login-link" onclick="authForm(\'admin\')">관리자 로그인</button>'}`;
 }
 function renderSignupWizard() {
   const draft = signupDraft;
@@ -2031,7 +2068,7 @@ function renderSignupWizard() {
   const progress = `<div class="signup-progress"><span>${draft.step + 1} / ${steps.length}</span><b>${steps[draft.step]}</b><div><i style="width:${((draft.step + 1) / steps.length) * 100}%"></i></div></div>`;
   let content = "";
   if (draft.step === 0)
-    content = `<h2>먼저 계정을 만들어요</h2><p>친구들과 안전하게 대화하기 위한 기본 정보예요.</p><label>이름<input id="signup-name" value="${esc(draft.name)}" placeholder="이름을 입력해주세요"></label><label>전화번호<input id="signup-phone" value="${esc(formatPhoneNumber(draft.phone))}" inputmode="numeric" maxlength="13" autocomplete="tel" oninput="checkSignupPhone()" placeholder="010-1234-5678"><small id="signup-phone-status" class="field-status">010-1234-5678 형식으로 입력해주세요.</small></label><label>비밀번호<input id="signup-password" value="${esc(draft.password)}" type="password" autocomplete="new-password" oninput="checkPasswordRequirements()" placeholder="비밀번호를 입력해주세요"></label><label>비밀번호 다시 입력<input id="signup-password-confirm" value="${esc(draft.passwordConfirm || "")}" type="password" autocomplete="new-password" oninput="checkPasswordRequirements()" placeholder="비밀번호를 한 번 더 입력해주세요"></label><ul class="password-requirements"><li id="password-length">○ 6자 이상</li><li id="password-letter">○ 영어 1자 이상</li><li id="password-special">○ 특수문자 1자 이상</li><li id="password-match">○ 비밀번호를 다시 입력해주세요</li></ul>`;
+    content = `<h2>먼저 계정을 만들어요</h2><p>친구들과 안전하게 대화하기 위한 기본 정보예요.</p><label>이름<input id="signup-name" value="${escAttr(draft.name)}" placeholder="이름을 입력해주세요"></label><label>전화번호<input id="signup-phone" value="${escAttr(formatPhoneNumber(draft.phone))}" inputmode="numeric" maxlength="13" autocomplete="tel" oninput="checkSignupPhone()" placeholder="010-1234-5678"><small id="signup-phone-status" class="field-status">010-1234-5678 형식으로 입력해주세요.</small></label><label>비밀번호${passwordField("signup-password", "비밀번호를 입력해주세요", `value="${escAttr(draft.password)}" autocomplete="new-password" oninput="checkPasswordRequirements()"`)}</label><label>비밀번호 다시 입력${passwordField("signup-password-confirm", "비밀번호를 한 번 더 입력해주세요", `value="${escAttr(draft.passwordConfirm || "")}" autocomplete="new-password" oninput="checkPasswordRequirements()"`)}</label><ul class="password-requirements"><li id="password-length">○ 6자 이상</li><li id="password-letter">○ 영어 1자 이상</li><li id="password-special">○ 특수문자 1자 이상</li><li id="password-match">○ 비밀번호를 다시 입력해주세요</li></ul>`;
   else if (draft.step === 1)
     content = `<h2>AI가 얼마나 도울까요?</h2><p>처음에는 보통(50)에서 시작해요. 이후 ‘그냥 보내기’ 선택 패턴을 보고 AI가 세부 민감도를 조절하며, 설정에서 언제든 바꿀 수 있어요.</p><section class="signup-sensitivity"><div><span>AI 민감도</span><b id="signup-sensitivity-label">${sensitivityLabel(draft.sensitivity)} · ${draft.sensitivity}</b></div><input type="range" min="0" max="100" value="${draft.sensitivity}" style="--sensitivity:${draft.sensitivity}%" oninput="previewSignupSensitivity(this.value,this)" onchange="setSignupSensitivity(this.value)"><small>낮을수록 필요한 순간에만, 높을수록 더 세심하게 제안해요.</small></section>`;
   else
