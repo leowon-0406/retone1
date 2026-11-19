@@ -42,6 +42,10 @@ let factFindings = (() => {
 })();
 const factChecksInFlight = new Set();
 const FACT_FINDING_VERSION = 2;
+// Inline onclick attributes cannot safely carry an arbitrary chat message: quotes in
+// a message turn the attribute into invalid JavaScript. Keep the selected message
+// here while the fact-check confirmation modal is open instead.
+let pendingFactCheckText = "";
 const aiCategoryDefaults = {
   "강한 공격 표현": "강한 표현만",
   "비꼼·압박 표현": "균형 있게",
@@ -1425,8 +1429,9 @@ async function saveAlignmentCard(messageId) {
   openRoom(roomId);
 }
 function inspectMessage(text) {
+  pendingFactCheckText = String(text || "");
   popup(
-    `<div class="ai-check info"><span>상대 메시지</span><h2>이 메시지를 함께 살펴볼까요?</h2><p>Re:Tone은 진실·거짓을 판정하지 않고, 확인에 필요한 단서를 제안해요.</p><button onclick="factCheck(${JSON.stringify(text)})">사실여부 확인 도움받기</button></div>`,
+    `<div class="ai-check info"><span>상대 메시지</span><h2>이 메시지를 함께 살펴볼까요?</h2><p>Re:Tone은 진실·거짓을 판정하지 않고, 확인에 필요한 단서를 제안해요.</p><button id="fact-check-start" onclick="factCheckPending()">사실여부 확인 도움받기</button></div>`,
   );
 }
 function safeLink(url) {
@@ -1452,13 +1457,38 @@ function openFactFinding(id) {
   const result = factFindings[id];
   if (result) popup(factFindingMarkup(result));
 }
-async function factCheck(text) {
-  const result = await api("/api/ai/fact-check", {
-    method: "POST",
-    body: JSON.stringify({ text }),
-  });
-  if (result.status === "check" || result.sources?.length) return popup(factFindingMarkup(result));
-  popup(`<div class="ai-check info"><span>출처 찾아보기</span><h2>관련 출처를 찾지 못했어요</h2><p>이 메시지의 출처나 작성 날짜를 직접 물어보거나, 조금 더 구체적인 검색어로 확인해 보세요.</p><small>Re:Tone은 이 메시지가 사실인지 거짓인지 판정하지 않아요.</small><button onclick="closePopup()">확인</button></div>`);
+async function factCheckPending() {
+  const text = pendingFactCheckText.trim();
+  if (!text) return;
+  const button = document.querySelector("#fact-check-start");
+  if (button) {
+    button.disabled = true;
+    button.innerHTML = `<span class="thinking-loader" aria-hidden="true"><i></i><i></i><i></i></span>출처를 찾고 있어요`;
+  }
+  try {
+    const result = await api("/api/ai/fact-check", {
+      method: "POST",
+      body: JSON.stringify({ text }),
+    });
+    closePopup();
+    if (result.status === "unavailable") {
+      popup(`<div class="ai-check info"><span>출처 찾아보기</span><h2>지금은 출처 확인을 연결하지 못했어요</h2><p>${esc(result.summary || "잠시 뒤 다시 시도하거나, 원문과 날짜를 함께 확인해 보세요.")}</p><button onclick="closePopup()">확인</button></div>`);
+    } else if (result.status === "check" || result.sources?.length) {
+      popup(factFindingMarkup(result));
+    } else {
+      popup(`<div class="ai-check info"><span>출처 찾아보기</span><h2>관련 출처를 찾지 못했어요</h2><p>이 메시지의 출처나 작성 날짜를 직접 물어보거나, 조금 더 구체적인 검색어로 확인해 보세요.</p><small>Re:Tone은 이 메시지가 사실인지 거짓인지 판정하지 않아요.</small><button onclick="closePopup()">확인</button></div>`);
+    }
+  } catch {
+    closePopup();
+    popup(`<div class="ai-check warn"><span>출처 찾아보기</span><h2>출처 확인을 불러오지 못했어요</h2><p>연결 상태를 확인한 뒤 다시 눌러주세요. 메시지는 전송되거나 바뀌지 않아요.</p><button onclick="closePopup()">확인</button></div>`);
+  } finally {
+    pendingFactCheckText = "";
+  }
+}
+// 다른 화면이나 이전 버전의 버튼에서도 같은 안전한 경로를 사용해요.
+function factCheck(text) {
+  pendingFactCheckText = String(text || "");
+  return factCheckPending();
 }
 function openAiHelp() {
   if (aiDetails()["감정 도움 AI"] === "끄기") return;

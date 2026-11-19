@@ -1266,7 +1266,7 @@ async fn fact_check(Json(input): Json<FactCheck>) -> Json<serde_json::Value> {
         return Json(serde_json::json!({"status":"clear","summary":"","sources":[]}));
     }
     let Some(key) = env::var("OPENAI_API_KEY").ok() else {
-        return Json(serde_json::json!({"status":"clear","summary":"","sources":[]}));
+        return Json(serde_json::json!({"status":"unavailable","summary":"출처 확인 연결이 아직 준비되지 않았어요. 잠시 뒤 다시 시도해 주세요.","sources":[]}));
     };
     let prompt = format!(
         "너는 Re:Tone의 출처 찾아보기 보조 도구다. 사람이나 문장의 진실·거짓을 판정하거나 단정하지 않는다. 반드시 웹 검색 도구로 현재 메시지의 정보성 주장만 검색한다. 검색 결과가 있으면 status=clear여도 sources에 실제로 확인한 링크를 최대 3개 넣어, 사용자가 어떤 출처가 무엇을 말하는지 볼 수 있게 한다. 신뢰할 수 있는 최신 출처들이 대체로 관련 있으면 status=clear, 출처가 부족하거나 날짜가 오래되었거나 믿을 만한 출처 사이에 중요한 차이가 있으면 status=check로 한다. summary는 사실 판정이 아닌 중립적 설명 1~2문장이다. status=check일 때는 '출처를 한 번 더 확인해 보면 좋아요'처럼 조심스럽게 말한다. source.note에는 해당 출처가 현재 메시지와 관련해 말하는 핵심을 80자 이내로 중립적으로 적고, 출처에 없는 해석은 만들지 않는다. 정부·공공기관·원문 연구·신뢰할 수 있는 언론 등 우선순위가 높은 출처를 우선한다. JSON만 출력한다: {{\"status\":\"clear|check\",\"summary\":\"...\",\"sources\":[{{\"title\":\"...\",\"url\":\"https://...\",\"date\":\"...\",\"note\":\"...\"}}]}}\n\n현재 메시지: {text}"
@@ -1284,8 +1284,9 @@ async fn fact_check(Json(input): Json<FactCheck>) -> Json<serde_json::Value> {
         .send()
         .await;
     let parsed = match response {
-        Ok(response) => response.json::<serde_json::Value>().await.ok(),
+        Ok(response) if response.status().is_success() => response.json::<serde_json::Value>().await.ok(),
         Err(_) => None,
+        _ => None,
     }
     .and_then(|value| {
         value["output"]
@@ -1300,7 +1301,7 @@ async fn fact_check(Json(input): Json<FactCheck>) -> Json<serde_json::Value> {
             .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok())
     });
     let Some(parsed) = parsed else {
-        return Json(serde_json::json!({"status":"clear","summary":"","sources":[]}));
+        return Json(serde_json::json!({"status":"unavailable","summary":"출처 확인 서비스를 불러오지 못했어요. 잠시 뒤 다시 시도해 주세요.","sources":[]}));
     };
     let status = if parsed["status"].as_str() == Some("check") {
         "check"
