@@ -9,6 +9,8 @@ let isAdmin = sessionStorage.getItem("retone-v2-admin") === "yes";
 let aiIntervention = sessionStorage.getItem("retone-v2-ai-level") || "standard";
 let pendingSend = null;
 let replyingTo = null;
+let messagePressTimer = null;
+let suppressMessageTapUntil = 0;
 let pendingAnalysisDraft = "";
 let currentRoomMessages = [];
 let signupAiDetails = null;
@@ -1141,19 +1143,51 @@ function view(m) {
   const hasSources = Array.isArray(finding?.sources) && finding.sources.length > 0;
   const factCue =
     finding?.status === "check" || hasSources
-      ? `<button class="fact-cue ${finding.status === "check" ? "needs-check" : ""}" title="${finding.status === "check" ? "출처를 한 번 더 확인해 보세요" : "관련 출처 보기"}" onclick="event.stopPropagation();openFactFinding('${m.id}')">ⓘ<span>출처</span></button>`
+      ? `<button class="fact-cue ${finding.status === "check" ? "needs-check" : ""}" title="${finding.status === "check" ? "출처를 한 번 더 확인해 보세요" : "관련 출처 보기"}" onpointerdown="event.stopPropagation()" onclick="event.stopPropagation();openFactFinding('${m.id}')">ⓘ<span>출처</span></button>`
       : "";
   const messageMenu = m.mine
-    ? `<button class="message-menu" title="메시지 관리" aria-label="메시지 관리" onclick="event.stopPropagation();openMessageActions('${m.id}')"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg></button>`
+    ? `<button class="message-menu" title="메시지 관리" aria-label="메시지 관리" onpointerdown="event.stopPropagation()" onclick="event.stopPropagation();openMessageActions('${m.id}')"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg></button>`
     : "";
   const original = m.reply_to
     ? currentRoomMessages.find((message) => message.id === m.reply_to)
     : null;
   const quote = m.reply_to
-    ? `<button class="reply-quote" onclick="event.stopPropagation();focusReply('${m.reply_to}')"><b>${esc(original?.sender || "삭제된 메시지")}</b><span>${esc(original?.body || (original?.image_url ? "사진" : "원문을 찾을 수 없어요"))}</span></button>`
+    ? `<button class="reply-quote" onpointerdown="event.stopPropagation()" onclick="event.stopPropagation();focusReply('${m.reply_to}')"><b>${esc(original?.sender || "삭제된 메시지")}</b><span>${esc(original?.body || (original?.image_url ? "사진" : "원문을 찾을 수 없어요"))}</span></button>`
     : "";
-  const replyButton = `<button class="reply-shortcut" title="답장" aria-label="답장" onclick="event.stopPropagation();startReply('${m.id}')">↩</button>`;
-  return `<article class="bubble ${m.mine ? "mine" : ""}" data-message-id="${esc(m.id)}" ${m.mine ? "" : `onclick="inspectMessage(${JSON.stringify(m.body)})"`}><div class="meta"><span>${esc(m.sender)}${m.intent ? ` · <span class="intent-tag">${esc(m.intent)}</span>` : ""}</span>${messageMenu}</div>${quote}${m.image_url ? `<img class="chat-image" src="${m.image_url}" alt="보낸 사진">` : ""}${m.body ? `<span>${esc(m.body)}</span>` : ""}<div class="bubble-tools">${factCue}${replyButton}${m.mine && m.unread ? `<span class="read">${m.unread}</span>` : ""}</div></article>`;
+  const replyButton = `<button class="reply-shortcut" title="답장" aria-label="답장" onpointerdown="event.stopPropagation()" onclick="event.stopPropagation();startReply('${m.id}')">↩</button>`;
+  const tap = m.mine ? "" : `onclick="handleMessageTap('${m.id}')"`;
+  const press = `onpointerdown="beginMessagePress(event,'${m.id}')" onpointerup="cancelMessagePress()" onpointerleave="cancelMessagePress()" onpointermove="cancelMessagePress()" onpointercancel="cancelMessagePress()" oncontextmenu="return false"`;
+  return `<article class="bubble ${m.mine ? "mine" : ""}" data-message-id="${esc(m.id)}" ${tap} ${press}><div class="meta"><span>${esc(m.sender)}${m.intent ? ` · <span class="intent-tag">${esc(m.intent)}</span>` : ""}</span>${messageMenu}</div>${quote}${m.image_url ? `<img class="chat-image" src="${m.image_url}" alt="보낸 사진">` : ""}${m.body ? `<span>${esc(m.body)}</span>` : ""}<div class="bubble-tools">${factCue}${replyButton}${m.mine && m.unread ? `<span class="read">${m.unread}</span>` : ""}</div></article>`;
+}
+function beginMessagePress(event, id) {
+  if (event.pointerType === "mouse") return;
+  cancelMessagePress();
+  messagePressTimer = setTimeout(() => {
+    messagePressTimer = null;
+    suppressMessageTapUntil = Date.now() + 700;
+    navigator.vibrate?.(10);
+    openPressedMessageActions(id);
+  }, 480);
+}
+function cancelMessagePress() {
+  if (messagePressTimer) clearTimeout(messagePressTimer);
+  messagePressTimer = null;
+}
+function handleMessageTap(id) {
+  if (Date.now() < suppressMessageTapUntil) return;
+  const message = currentRoomMessages.find((item) => item.id === id);
+  if (message && !message.mine) inspectMessage(message.body);
+}
+function openPressedMessageActions(id) {
+  const message = currentRoomMessages.find((item) => item.id === id);
+  if (!message) return;
+  const preview = message.body
+    ? `<p class="message-action-preview">${esc(message.body)}</p>`
+    : `<p class="message-action-preview image">사진을 보낸 메시지</p>`;
+  const remove = message.mine
+    ? `<button class="danger-action" onclick="removeMessage('${id}')">메시지 삭제</button>`
+    : "";
+  popup(`<div class="message-action-sheet"><span>메시지</span><h2>어떤 작업을 할까요?</h2>${preview}<div class="message-action-buttons"><button class="quiet" onclick="startReply('${id}')">↩ 답장</button>${remove}</div><button class="sheet-cancel" onclick="closePopup()">취소</button></div>`);
 }
 function replyComposer() {
   if (!replyingTo) return "";
