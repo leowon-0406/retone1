@@ -828,7 +828,7 @@ function renderDetailedAiSettings() {
     const [, desc, options] = aiCategories.find(([title]) => title === name);
     return `<article class="ai-category"><span><b>${name}</b><small>${desc}</small></span><div class="ai-choice-row">${options.map((option) => `<button class="${saved[name] === option ? "selected" : ""}" onclick="saveAiDetail('${name}','${option}')">${option}</button>`).join("")}</div></article>`;
   };
-  root.innerHTML = `<section class="overall-sensitivity"><span>기본 AI 민감도</span><b id="overall-sensitivity-label">${sensitivityLabel(sensitivity.overall)} · ${sensitivity.overall}</b><input type="range" min="0" max="100" value="${sensitivity.overall}" style="--sensitivity:${sensitivity.overall}%" oninput="previewOverallSensitivity(this.value,this)" onchange="setOverallSensitivity(this.value)"><small>모든 채팅방의 기본값이에요. 친한 친구 방은 방 설정에서 따로 낮출 수 있어요.</small></section><details class="ai-advanced-settings"><summary><span><b>세부 AI 항목 조절</b><small>필요할 때만 열어 항목별로 바꿔요.</small></span><i>⌄</i></summary><div class="ai-setting-intro"><b>내 선택을 반영해요</b><span>${esc(learningNote())}</span></div>${aiGroups.map(([title, desc, names]) => `<details class="ai-setting-group"><summary><span><b>${title}</b><small>${desc}</small></span><i>⌄</i></summary><div class="ai-category-list">${names.map(card).join("")}</div></details>`).join("")}</details><section class="settings-actions"><button class="theme-toggle" onclick="toggleTheme()">${document.body.classList.contains("dark") ? "☀️ 라이트 모드" : "🌙 다크 모드"}</button><button class="notification-toggle" onclick="toggleBrowserNotifications()">${browserNotificationsEnabled() ? "🔔 새 메시지 알림 켬" : "🔕 새 메시지 알림 켜기"}</button><button class="danger-action" onclick="openDeleteAccount()">계정 삭제</button></section>`;
+  root.innerHTML = `<section class="overall-sensitivity"><span>기본 AI 민감도</span><b id="overall-sensitivity-label">${sensitivityLabel(sensitivity.overall)} · ${sensitivity.overall}</b><input type="range" min="0" max="100" value="${sensitivity.overall}" style="--sensitivity:${sensitivity.overall}%" oninput="previewOverallSensitivity(this.value,this)" onchange="setOverallSensitivity(this.value)"><small>모든 채팅방의 기본값이에요. 친한 친구 방은 방 설정에서 따로 낮출 수 있어요.</small></section><details class="ai-advanced-settings"><summary><span><b>세부 AI 항목 조절</b><small>필요할 때만 열어 항목별로 바꿔요.</small></span><i>⌄</i></summary><div class="ai-setting-intro"><b>내 선택을 반영해요</b><span>${esc(learningNote())}</span></div>${aiGroups.map(([title, desc, names]) => `<details class="ai-setting-group"><summary><span><b>${title}</b><small>${desc}</small></span><i>⌄</i></summary><div class="ai-category-list">${names.map(card).join("")}</div></details>`).join("")}</details><section class="settings-actions"><button class="theme-toggle" onclick="toggleTheme()">${document.body.classList.contains("dark") ? "☀️ 라이트 모드" : "🌙 다크 모드"}</button><button class="notification-toggle" onclick="toggleBrowserNotifications()">${browserNotificationsEnabled() ? "🔔 새 메시지 알림 켬" : "🔕 새 메시지 알림 켜기"}</button><button class="danger-action" onclick="openDeleteAccount()">회원 탈퇴</button></section>`;
 }
 function saveAiDetail(name, value) {
   const state = sensitivityState();
@@ -888,7 +888,7 @@ function toggleTheme() {
 }
 function openDeleteAccount() {
   popup(
-    `<div class="delete-account-card"><div class="delete-account-icon">!</div><span>계정 삭제</span><h2>계정을 삭제할까요?</h2><p>이 작업은 되돌릴 수 없어요. 본인 확인을 위해 현재 이름과 비밀번호를 다시 입력해주세요.</p><label>현재 이름<input id="delete-name" placeholder="이름을 입력해주세요"></label><label>현재 비밀번호<input id="delete-password" type="password" placeholder="비밀번호를 입력해주세요"></label><small>삭제하면 로그인과 프로필 사용이 중단돼요.</small><div class="modal-actions"><button class="quiet" onclick="closePopup()">취소</button><button class="danger-action" onclick="deleteMyAccount()">계정 삭제</button></div></div>`,
+    `<div class="delete-account-card"><div class="delete-account-icon">!</div><span>회원 탈퇴</span><h2>정말 탈퇴할까요?</h2><p>탈퇴하면 이 계정으로 다시 로그인할 수 없고, 프로필 정보와 로그인 세션이 삭제돼요.</p><label>현재 이름<input id="delete-name" placeholder="이름을 입력해주세요"></label><label>현재 비밀번호<input id="delete-password" type="password" placeholder="비밀번호를 입력해주세요"></label><small>기존 대화는 상대방의 대화 기록을 위해 ‘탈퇴한 사용자’로만 남아요.</small><div class="modal-actions"><button class="quiet" onclick="closePopup()">취소</button><button class="danger-action" onclick="deleteMyAccount()">회원 탈퇴</button></div></div>`,
   );
 }
 async function deleteMyAccount() {
@@ -901,6 +901,9 @@ async function deleteMyAccount() {
       body: JSON.stringify({ name, password }),
     });
     logout();
+    popup(
+      `<div class="ai-check info"><span>회원 탈퇴 완료</span><h2>계정이 안전하게 탈퇴 처리됐어요.</h2><p>이 기기에서도 로그아웃됐어요. 필요하면 새 계정으로 다시 시작할 수 있어요.</p><button onclick="closePopup()">확인</button></div>`,
+    );
   } catch {
     alert(
       "이름 또는 비밀번호가 맞지 않아요. 현재 계정 정보를 다시 확인해주세요.",
