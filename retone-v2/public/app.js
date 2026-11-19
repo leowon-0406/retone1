@@ -1907,6 +1907,7 @@ function authForm(mode) {
         name: "",
         phone: "",
         password: "",
+        passwordConfirm: "",
         sensitivity: 50,
         ai: "standard",
         consent: false,
@@ -1934,7 +1935,7 @@ function renderSignupWizard() {
   const progress = `<div class="signup-progress"><span>${draft.step + 1} / ${steps.length}</span><b>${steps[draft.step]}</b><div><i style="width:${((draft.step + 1) / steps.length) * 100}%"></i></div></div>`;
   let content = "";
   if (draft.step === 0)
-    content = `<h2>먼저 계정을 만들어요</h2><p>친구들과 안전하게 대화하기 위한 기본 정보예요.</p><label>이름<input id="signup-name" value="${esc(draft.name)}" placeholder="이름을 입력해주세요"></label><label>전화번호<input id="signup-phone" value="${esc(formatPhoneNumber(draft.phone))}" inputmode="numeric" maxlength="13" autocomplete="tel" oninput="checkSignupPhone()" placeholder="010-1234-5678"><small id="signup-phone-status" class="field-status">010-1234-5678 형식으로 입력해주세요.</small></label><label>비밀번호<input id="signup-password" value="${esc(draft.password)}" type="password" oninput="checkPasswordRequirements()" placeholder="비밀번호를 입력해주세요"></label><ul class="password-requirements"><li id="password-length">○ 6자 이상</li><li id="password-letter">○ 영어 1자 이상</li><li id="password-special">○ 특수문자 1자 이상</li></ul>`;
+    content = `<h2>먼저 계정을 만들어요</h2><p>친구들과 안전하게 대화하기 위한 기본 정보예요.</p><label>이름<input id="signup-name" value="${esc(draft.name)}" placeholder="이름을 입력해주세요"></label><label>전화번호<input id="signup-phone" value="${esc(formatPhoneNumber(draft.phone))}" inputmode="numeric" maxlength="13" autocomplete="tel" oninput="checkSignupPhone()" placeholder="010-1234-5678"><small id="signup-phone-status" class="field-status">010-1234-5678 형식으로 입력해주세요.</small></label><label>비밀번호<input id="signup-password" value="${esc(draft.password)}" type="password" autocomplete="new-password" oninput="checkPasswordRequirements()" placeholder="비밀번호를 입력해주세요"></label><label>비밀번호 다시 입력<input id="signup-password-confirm" value="${esc(draft.passwordConfirm || "")}" type="password" autocomplete="new-password" oninput="checkPasswordRequirements()" placeholder="비밀번호를 한 번 더 입력해주세요"></label><ul class="password-requirements"><li id="password-length">○ 6자 이상</li><li id="password-letter">○ 영어 1자 이상</li><li id="password-special">○ 특수문자 1자 이상</li><li id="password-match">○ 비밀번호를 다시 입력해주세요</li></ul>`;
   else if (draft.step === 1)
     content = `<h2>AI가 얼마나 도울까요?</h2><p>처음에는 보통(50)에서 시작해요. 이후 ‘그냥 보내기’ 선택 패턴을 보고 AI가 세부 민감도를 조절하며, 설정에서 언제든 바꿀 수 있어요.</p><section class="signup-sensitivity"><div><span>AI 민감도</span><b id="signup-sensitivity-label">${sensitivityLabel(draft.sensitivity)} · ${draft.sensitivity}</b></div><input type="range" min="0" max="100" value="${draft.sensitivity}" style="--sensitivity:${draft.sensitivity}%" oninput="previewSignupSensitivity(this.value,this)" onchange="setSignupSensitivity(this.value)"><small>낮을수록 필요한 순간에만, 높을수록 더 세심하게 제안해요.</small></section>`;
   else
@@ -2031,16 +2032,27 @@ function checkSignupPhone() {
 }
 function checkPasswordRequirements() {
   const value = document.querySelector("#signup-password")?.value || "";
+  const confirmation = document.querySelector("#signup-password-confirm")?.value || "";
   const tests = [
     ["#password-length", value.length >= 6],
     ["#password-letter", /[A-Za-z]/.test(value)],
     ["#password-special", /[^A-Za-z0-9]/.test(value)],
+    ["#password-match", Boolean(confirmation) && value === confirmation],
   ];
   tests.forEach(([selector, passed]) => {
     const item = document.querySelector(selector);
     if (item) {
       item.classList.toggle("passed", passed);
-      item.textContent = `${passed ? "✓" : "○"} ${item.id === "password-length" ? "6자 이상" : item.id === "password-letter" ? "영어 1자 이상" : "특수문자 1자 이상"}`;
+      const label = item.id === "password-length"
+        ? "6자 이상"
+        : item.id === "password-letter"
+          ? "영어 1자 이상"
+          : item.id === "password-special"
+            ? "특수문자 1자 이상"
+            : confirmation
+              ? passed ? "비밀번호가 일치해요" : "비밀번호가 달라요"
+              : "비밀번호를 다시 입력해주세요";
+      item.textContent = `${passed ? "✓" : "○"} ${label}`;
     }
   });
   return tests.every(([, passed]) => passed);
@@ -2053,7 +2065,10 @@ async function signupNext() {
   if (signupDraft.step === 0) {
     const name = document.querySelector("#signup-name").value.trim(),
       phone = phoneDigits(document.querySelector("#signup-phone").value),
-      password = document.querySelector("#signup-password").value;
+      password = document.querySelector("#signup-password").value,
+      passwordConfirm = document.querySelector("#signup-password-confirm").value;
+    if (password !== passwordConfirm)
+      return alert("비밀번호가 서로 달라요. 다시 확인해주세요.");
     if (!name || !isValidMobilePhone(phone) || !checkPasswordRequirements())
       return alert("이름, 전화번호와 비밀번호 조건을 모두 확인해주세요.");
     try {
@@ -2075,7 +2090,7 @@ async function signupNext() {
         "error",
       );
     }
-    Object.assign(signupDraft, { name, phone, password });
+    Object.assign(signupDraft, { name, phone, password, passwordConfirm });
   }
   signupDraft.step += 1;
   renderSignupWizard();
