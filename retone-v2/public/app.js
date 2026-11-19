@@ -16,6 +16,10 @@ let signupPhoneTimer = null;
 let selectedIntent = "";
 let aiPrefetch = { text: "", result: null, promise: null, timer: null };
 let roomPollTimer = null;
+let roomPollInFlight = false;
+let inboxPollTimer = null;
+let inboxPollInFlight = false;
+let roomLoadVersion = 0;
 const browserNotificationsEnabled = () => localStorage.getItem("retone-browser-notifications") === "1";
 let aiSavedResults = (() => {
   try {
@@ -249,23 +253,27 @@ function connectionIssue(title, retry) {
   return `<main class="layout">${rail()}<section class="page"><header class="head"><h1>${esc(title)}</h1></header><div class="content"><section class="empty-chat connection-issue"><b>연결을 확인하지 못했어요</b><span>인터넷 또는 서버 상태를 확인한 뒤 다시 시도해주세요.</span><button onclick="${retry}">다시 시도</button></section></div></section></main>`;
 }
 async function home() {
+  roomLoadVersion += 1;
   stopRoomPolling();
+  roomId = null;
   try {
     data = await api(`/api/bootstrap?user_id=${encodeURIComponent(signedInId)}`);
   } catch {
     app.innerHTML = connectionIssue("채팅", "home()");
     return;
   }
-  roomId = null;
   const rooms = data.rooms.filter(
     (r) => !["science", "friends"].includes(r.id) && !hasLeftRoom(r.id),
   );
   const upcoming = (data.appointments || [])
     .slice()
     .sort((a, b) => a.date.localeCompare(b.date))[0];
-  app.innerHTML = `<main class="layout">${rail()}<section class="page"><header class="head"><h1>채팅</h1><button class="new-room" onclick="newRoom()">＋ 새 대화</button></header><div class="content"><div class="intro"><h2>${esc(signedIn)}님, 반가워요.</h2><p>친구를 초대해 첫 대화를 시작해 보세요.</p></div><div class="dash"><section class="focus"><b>오늘의 공동 확인</b><span>채팅방에서 함께 확인할 일을 만들어 보세요.</span></section><section class="focus schedule"><b>다음 약속 <button onclick="newAppointment()">＋</button></b><span>${upcoming ? `${esc(upcoming.title)} · ${esc(upcoming.date)}` : "친구들과 약속을 정하면 여기에 보여요."}</span></section></div><div class="rooms">${rooms.length ? rooms.map((r) => `<button class="room" onclick="openRoom('${r.id}')"><span class="avatar">${esc(r.name[0])}</span><span class="copy"><b>${r.pinned ? "📌 " : ""}${esc(r.name)}</b><span>${esc(r.last)}</span></span>${r.unread ? `<span class="badge">${r.unread}</span>` : ""}</button>`).join("") : `<button class="empty-chat" onclick="newRoom()"><b>아직 대화가 없어요</b><span>친구를 초대하거나 단체 채팅을 만들어 보세요. ＋</span></button>`}</div></div></section></main>`;
+  app.innerHTML = `<main class="layout">${rail()}<section class="page"><header class="head"><h1>채팅</h1><button class="new-room" onclick="newRoom()">＋ 새 대화</button></header><div class="content"><div class="intro"><h2>${esc(signedIn)}님, 반가워요.</h2><p>친구를 초대해 첫 대화를 시작해 보세요.</p></div><div class="dash"><section class="focus"><b>오늘의 공동 확인</b><span>채팅방에서 함께 확인할 일을 만들어 보세요.</span></section><section class="focus schedule"><b>다음 약속 <button onclick="newAppointment()">＋</button></b><span>${upcoming ? `${esc(upcoming.title)} · ${esc(upcoming.date)}` : "친구들과 약속을 정하면 여기에 보여요."}</span></section></div><div class="rooms">${rooms.length ? rooms.map((r) => `<button class="room" data-room-id="${esc(r.id)}" onclick="openRoom('${r.id}')"><span class="avatar">${esc(r.name[0])}</span><span class="copy"><b>${r.pinned ? "📌 " : ""}${esc(r.name)}</b><span class="room-last">${esc(r.last)}</span></span>${r.unread ? `<span class="badge">${r.unread}</span>` : ""}</button>`).join("") : `<button class="empty-chat" onclick="newRoom()"><b>아직 대화가 없어요</b><span>친구를 초대하거나 단체 채팅을 만들어 보세요. ＋</span></button>`}</div></div></section></main>`;
+  startInboxPolling(data);
 }
 async function openRoom(id) {
+  stopInboxPolling();
+  const loadVersion = ++roomLoadVersion;
   const refreshingCurrentRoom = roomId === id;
   const previousInput = refreshingCurrentRoom ? document.querySelector("#text") : null;
   const draft = previousInput?.value || "";
@@ -290,12 +298,13 @@ async function openRoom(id) {
       `/api/rooms/${id}/messages?user_id=${encodeURIComponent(signedInId)}`,
     );
   } catch {
-    if (roomId === id) {
+    if (roomId === id && loadVersion === roomLoadVersion) {
       stopRoomPolling();
       app.innerHTML = connectionIssue("채팅방", `openRoom('${id}')`);
     }
     return;
   }
+  if (roomId !== id || loadVersion !== roomLoadVersion) return;
   currentRoomMessages = messages;
   const reflections = (data.reflections || []).filter(
     (item) => item.room_id === id,
@@ -335,6 +344,73 @@ function stopRoomPolling() {
     clearInterval(roomPollTimer);
     roomPollTimer = null;
   }
+  roomPollInFlight = false;
+}
+function stopInboxPolling() {
+  if (inboxPollTimer) {
+    clearInterval(inboxPollTimer);
+    inboxPollTimer = null;
+  }
+  inboxPollInFlight = false;
+}
+function updateHomeRoomSummaries(rooms) {
+  rooms.forEach((room) => {
+    const button = document.querySelector(`[data-room-id="${room.id}"]`);
+    if (!button) return;
+    const last = button.querySelector(".room-last");
+    if (last) last.textContent = room.last || "";
+    const badge = button.querySelector(".badge");
+    if (room.unread) {
+      if (badge) badge.textContent = room.unread;
+      else button.insertAdjacentHTML("beforeend", `<span class="badge">${room.unread}</span>`);
+    } else {
+      badge?.remove();
+    }
+  });
+}
+function notifyUnreadRoom(room, previousUnread) {
+  if (
+    !browserNotificationsEnabled() ||
+    !("Notification" in window) ||
+    Notification.permission !== "granted" ||
+    isRoomMuted(room.id)
+  )
+    return;
+  const added = Math.max(1, room.unread - previousUnread);
+  new Notification(room.name || "Re:Tone", {
+    body: added === 1 ? "새 메시지가 왔어요." : `새 메시지 ${added}개가 왔어요.`,
+    tag: `retone-${room.id}`,
+  });
+}
+function startInboxPolling(initialData = data) {
+  stopInboxPolling();
+  let knownUnread = new Map(
+    (initialData?.rooms || []).map((room) => [room.id, Number(room.unread || 0)]),
+  );
+  inboxPollTimer = setInterval(async () => {
+    if (roomId || isAdmin || !signedInId || inboxPollInFlight) return;
+    const viewVersion = roomLoadVersion;
+    inboxPollInFlight = true;
+    try {
+      const latest = await api(
+        `/api/bootstrap?user_id=${encodeURIComponent(signedInId)}`,
+      );
+      if (roomId || viewVersion !== roomLoadVersion) return;
+      latest.rooms.forEach((room) => {
+        const previous = knownUnread.get(room.id) || 0;
+        if (Number(room.unread || 0) > previous) notifyUnreadRoom(room, previous);
+      });
+      knownUnread = new Map(
+        latest.rooms.map((room) => [room.id, Number(room.unread || 0)]),
+      );
+      data = latest;
+      updateHomeRoomSummaries(latest.rooms);
+    } catch {
+      // 백그라운드 새로고침 실패는 현재 화면을 바꾸지 않습니다.
+    } finally {
+      inboxPollInFlight = false;
+    }
+  }, 5000);
 }
 function updateReadReceipts(messages) {
   const unreadByMessage = new Map(
@@ -363,7 +439,8 @@ function startRoomPolling(id, initialMessages) {
     initialMessages.map((message) => [message.id, message.unread || 0]),
   );
   roomPollTimer = setInterval(async () => {
-    if (roomId !== id) return;
+    if (roomId !== id || roomPollInFlight) return;
+    roomPollInFlight = true;
     try {
       const latest = await api(
         `/api/rooms/${id}/messages?user_id=${encodeURIComponent(signedInId)}`,
@@ -388,7 +465,11 @@ function startRoomPolling(id, initialMessages) {
         currentRoomMessages = latest;
         updateReadReceipts(latest);
       }
-    } catch {}
+    } catch {
+      // 다음 주기에 자동으로 다시 확인합니다.
+    } finally {
+      roomPollInFlight = false;
+    }
   }, 3500);
 }
 async function toggleBrowserNotifications() {
@@ -398,12 +479,14 @@ async function toggleBrowserNotifications() {
   settings();
 }
 function notifyNewMessage(message) {
-  if (!browserNotificationsEnabled() || Notification.permission !== "granted" || isRoomMuted(roomId)) return;
+  if (!browserNotificationsEnabled() || !("Notification" in window) || Notification.permission !== "granted" || isRoomMuted(roomId)) return;
   const room = data?.rooms?.find((item) => item.id === roomId);
   new Notification(room?.name || "Re:Tone", { body: `${message.sender}: ${message.body || "사진을 보냈어요."}`, tag: `retone-${roomId}` });
 }
 async function friends() {
+  roomLoadVersion += 1;
   stopRoomPolling();
+  roomId = null;
   let users, relations;
   try {
     [users, relations] = await Promise.all([
@@ -424,19 +507,32 @@ async function friends() {
   const candidates = users.filter((user) => !known.has(user.id));
   const person = (user, action, detail) => `<article class="friend-row"><span class="avatar">${user.avatar_url ? `<img src="${user.avatar_url}" alt="">` : esc(user.name[0])}</span><span class="copy"><b>${esc(user.name)}</b><span>${detail}</span></span>${action}</article>`;
   app.innerHTML = `<main class="layout">${rail()}<section class="page"><header class="head"><h1>친구</h1><button class="new-room" onclick="home()">채팅 목록</button></header><div class="content"><div class="intro"><h2>내 친구</h2><p>친구 요청을 수락한 사람과만 1:1 채팅을 시작할 수 있어요.</p></div>${relations.incoming.length ? `<section class="friend-section"><b>받은 친구 요청 <em>${relations.incoming.length}</em></b><div>${relations.incoming.map((user) => person(user, `<button onclick="acceptFriend('${user.id}')">수락</button><button class="soft" onclick="blockFriend('${user.id}')">차단</button>`, "친구 요청을 보냈어요")).join("")}</div></section>` : ""}<section class="friend-section"><b>친구 ${relations.friends.length}</b><div>${relations.friends.length ? relations.friends.map((user) => person(user, `<button onclick="startDirect('${esc(user.name)}','${user.id}')">채팅</button><button class="soft" onclick="blockFriend('${user.id}')">차단</button>`, "1:1 대화를 시작할 수 있어요")).join("") : `<div class="empty-chat"><b>아직 친구가 없어요</b><span>아래에서 친구 요청을 보내보세요.</span></div>`}</div></section>${relations.outgoing.length ? `<section class="friend-section"><b>보낸 요청</b><div>${relations.outgoing.map((user) => person(user, `<span class="request-state">대기 중</span>`, "수락을 기다리고 있어요")).join("")}</div></section>` : ""}${candidates.length ? `<section class="friend-section"><b>친구 찾아보기</b><div>${candidates.map((user) => person(user, `<button onclick="requestFriend('${user.id}')">친구 요청</button>`, "Re:Tone에 가입했어요")).join("")}</div></section>` : ""}${relations.blocked.length ? `<details class="blocked-list"><summary>차단한 사용자 ${relations.blocked.length}명</summary><p>차단한 사용자는 친구 요청과 채팅을 시작할 수 없어요.</p></details>` : ""}</div></section></main>`;
+  startInboxPolling(data);
 }
 async function requestFriend(id) {
-  await api("/api/friends/request", { method: "POST", body: JSON.stringify({ user_id: signedInId, target_id: id }) });
-  friends();
+  try {
+    await api("/api/friends/request", { method: "POST", body: JSON.stringify({ user_id: signedInId, target_id: id }) });
+    friends();
+  } catch {
+    alert("친구 요청을 보내지 못했어요. 연결 상태를 확인한 뒤 다시 시도해주세요.");
+  }
 }
 async function acceptFriend(id) {
-  await api("/api/friends/accept", { method: "POST", body: JSON.stringify({ user_id: signedInId, target_id: id }) });
-  friends();
+  try {
+    await api("/api/friends/accept", { method: "POST", body: JSON.stringify({ user_id: signedInId, target_id: id }) });
+    friends();
+  } catch {
+    alert("친구 요청을 수락하지 못했어요. 잠시 후 다시 시도해주세요.");
+  }
 }
 async function blockFriend(id) {
   if (!confirm("이 사용자를 차단할까요? 친구 요청과 새 채팅을 할 수 없게 됩니다.")) return;
-  await api("/api/blocks", { method: "POST", body: JSON.stringify({ user_id: signedInId, target_id: id }) });
-  friends();
+  try {
+    await api("/api/blocks", { method: "POST", body: JSON.stringify({ user_id: signedInId, target_id: id }) });
+    friends();
+  } catch {
+    alert("차단 처리하지 못했어요. 잠시 후 다시 시도해주세요.");
+  }
 }
 function roomSettings() {
   const muted = isRoomMuted(roomId);
@@ -484,24 +580,31 @@ async function leaveRoom() {
   }
 }
 async function startDirect(name, inviteeId = "") {
-  const room = await api("/api/rooms", {
-    method: "POST",
-    body: JSON.stringify({
-      name,
-      creator_id: signedInId,
-      invitee_ids: inviteeId ? [inviteeId] : [],
-      direct: true,
-    }),
-  });
-  data = await api(`/api/bootstrap?user_id=${encodeURIComponent(signedInId)}`);
-  openRoom(room.id);
+  try {
+    const room = await api("/api/rooms", {
+      method: "POST",
+      body: JSON.stringify({
+        name,
+        creator_id: signedInId,
+        invitee_ids: inviteeId ? [inviteeId] : [],
+        direct: true,
+      }),
+    });
+    data = await api(`/api/bootstrap?user_id=${encodeURIComponent(signedInId)}`);
+    openRoom(room.id);
+  } catch {
+    alert("1:1 채팅을 시작하지 못했어요. 친구 상태와 연결을 확인해주세요.");
+  }
 }
 function settings() {
+  roomLoadVersion += 1;
   stopRoomPolling();
+  roomId = null;
   nav = "settings";
   if (isAdmin) {
     app.innerHTML = `<main class="layout">${rail()}<section class="page"><header class="head"><h1>관리자</h1></header><div class="content"><div class="intro"><h2>Re:Tone 관리자 계정</h2><p>사용자별 계정과 AI 문의를 관리하는 공간이에요.</p></div><section class="admin-panel"><b>관리자 로그인 완료</b><span>일반 사용자 대화에는 관리자 권한이 자동으로 개입하지 않아요.</span><button onclick="openAdminReports()">AI 문의 확인</button></section><section class="admin-users"><div><b>가입 사용자</b><span>초기화할 계정을 개별로 선택하세요.</span></div><div id="admin-users-list" class="admin-users-list"><small>사용자 목록을 불러오는 중…</small></div></section><section class="admin-danger"><b>전체 서비스 데이터 초기화</b><p>모든 계정, 친구 관계, 채팅, 사진, 일정, 반응, AI 문의와 확인 기록을 삭제합니다.</p><button onclick="openGlobalReset()">전체 데이터 초기화</button></section><button class="room" onclick="logout()"><span class="avatar">↪</span><span class="copy"><b>로그아웃</b><span>관리자 세션을 안전하게 종료해요.</span></span></button></div></section></main>`;
     renderAdminUsers();
+    startInboxPolling(data);
     return;
   }
   const avatar = localStorage.getItem("retone-avatar");
@@ -531,6 +634,7 @@ function settings() {
       "",
     )}</div><div class="ai-toggles">${toggles.map((t, i) => `<label><input type="checkbox" ${i < 6 ? "checked" : ""}>${t}</label>`).join("")}</div></section><button class="room" onclick="logout()"><span class="avatar">↪</span><span class="copy"><b>로그아웃</b><span>이 기기에서 안전하게 로그아웃해요.</span></span></button></div></div></section></main>`;
   renderDetailedAiSettings();
+  startInboxPolling(data);
 }
 async function renderAdminUsers() {
   const root = document.querySelector("#admin-users-list");
@@ -824,7 +928,9 @@ async function setAiIntervention(level) {
   settings();
 }
 function logout() {
+  roomLoadVersion += 1;
   stopRoomPolling();
+  stopInboxPolling();
   [
     "retone-v2-name",
     "retone-v2-user-id",
