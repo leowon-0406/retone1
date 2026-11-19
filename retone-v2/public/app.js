@@ -8,6 +8,7 @@ let sessionToken = sessionStorage.getItem("retone-v2-session") || "";
 let isAdmin = sessionStorage.getItem("retone-v2-admin") === "yes";
 let aiIntervention = sessionStorage.getItem("retone-v2-ai-level") || "standard";
 let pendingSend = null;
+let replyingTo = null;
 let pendingAnalysisDraft = "";
 let currentRoomMessages = [];
 let signupAiDetails = null;
@@ -306,6 +307,8 @@ async function openRoom(id) {
   }
   if (roomId !== id || loadVersion !== roomLoadVersion) return;
   currentRoomMessages = messages;
+  if (replyingTo?.room_id !== id) replyingTo = null;
+  else if (replyingTo) replyingTo = messages.find((message) => message.id === replyingTo.id) || null;
   const reflections = (data.reflections || []).filter(
     (item) => item.room_id === id,
   );
@@ -326,7 +329,7 @@ async function openRoom(id) {
     )
     .join(
       "",
-    )}</section><form class="sendbar" onsubmit="send(event)"><button type="button" class="intent-button" title="의도 표시" onclick="chooseIntent()">${selectedIntent ? "◎" : "＋"}</button><label class="image-upload" title="사진 보내기" aria-label="사진 보내기"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="3"/><circle cx="9" cy="10" r="1.5"/><path d="m5.5 17 4.5-4 3.2 2.7 2.4-2 2.9 3.3"/></svg><input hidden type="file" accept="image/*" onchange="sendImage(this)"></label><input id="text" placeholder="메시지를 입력하세요" autocomplete="off" oninput="queueAiCheck(this.value)"><span id="ai-status" class="ai-status"></span><button>↑</button></form></section></main>`;
+    )}</section><form class="sendbar" onsubmit="send(event)">${replyComposer()}<button type="button" class="intent-button" title="의도 표시" onclick="chooseIntent()">${selectedIntent ? "◎" : "＋"}</button><label class="image-upload" title="사진 보내기" aria-label="사진 보내기"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="3"/><circle cx="9" cy="10" r="1.5"/><path d="m5.5 17 4.5-4 3.2 2.7 2.4-2 2.9 3.3"/></svg><input hidden type="file" accept="image/*" onchange="sendImage(this)"></label><input id="text" placeholder="메시지를 입력하세요" autocomplete="off" oninput="queueAiCheck(this.value)"><span id="ai-status" class="ai-status"></span><button>↑</button></form></section></main>`;
   const list = document.querySelector("#messages");
   if (refreshingCurrentRoom && !wasNearBottom) list.scrollTop = previousScrollTop;
   else list.scrollTop = list.scrollHeight;
@@ -518,7 +521,7 @@ function showFriendAddPanel(mode) {
   const panel = document.querySelector("#friend-add-panel");
   if (!panel) return;
   if (mode === "phone") {
-    panel.innerHTML = `<label>친구 전화번호<input id="friend-phone" inputmode="numeric" autocomplete="tel" placeholder="전화번호를 입력해주세요"></label><small>전화번호는 친구를 찾는 데에만 사용되며, 상대에게 공개되지 않아요.</small><button onclick="lookupFriend('phone')">친구 찾기</button><div id="friend-search-result"></div>`;
+    panel.innerHTML = `<label>친구 전화번호<input id="friend-phone" inputmode="numeric" autocomplete="tel" maxlength="13" oninput="formatPhoneInput(this)" placeholder="010-1234-5678"></label><small>전화번호는 친구를 찾는 데에만 사용되며, 상대에게 공개되지 않아요.</small><button onclick="lookupFriend('phone')">친구 찾기</button><div id="friend-search-result"></div>`;
     return;
   }
   if (mode === "code") {
@@ -585,12 +588,15 @@ async function shareFriendCode() {
   try { await navigator.clipboard.writeText(text); alert("친구코드를 복사했어요."); } catch { alert(text); }
 }
 async function lookupFriend(mode) {
-  const value = document.querySelector(mode === "phone" ? "#friend-phone" : "#friend-code")?.value.trim();
+  const field = document.querySelector(mode === "phone" ? "#friend-phone" : "#friend-code");
+  const value = field?.value.trim();
   if (!value) return alert(mode === "phone" ? "전화번호를 입력해주세요." : "친구코드를 입력해주세요.");
+  if (mode === "phone" && !isValidMobilePhone(value))
+    return alert("010-1234-5678 형식의 휴대폰 번호를 입력해주세요.");
   const root = document.querySelector("#friend-search-result");
   if (root) root.innerHTML = `<div class="friend-lookup-loading"><span class="thinking-loader"><i></i><i></i><i></i></span>친구를 찾고 있어요.</div>`;
   try {
-    const result = await api("/api/friends/lookup", { method: "POST", body: JSON.stringify(mode === "phone" ? { phone: value } : { friend_code: value }) });
+    const result = await api("/api/friends/lookup", { method: "POST", body: JSON.stringify(mode === "phone" ? { phone: phoneDigits(value) } : { friend_code: value }) });
     if (!root) return;
     if (!result.user) {
       root.innerHTML = `<div class="friend-search-empty">찾는 사용자가 없어요. 전화번호 또는 친구코드를 다시 확인해주세요.</div>`;
@@ -1140,7 +1146,37 @@ function view(m) {
   const messageMenu = m.mine
     ? `<button class="message-menu" title="메시지 관리" aria-label="메시지 관리" onclick="event.stopPropagation();openMessageActions('${m.id}')"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg></button>`
     : "";
-  return `<article class="bubble ${m.mine ? "mine" : ""}" data-message-id="${esc(m.id)}" ${m.mine ? "" : `onclick="inspectMessage(${JSON.stringify(m.body)})"`}><div class="meta"><span>${esc(m.sender)}${m.intent ? ` · <span class="intent-tag">${esc(m.intent)}</span>` : ""}</span>${messageMenu}</div>${m.image_url ? `<img class="chat-image" src="${m.image_url}" alt="보낸 사진">` : ""}${m.body ? `<span>${esc(m.body)}</span>` : ""}${factCue}${m.mine && m.unread ? `<span class="read">${m.unread}</span>` : ""}</article>`;
+  const original = m.reply_to
+    ? currentRoomMessages.find((message) => message.id === m.reply_to)
+    : null;
+  const quote = m.reply_to
+    ? `<button class="reply-quote" onclick="event.stopPropagation();focusReply('${m.reply_to}')"><b>${esc(original?.sender || "삭제된 메시지")}</b><span>${esc(original?.body || (original?.image_url ? "사진" : "원문을 찾을 수 없어요"))}</span></button>`
+    : "";
+  const replyButton = `<button class="reply-shortcut" title="답장" aria-label="답장" onclick="event.stopPropagation();startReply('${m.id}')">↩</button>`;
+  return `<article class="bubble ${m.mine ? "mine" : ""}" data-message-id="${esc(m.id)}" ${m.mine ? "" : `onclick="inspectMessage(${JSON.stringify(m.body)})"`}><div class="meta"><span>${esc(m.sender)}${m.intent ? ` · <span class="intent-tag">${esc(m.intent)}</span>` : ""}</span>${messageMenu}</div>${quote}${m.image_url ? `<img class="chat-image" src="${m.image_url}" alt="보낸 사진">` : ""}${m.body ? `<span>${esc(m.body)}</span>` : ""}<div class="bubble-tools">${factCue}${replyButton}${m.mine && m.unread ? `<span class="read">${m.unread}</span>` : ""}</div></article>`;
+}
+function replyComposer() {
+  if (!replyingTo) return "";
+  const summary = replyingTo.body || (replyingTo.image_url ? "사진" : "메시지");
+  return `<div class="reply-composer"><span>↩ <b>${esc(replyingTo.sender)}</b>에게 답장</span><small>${esc(summary)}</small><button type="button" title="답장 취소" aria-label="답장 취소" onclick="cancelReply()">×</button></div>`;
+}
+function startReply(id) {
+  const message = currentRoomMessages.find((item) => item.id === id);
+  if (!message) return;
+  replyingTo = message;
+  closePopup();
+  openRoom(roomId);
+}
+function cancelReply() {
+  replyingTo = null;
+  openRoom(roomId);
+}
+function focusReply(id) {
+  const target = document.querySelector(`[data-message-id="${id}"]`);
+  if (!target) return;
+  target.scrollIntoView({ behavior: "smooth", block: "center" });
+  target.classList.add("reply-focused");
+  setTimeout(() => target.classList.remove("reply-focused"), 900);
 }
 function conversationSignals(messages) {
   return messages.slice(-8).map((message) => {
@@ -1364,9 +1400,11 @@ function queueAiCheck(value) {
     text,
     result: null,
     promise: null,
-    timer: setTimeout(() => runAiCheck(text), 180),
+    // Do not call the service for every letter. One pre-check after a natural
+    // typing pause preserves fast sending without turning typing into API traffic.
+    timer: setTimeout(() => runAiCheck(text), 900),
   };
-  setAiStatus("AI 확인 준비 중", true);
+  setAiStatus("");
 }
 async function runAiCheck(text) {
   if (aiPrefetch.text !== text) return;
@@ -1428,7 +1466,8 @@ async function send(event) {
   const input = document.querySelector("#text"),
     body = input.value.trim();
   if (!body) return;
-  pendingSend = { body, room: roomId, intent: selectedIntent };
+  pendingSend = { body, room: roomId, intent: selectedIntent, replyTo: replyingTo?.id || null };
+  replyingTo = null;
   input.value = "";
   input.disabled = true;
   const saved = activeAiIntervention() !== "off" && savedAiResult(body);
@@ -1453,8 +1492,10 @@ async function sendImageNow(dataUrl) {
       sender_id: signedInId,
       body: "사진을 보냈어요.",
       image_url: dataUrl,
+      reply_to: replyingTo?.id || null,
     }),
   });
+  replyingTo = null;
   openRoom(roomId);
 }
 async function sendImage(input) {
@@ -1582,6 +1623,7 @@ async function sendApproved() {
         sender_id: signedInId,
         body: next.body,
         intent: next.intent,
+        reply_to: next.replyTo,
       }),
     });
   } catch {
@@ -1611,9 +1653,13 @@ async function sendApproved() {
 }
 function editPendingSend() {
   const body = pendingSend?.body || "";
+  const replyTo = pendingSend?.replyTo;
   // 경고창에서 입력창으로 돌아가는 것은 '취소'가 아니라 새 문장의 편집입니다.
   // 이 상태를 남겨두면 send()가 중복 전송 방지 분기에서 즉시 종료됩니다.
   pendingSend = null;
+  replyingTo = replyTo
+    ? currentRoomMessages.find((message) => message.id === replyTo) || null
+    : null;
   clearTimeout(aiPrefetch.timer);
   aiPrefetch = { text: "", result: null, promise: null, timer: null };
   removePendingBubble();
@@ -1625,6 +1671,7 @@ function editPendingSend() {
     input.value = body;
     input.focus();
     queueAiCheck(body);
+    if (replyingTo) openRoom(roomId);
   }
 }
 function openMessageActions(id) {
@@ -1633,7 +1680,7 @@ function openMessageActions(id) {
     ? `<p class="message-action-preview">${esc(message.body)}</p>`
     : `<p class="message-action-preview image">사진을 보낸 메시지</p>`;
   popup(
-    `<div class="message-action-sheet"><span>메시지 관리</span><h2>이 메시지를 삭제할까요?</h2>${preview}<p class="message-action-note">삭제하면 채팅방 참여자에게 더 이상 보이지 않아요.</p><div class="modal-actions"><button class="quiet" onclick="closePopup()">취소</button><button class="danger-action" onclick="removeMessage('${id}')">메시지 삭제</button></div></div>`,
+    `<div class="message-action-sheet"><span>내 메시지</span><h2>어떤 작업을 할까요?</h2>${preview}<p class="message-action-note">답장으로 대화의 맥락을 이어가거나, 필요하면 메시지를 삭제할 수 있어요.</p><div class="message-action-buttons"><button class="quiet" onclick="startReply('${id}')">↩ 답장</button><button class="danger-action" onclick="removeMessage('${id}')">메시지 삭제</button></div><button class="sheet-cancel" onclick="closePopup()">취소</button></div>`,
   );
 }
 async function removeMessage(id) {
@@ -1845,7 +1892,7 @@ function authForm(mode) {
   };
   const categorySetup = `<details class="auth-ai-details" open><summary>항목별 AI 민감도 설정</summary><p>각 항목에서 AI가 어느 정도까지 도울지 정해요. 가입 후에도 바꿀 수 있어요.</p>${aiGroups.map(([title, , names]) => `<section class="signup-ai-group"><b>${title}</b>${names.map(signupCard).join("")}</section>`).join("")}</details>`;
   document.querySelector("#auth-form").innerHTML =
-    `<label>이름<input id="auth-name" placeholder="이름을 입력하세요"></label><label>전화번호<input id="auth-phone" inputmode="numeric" placeholder="전화번호를 입력하세요"></label><label>비밀번호<input id="auth-password" type="password" placeholder="비밀번호를 입력하세요"></label>${join ? `<label>AI 개입 정도<select id="auth-ai-level"><option value="light">가볍게 · 강한 욕설만</option><option value="standard" selected>균형 있게 · 말투와 중요한 정보</option><option value="careful">꼼꼼하게 · 더 세심한 확인</option><option value="off">AI 끄기</option></select></label>${categorySetup}<button type="button" class="ai-policy-link" onclick="showAiPolicy()">AI가 개입하는 이유와 사용 범위 보기</button><label class="consent"><input id="auth-ai-consent" type="checkbox"> AI 사용 안내를 읽었고, 선택한 범위의 점검에 동의해요.</label><p class="auth-hint">동의하지 않아도 AI 끄기를 선택해 가입할 수 있고, 설정에서 언제든 변경할 수 있어요.</p>` : ""}<button class="auth-submit" onclick="finishAuth('${mode}')">${join ? "회원가입하고 시작하기" : "로그인"}</button>${join ? '<p class="auth-hint">같은 전화번호가 있으면 확인 절차가 안내돼요.</p>' : '<button type="button" class="admin-login-link" onclick="authForm(\'admin\')">관리자 로그인</button>'}`;
+    `<label>이름<input id="auth-name" placeholder="이름을 입력하세요"></label><label>전화번호<input id="auth-phone" inputmode="numeric" maxlength="13" autocomplete="tel" oninput="formatPhoneInput(this)" placeholder="010-1234-5678"></label><label>비밀번호<input id="auth-password" type="password" placeholder="비밀번호를 입력하세요"></label>${join ? `<label>AI 개입 정도<select id="auth-ai-level"><option value="light">가볍게 · 강한 욕설만</option><option value="standard" selected>균형 있게 · 말투와 중요한 정보</option><option value="careful">꼼꼼하게 · 더 세심한 확인</option><option value="off">AI 끄기</option></select></label>${categorySetup}<button type="button" class="ai-policy-link" onclick="showAiPolicy()">AI가 개입하는 이유와 사용 범위 보기</button><label class="consent"><input id="auth-ai-consent" type="checkbox"> AI 사용 안내를 읽었고, 선택한 범위의 점검에 동의해요.</label><p class="auth-hint">동의하지 않아도 AI 끄기를 선택해 가입할 수 있고, 설정에서 언제든 변경할 수 있어요.</p>` : ""}<button class="auth-submit" onclick="finishAuth('${mode}')">${join ? "회원가입하고 시작하기" : "로그인"}</button>${join ? '<p class="auth-hint">같은 전화번호가 있으면 확인 절차가 안내돼요.</p>' : '<button type="button" class="admin-login-link" onclick="authForm(\'admin\')">관리자 로그인</button>'}`;
 }
 function renderSignupWizard() {
   const draft = signupDraft;
@@ -1853,7 +1900,7 @@ function renderSignupWizard() {
   const progress = `<div class="signup-progress"><span>${draft.step + 1} / ${steps.length}</span><b>${steps[draft.step]}</b><div><i style="width:${((draft.step + 1) / steps.length) * 100}%"></i></div></div>`;
   let content = "";
   if (draft.step === 0)
-    content = `<h2>먼저 계정을 만들어요</h2><p>친구들과 안전하게 대화하기 위한 기본 정보예요.</p><label>이름<input id="signup-name" value="${esc(draft.name)}" placeholder="이름을 입력해주세요"></label><label>전화번호<input id="signup-phone" value="${esc(draft.phone)}" inputmode="numeric" oninput="checkSignupPhone()" placeholder="전화번호를 입력해주세요"><small id="signup-phone-status" class="field-status">전화번호를 입력하면 중복 여부를 바로 확인해요.</small></label><label>비밀번호<input id="signup-password" value="${esc(draft.password)}" type="password" oninput="checkPasswordRequirements()" placeholder="비밀번호를 입력해주세요"></label><ul class="password-requirements"><li id="password-length">○ 6자 이상</li><li id="password-letter">○ 영어 1자 이상</li><li id="password-special">○ 특수문자 1자 이상</li></ul>`;
+    content = `<h2>먼저 계정을 만들어요</h2><p>친구들과 안전하게 대화하기 위한 기본 정보예요.</p><label>이름<input id="signup-name" value="${esc(draft.name)}" placeholder="이름을 입력해주세요"></label><label>전화번호<input id="signup-phone" value="${esc(formatPhoneNumber(draft.phone))}" inputmode="numeric" maxlength="13" autocomplete="tel" oninput="checkSignupPhone()" placeholder="010-1234-5678"><small id="signup-phone-status" class="field-status">010-1234-5678 형식으로 입력해주세요.</small></label><label>비밀번호<input id="signup-password" value="${esc(draft.password)}" type="password" oninput="checkPasswordRequirements()" placeholder="비밀번호를 입력해주세요"></label><ul class="password-requirements"><li id="password-length">○ 6자 이상</li><li id="password-letter">○ 영어 1자 이상</li><li id="password-special">○ 특수문자 1자 이상</li></ul>`;
   else if (draft.step === 1)
     content = `<h2>AI가 얼마나 도울까요?</h2><p>처음에는 보통(50)에서 시작해요. 이후 ‘그냥 보내기’ 선택 패턴을 보고 AI가 세부 민감도를 조절하며, 설정에서 언제든 바꿀 수 있어요.</p><section class="signup-sensitivity"><div><span>AI 민감도</span><b id="signup-sensitivity-label">${sensitivityLabel(draft.sensitivity)} · ${draft.sensitivity}</b></div><input type="range" min="0" max="100" value="${draft.sensitivity}" style="--sensitivity:${draft.sensitivity}%" oninput="previewSignupSensitivity(this.value,this)" onchange="setSignupSensitivity(this.value)"><small>낮을수록 필요한 순간에만, 높을수록 더 세심하게 제안해요.</small></section>`;
   else
@@ -1896,16 +1943,34 @@ function setFieldStatus(id, message, state = "") {
   node.textContent = message;
   node.className = `field-status ${state}`;
 }
+function phoneDigits(value) {
+  return String(value || "").replace(/\D/g, "").slice(0, 11);
+}
+function isValidMobilePhone(value) {
+  return /^010\d{8}$/.test(phoneDigits(value));
+}
+function formatPhoneNumber(value) {
+  const digits = phoneDigits(value);
+  if (!digits.startsWith("010")) return digits;
+  if (digits.length <= 3) return digits;
+  if (digits.length <= 7) return `010-${digits.slice(3)}`;
+  return `010-${digits.slice(3, 7)}-${digits.slice(7)}`;
+}
+function formatPhoneInput(input) {
+  if (input) input.value = formatPhoneNumber(input.value);
+}
 function checkSignupPhone() {
   const input = document.querySelector("#signup-phone");
   if (!input) return;
-  input.value = input.value.replace(/\D/g, "");
-  const phone = input.value;
+  formatPhoneInput(input);
+  const phone = phoneDigits(input.value);
   clearTimeout(signupPhoneTimer);
-  if (phone.length < 7)
+  if (!isValidMobilePhone(phone))
     return setFieldStatus(
       "#signup-phone-status",
-      "전화번호를 입력하면 중복 여부를 바로 확인해요.",
+      phone.length && !phone.startsWith("010")
+        ? "010으로 시작하는 휴대폰 번호를 입력해주세요."
+        : "010-1234-5678 형식으로 입력해주세요.",
     );
   setFieldStatus("#signup-phone-status", "확인 중…", "checking");
   signupPhoneTimer = setTimeout(async () => {
@@ -1913,7 +1978,7 @@ function checkSignupPhone() {
       const out = await api(
         `/api/auth/phone-available?phone=${encodeURIComponent(phone)}`,
       );
-      if (document.querySelector("#signup-phone")?.value !== phone) return;
+      if (phoneDigits(document.querySelector("#signup-phone")?.value) !== phone) return;
       setFieldStatus(
         "#signup-phone-status",
         out.available
@@ -1953,9 +2018,9 @@ function setWizardDetail(name, value) {
 async function signupNext() {
   if (signupDraft.step === 0) {
     const name = document.querySelector("#signup-name").value.trim(),
-      phone = document.querySelector("#signup-phone").value.replace(/\D/g, ""),
+      phone = phoneDigits(document.querySelector("#signup-phone").value),
       password = document.querySelector("#signup-password").value;
-    if (!name || phone.length < 7 || !checkPasswordRequirements())
+    if (!name || !isValidMobilePhone(phone) || !checkPasswordRequirements())
       return alert("이름, 전화번호와 비밀번호 조건을 모두 확인해주세요.");
     try {
       const out = await api(

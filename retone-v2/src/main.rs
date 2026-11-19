@@ -46,6 +46,7 @@ struct Message {
     intent: Option<String>,
     alignment_hint: bool,
     image_url: Option<String>,
+    reply_to: Option<String>,
 }
 #[derive(Clone, Serialize)]
 struct Agreement {
@@ -104,6 +105,7 @@ struct Send {
     body: String,
     intent: Option<String>,
     image_url: Option<String>,
+    reply_to: Option<String>,
 }
 #[derive(Deserialize)]
 struct NewRoom {
@@ -293,6 +295,14 @@ fn phone_hash(phone: &str) -> String {
             .collect::<String>()
     )
 }
+fn is_valid_mobile_phone(phone: &str) -> bool {
+    let digits = phone
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .collect::<String>();
+    // Keep the existing local administrator bootstrap credential working.
+    digits == "12341234" || (digits.len() == 11 && digits.starts_with("010"))
+}
 fn normalize_friend_code(value: &str) -> String {
     value
         .chars()
@@ -381,7 +391,7 @@ async fn signup(
     let name = input.name.trim();
     let phone = phone_hash(&input.phone);
     if name.is_empty()
-        || input.phone.chars().filter(|c| c.is_ascii_digit()).count() < 7
+        || !is_valid_mobile_phone(&input.phone)
         || input.password.len() < 6
         || !input.password.chars().any(|c| c.is_ascii_alphabetic())
         || !input.password.chars().any(|c| !c.is_ascii_alphanumeric())
@@ -410,8 +420,7 @@ async fn phone_available(
     State(app): State<App>,
     Query(input): Query<PhoneCheck>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let digits = input.phone.chars().filter(|c| c.is_ascii_digit()).count();
-    if digits < 7 {
+    if !is_valid_mobile_phone(&input.phone) {
         return Ok(Json(
             serde_json::json!({"available": false, "ready": false}),
         ));
@@ -614,7 +623,7 @@ async fn lookup_friend(
 ) -> Result<Json<FriendLookupOut>, StatusCode> {
     let user_id = require_user(&app, &headers).await?;
     let row = if let Some(phone) = input.phone {
-        if phone.chars().filter(|c| c.is_ascii_digit()).count() < 7 {
+        if !is_valid_mobile_phone(&phone) {
             return Err(StatusCode::BAD_REQUEST);
         }
         sqlx::query_as::<_, (Uuid, String, Option<String>, String)>(
@@ -1480,6 +1489,25 @@ async fn bootstrap(
         } else {
             rooms.clear();
         }
+        // A one-to-one room has one shared database record, but its title must be
+        // personalised: each participant should see the other person's name.
+        if let Ok(rows) = sqlx::query_as::<_, (Uuid, String)>(
+            "SELECT r.id,COALESCE(u.name,'탈퇴한 사용자') FROM retone_v2.rooms r JOIN retone_v2.room_members mine ON mine.room_id=r.id AND mine.user_id=$1 JOIN retone_v2.room_members peer ON peer.room_id=r.id AND peer.user_id<>$1 LEFT JOIN retone_v2.users u ON u.id=peer.user_id WHERE r.is_group=FALSE",
+        )
+        .bind(user_id)
+        .fetch_all(&app.db)
+        .await
+        {
+            let titles = rows
+                .into_iter()
+                .map(|(id, name)| (id.to_string(), name))
+                .collect::<HashMap<_, _>>();
+            rooms.iter_mut().for_each(|room| {
+                if let Some(name) = titles.get(&room.id) {
+                    room.name = name.clone();
+                }
+            });
+        }
         if let Ok(rows) = sqlx::query_as::<_, (Uuid, i64)>("SELECT r.id,COUNT(m.id) FROM retone_v2.rooms r JOIN retone_v2.room_members rm ON rm.room_id=r.id LEFT JOIN retone_v2.messages m ON m.room_id=r.id AND m.deleted_at IS NULL AND m.sender_id<>$1 AND (rm.last_read_at IS NULL OR m.created_at>rm.last_read_at) WHERE rm.user_id=$1 GROUP BY r.id").bind(user_id).fetch_all(&app.db).await {
             let unread = rows.into_iter().map(|(id,count)|(id.to_string(),count.min(255) as u8)).collect::<HashMap<_,_>>();
             rooms.iter_mut().for_each(|room| room.unread = *unread.get(&room.id).unwrap_or(&0));
@@ -1635,6 +1663,24 @@ async fn send(
         Some(data_url) => Some(upload_to_cloudinary(data_url, "retone/messages").await?),
         None => None,
     };
+    let reply_to = match input.reply_to.as_deref() {
+        Some(raw) => {
+            let reply_id = Uuid::parse_str(raw).map_err(|_| StatusCode::BAD_REQUEST)?;
+            let valid: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM retone_v2.messages WHERE id=$1 AND room_id=$2 AND deleted_at IS NULL)",
+            )
+            .bind(reply_id)
+            .bind(room_uuid)
+            .fetch_one(&app.db)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            if !valid {
+                return Err(StatusCode::BAD_REQUEST);
+            }
+            Some(reply_id)
+        }
+        None => None,
+    };
     let mut message = Message {
         id: Uuid::new_v4().to_string(),
         room_id: id.clone(),
@@ -1654,10 +1700,11 @@ async fn send(
         intent: input.intent.filter(|value| !value.trim().is_empty()),
         alignment_hint: looks_like_alignment(input.body.trim()),
         image_url,
+        reply_to: reply_to.map(|value| value.to_string()),
     };
-    sqlx::query("INSERT INTO retone_v2.messages(id,room_id,sender_id,body,intent,image_url) VALUES($1,$2,$3,$4,$5,$6)")
+    sqlx::query("INSERT INTO retone_v2.messages(id,room_id,sender_id,body,intent,image_url,reply_to) VALUES($1,$2,$3,$4,$5,$6,$7)")
         .bind(Uuid::parse_str(&message.id).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?)
-        .bind(room_uuid).bind(sender_id).bind(&message.body).bind(&message.intent).bind(&message.image_url)
+        .bind(room_uuid).bind(sender_id).bind(&message.body).bind(&message.intent).bind(&message.image_url).bind(reply_to)
         .execute(&app.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let unread: i64 = sqlx::query_scalar(
         "SELECT COUNT(*)::BIGINT FROM retone_v2.room_members WHERE room_id=$1 AND user_id<>$2",
@@ -1949,7 +1996,7 @@ async fn create_room(
     if is_direct {
         let peer_id = Uuid::parse_str(&invitees[0]).map_err(|_| StatusCode::BAD_REQUEST)?;
         let existing = sqlx::query_as::<_, (Uuid, String, i64)>(
-            "SELECT r.id,r.name,FLOOR(EXTRACT(EPOCH FROM r.created_at)*1000)::BIGINT FROM retone_v2.rooms r WHERE r.is_group=FALSE AND (SELECT COUNT(*) FROM retone_v2.room_members rm WHERE rm.room_id=r.id)=2 AND EXISTS(SELECT 1 FROM retone_v2.room_members rm WHERE rm.room_id=r.id AND rm.user_id=$1) AND EXISTS(SELECT 1 FROM retone_v2.room_members rm WHERE rm.room_id=r.id AND rm.user_id=$2) ORDER BY r.created_at DESC LIMIT 1",
+            "SELECT r.id,COALESCE(u.name,'탈퇴한 사용자'),FLOOR(EXTRACT(EPOCH FROM r.created_at)*1000)::BIGINT FROM retone_v2.rooms r JOIN retone_v2.room_members peer_member ON peer_member.room_id=r.id AND peer_member.user_id=$2 LEFT JOIN retone_v2.users u ON u.id=peer_member.user_id WHERE r.is_group=FALSE AND (SELECT COUNT(*) FROM retone_v2.room_members rm WHERE rm.room_id=r.id)=2 AND EXISTS(SELECT 1 FROM retone_v2.room_members rm WHERE rm.room_id=r.id AND rm.user_id=$1) AND EXISTS(SELECT 1 FROM retone_v2.room_members rm WHERE rm.room_id=r.id AND rm.user_id=$2) ORDER BY r.created_at DESC LIMIT 1",
         )
         .bind(creator)
         .bind(peer_id)
@@ -2169,8 +2216,8 @@ async fn prepare_storage() -> Option<PgPool> {
 async fn restore_data(db: &PgPool) -> Data {
     let rooms = sqlx::query_as::<_, (Uuid, String, i64, String, i64)>("SELECT r.id,r.name,(SELECT COUNT(*) FROM retone_v2.room_members rm WHERE rm.room_id=r.id),COALESCE((SELECT m.body FROM retone_v2.messages m WHERE m.room_id=r.id AND m.deleted_at IS NULL ORDER BY m.created_at DESC LIMIT 1),'새 대화를 시작해 보세요.'),FLOOR(EXTRACT(EPOCH FROM r.created_at)*1000)::BIGINT FROM retone_v2.rooms r ORDER BY r.created_at")
         .fetch_all(db).await.unwrap_or_default().into_iter().map(|(id,name,members,last,updated)| Room { id:id.to_string(),name,members:members.min(255) as u8,unread:0,pinned:false,last,updated }).collect();
-    let messages = sqlx::query_as::<_, (Uuid, Uuid, Option<String>, Option<Uuid>, String, i64, Option<String>, Option<String>)>("SELECT m.id,m.room_id,u.name,m.sender_id,m.body,FLOOR(EXTRACT(EPOCH FROM m.created_at)*1000)::BIGINT,m.intent,m.image_url FROM retone_v2.messages m LEFT JOIN retone_v2.users u ON u.id=m.sender_id WHERE m.deleted_at IS NULL ORDER BY m.created_at")
-        .fetch_all(db).await.unwrap_or_default().into_iter().map(|(id,room_id,sender,sender_id,body,created,intent,image_url)| { let alignment_hint = looks_like_alignment(&body); Message { id:id.to_string(),room_id:room_id.to_string(),sender:sender.unwrap_or_else(|| "알 수 없는 사용자".into()),sender_id:sender_id.map(|value| value.to_string()),mine:false,body,created,unread:0,intent,alignment_hint,image_url } }).collect();
+    let messages = sqlx::query_as::<_, (Uuid, Uuid, Option<String>, Option<Uuid>, String, i64, Option<String>, Option<String>, Option<Uuid>)>("SELECT m.id,m.room_id,u.name,m.sender_id,m.body,FLOOR(EXTRACT(EPOCH FROM m.created_at)*1000)::BIGINT,m.intent,m.image_url,m.reply_to FROM retone_v2.messages m LEFT JOIN retone_v2.users u ON u.id=m.sender_id WHERE m.deleted_at IS NULL ORDER BY m.created_at")
+        .fetch_all(db).await.unwrap_or_default().into_iter().map(|(id,room_id,sender,sender_id,body,created,intent,image_url,reply_to)| { let alignment_hint = looks_like_alignment(&body); Message { id:id.to_string(),room_id:room_id.to_string(),sender:sender.unwrap_or_else(|| "알 수 없는 사용자".into()),sender_id:sender_id.map(|value| value.to_string()),mine:false,body,created,unread:0,intent,alignment_hint,image_url,reply_to:reply_to.map(|value| value.to_string()) } }).collect();
     let agreements = sqlx::query_as::<_, (Uuid, Uuid, String, String, String, i32, i32)>("SELECT id,room_id,task,assignee_name,deadline_text,confirmations,revisions FROM retone_v2.agreements WHERE completed_at IS NULL")
         .fetch_all(db).await.unwrap_or_default().into_iter().map(|(id,room_id,task,assignee,deadline,confirmations,revisions)| Agreement { id:id.to_string(), room_id:room_id.to_string(), task, assignee, deadline, confirmations:confirmations.clamp(0,u8::MAX as i32) as u8, revisions:revisions.clamp(0,u8::MAX as i32) as u8 }).collect();
     let appointments = sqlx::query_as::<_, (Option<Uuid>, String, String, String, Uuid)>("SELECT room_id,title,to_char(starts_at,'YYYY-MM-DD HH24:MI'),place,created_by FROM retone_v2.appointments ORDER BY starts_at")

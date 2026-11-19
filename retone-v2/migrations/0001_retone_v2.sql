@@ -149,6 +149,7 @@ ALTER TABLE retone_v2.users ADD COLUMN IF NOT EXISTS ai_intervention TEXT NOT NU
 ALTER TABLE retone_v2.users ADD COLUMN IF NOT EXISTS friend_code TEXT;
 CREATE UNIQUE INDEX IF NOT EXISTS users_friend_code_unique_idx ON retone_v2.users(friend_code) WHERE friend_code IS NOT NULL;
 ALTER TABLE retone_v2.messages ADD COLUMN IF NOT EXISTS image_url TEXT;
+ALTER TABLE retone_v2.messages ADD COLUMN IF NOT EXISTS reply_to UUID;
 ALTER TABLE retone_v2.messages ADD COLUMN IF NOT EXISTS intent TEXT;
 ALTER TABLE retone_v2.agreements ADD COLUMN IF NOT EXISTS assignee_name TEXT NOT NULL DEFAULT '미정';
 ALTER TABLE retone_v2.agreements ADD COLUMN IF NOT EXISTS deadline_text TEXT NOT NULL DEFAULT '미정';
