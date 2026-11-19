@@ -7,6 +7,7 @@ use axum::{
 };
 use chrono::Utc;
 use password_hash::SaltString;
+use qrcode::{QrCode, render::svg};
 use rand_core::OsRng;
 use serde::{Deserialize, Serialize};
 use sha1::Sha1;
@@ -213,6 +214,11 @@ struct Preferences {
 struct RelationshipAction {
     target_id: Uuid,
 }
+#[derive(Deserialize)]
+struct FriendLookup {
+    phone: Option<String>,
+    friend_code: Option<String>,
+}
 #[derive(Serialize)]
 struct FriendData {
     friends: Vec<PublicUser>,
@@ -226,6 +232,15 @@ struct PublicUser {
     name: String,
     avatar_url: Option<String>,
     ai_intervention: String,
+}
+#[derive(Serialize)]
+struct FriendIdentity {
+    friend_code: String,
+    qr_svg: String,
+}
+#[derive(Serialize)]
+struct FriendLookupOut {
+    user: Option<PublicUser>,
 }
 #[derive(Serialize)]
 struct AuthResponse {
@@ -278,6 +293,58 @@ fn phone_hash(phone: &str) -> String {
             .collect::<String>()
     )
 }
+fn normalize_friend_code(value: &str) -> String {
+    value
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .collect::<String>()
+        .to_ascii_uppercase()
+}
+fn friend_code_for(id: Uuid, attempt: u8) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(format!("retone-v2-friend-code:{id}:{attempt}"));
+    let digest = hasher.finalize();
+    let compact = digest
+        .iter()
+        .take(6)
+        .map(|value| format!("{value:02X}"))
+        .collect::<String>();
+    format!("RT-{compact}")
+}
+async fn allocate_friend_code(db: &PgPool, id: Uuid) -> Result<String, StatusCode> {
+    for attempt in 0..20 {
+        let code = friend_code_for(id, attempt);
+        let taken: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM retone_v2.users WHERE friend_code=$1)",
+        )
+        .bind(&code)
+        .fetch_one(db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        if !taken {
+            return Ok(code);
+        }
+    }
+    Err(StatusCode::INTERNAL_SERVER_ERROR)
+}
+async fn ensure_friend_codes(db: &PgPool) -> Result<(), StatusCode> {
+    let ids = sqlx::query_scalar::<_, Uuid>(
+        "SELECT id FROM retone_v2.users WHERE friend_code IS NULL OR friend_code=''",
+    )
+    .fetch_all(db)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    for id in ids {
+        let code = allocate_friend_code(db, id).await?;
+        sqlx::query("UPDATE retone_v2.users SET friend_code=$1 WHERE id=$2")
+            .bind(code)
+            .bind(id)
+            .execute(db)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    }
+    Ok(())
+}
 fn ai_level(value: Option<&str>) -> String {
     match value.unwrap_or("standard") {
         "off" | "light" | "standard" | "careful" => value.unwrap_or("standard").to_string(),
@@ -325,7 +392,8 @@ async fn signup(
         .to_string();
     let id = Uuid::new_v4();
     let level = ai_level(input.ai_intervention.as_deref());
-    let result=sqlx::query("INSERT INTO retone_v2.users(id,phone_hash,name,password_hash,is_admin,ai_intervention) VALUES($1,$2,$3,$4,$5,$6)").bind(id).bind(phone).bind(name).bind(hash).bind(input.phone=="12341234"&&name=="12341234").bind(&level).execute(&app.db).await;
+    let friend_code = allocate_friend_code(&app.db, id).await?;
+    let result=sqlx::query("INSERT INTO retone_v2.users(id,phone_hash,name,password_hash,is_admin,ai_intervention,friend_code) VALUES($1,$2,$3,$4,$5,$6,$7)").bind(id).bind(phone).bind(name).bind(hash).bind(input.phone=="12341234"&&name=="12341234").bind(&level).bind(friend_code).execute(&app.db).await;
     if result.is_err() {
         return Err(StatusCode::CONFLICT);
     };
@@ -509,6 +577,68 @@ async fn friends(
         incoming,
         outgoing,
         blocked,
+    }))
+}
+async fn friend_identity(
+    State(app): State<App>,
+    headers: HeaderMap,
+) -> Result<Json<FriendIdentity>, StatusCode> {
+    let user_id = require_user(&app, &headers).await?;
+    let friend_code: String = sqlx::query_scalar(
+        "SELECT friend_code FROM retone_v2.users WHERE id=$1 AND deleted_at IS NULL",
+    )
+    .bind(user_id)
+    .fetch_optional(&app.db)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    .flatten()
+    .ok_or(StatusCode::NOT_FOUND)?;
+    let payload = format!("RETONE-FRIEND:{friend_code}");
+    let qr_svg = QrCode::new(payload.as_bytes())
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .render::<svg::Color>()
+        .min_dimensions(224, 224)
+        .build();
+    Ok(Json(FriendIdentity {
+        friend_code,
+        qr_svg,
+    }))
+}
+async fn lookup_friend(
+    State(app): State<App>,
+    headers: HeaderMap,
+    Json(input): Json<FriendLookup>,
+) -> Result<Json<FriendLookupOut>, StatusCode> {
+    let user_id = require_user(&app, &headers).await?;
+    let row = if let Some(phone) = input.phone {
+        if phone.chars().filter(|c| c.is_ascii_digit()).count() < 7 {
+            return Err(StatusCode::BAD_REQUEST);
+        }
+        sqlx::query_as::<_, (Uuid, String, Option<String>, String)>(
+            "SELECT id,name,avatar_url,ai_intervention FROM retone_v2.users WHERE phone_hash=$1 AND id<>$2 AND deleted_at IS NULL",
+        )
+        .bind(phone_hash(&phone))
+        .bind(user_id)
+        .fetch_optional(&app.db)
+        .await
+    } else if let Some(friend_code) = input.friend_code {
+        let normalized = normalize_friend_code(&friend_code);
+        if normalized.len() < 6 {
+            return Err(StatusCode::BAD_REQUEST);
+        }
+        sqlx::query_as::<_, (Uuid, String, Option<String>, String)>(
+            "SELECT id,name,avatar_url,ai_intervention FROM retone_v2.users WHERE replace(friend_code,'-','')=$1 AND id<>$2 AND deleted_at IS NULL",
+        )
+        .bind(normalized)
+        .bind(user_id)
+        .fetch_optional(&app.db)
+        .await
+    } else {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(FriendLookupOut {
+        user: row.map(|value| user_out(value.0, value.1, value.2, value.3)),
     }))
 }
 async fn request_friend(
@@ -2030,6 +2160,7 @@ async fn prepare_storage() -> Option<PgPool> {
     if sqlx::raw_sql(migration).execute(&pool).await.is_err() {
         return None;
     }
+    ensure_friend_codes(&pool).await.ok()?;
     Some(pool)
 }
 async fn restore_data(db: &PgPool) -> Data {
@@ -2071,6 +2202,8 @@ async fn main() {
         .route("/api/auth/admin-login", post(admin_login))
         .route("/api/users", get(users))
         .route("/api/friends", get(friends))
+        .route("/api/friends/me", get(friend_identity))
+        .route("/api/friends/lookup", post(lookup_friend))
         .route("/api/friends/request", post(request_friend))
         .route("/api/friends/accept", post(accept_friend))
         .route("/api/blocks", post(block_user))

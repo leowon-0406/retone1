@@ -506,12 +506,106 @@ async function friends() {
   ]);
   const candidates = users.filter((user) => !known.has(user.id));
   const person = (user, action, detail) => `<article class="friend-row"><span class="avatar">${user.avatar_url ? `<img src="${user.avatar_url}" alt="">` : esc(user.name[0])}</span><span class="copy"><b>${esc(user.name)}</b><span>${detail}</span></span>${action}</article>`;
-  app.innerHTML = `<main class="layout">${rail()}<section class="page"><header class="head"><h1>친구</h1><button class="new-room" onclick="home()">채팅 목록</button></header><div class="content"><div class="intro"><h2>내 친구</h2><p>친구 요청을 수락한 사람과만 1:1 채팅을 시작할 수 있어요.</p></div>${relations.incoming.length ? `<section class="friend-section"><b>받은 친구 요청 <em>${relations.incoming.length}</em></b><div>${relations.incoming.map((user) => person(user, `<button onclick="acceptFriend('${user.id}')">수락</button><button class="soft" onclick="blockFriend('${user.id}')">차단</button>`, "친구 요청을 보냈어요")).join("")}</div></section>` : ""}<section class="friend-section"><b>친구 ${relations.friends.length}</b><div>${relations.friends.length ? relations.friends.map((user) => person(user, `<button onclick="startDirect('${esc(user.name)}','${user.id}')">채팅</button><button class="soft" onclick="blockFriend('${user.id}')">차단</button>`, "1:1 대화를 시작할 수 있어요")).join("") : `<div class="empty-chat"><b>아직 친구가 없어요</b><span>아래에서 친구 요청을 보내보세요.</span></div>`}</div></section>${relations.outgoing.length ? `<section class="friend-section"><b>보낸 요청</b><div>${relations.outgoing.map((user) => person(user, `<span class="request-state">대기 중</span>`, "수락을 기다리고 있어요")).join("")}</div></section>` : ""}${candidates.length ? `<section class="friend-section"><b>친구 찾아보기</b><div>${candidates.map((user) => person(user, `<button onclick="requestFriend('${user.id}')">친구 요청</button>`, "Re:Tone에 가입했어요")).join("")}</div></section>` : ""}${relations.blocked.length ? `<details class="blocked-list"><summary>차단한 사용자 ${relations.blocked.length}명</summary><p>차단한 사용자는 친구 요청과 채팅을 시작할 수 없어요.</p></details>` : ""}</div></section></main>`;
+  app.innerHTML = `<main class="layout">${rail()}<section class="page"><header class="head"><h1>친구</h1><div class="friend-head-actions"><button class="new-room" onclick="openFriendAdd()">＋ 친구 추가</button><button class="head-quiet" onclick="home()">채팅 목록</button></div></header><div class="content"><div class="intro"><h2>내 친구</h2><p>전화번호, 친구코드 또는 QR로 요청을 보내고, 수락한 사람과만 1:1 채팅을 시작할 수 있어요.</p></div>${relations.incoming.length ? `<section class="friend-section"><b>받은 친구 요청 <em>${relations.incoming.length}</em></b><div>${relations.incoming.map((user) => person(user, `<button onclick="acceptFriend('${user.id}')">수락</button><button class="soft" onclick="blockFriend('${user.id}')">차단</button>`, "친구 요청을 보냈어요")).join("")}</div></section>` : ""}<section class="friend-section"><b>친구 ${relations.friends.length}</b><div>${relations.friends.length ? relations.friends.map((user) => person(user, `<button onclick="startDirect('${esc(user.name)}','${user.id}')">채팅</button><button class="soft" onclick="blockFriend('${user.id}')">차단</button>`, "1:1 대화를 시작할 수 있어요")).join("") : `<div class="empty-chat"><b>아직 친구가 없어요</b><span>위의 ‘친구 추가’에서 전화번호, 코드 또는 QR로 요청을 보내보세요.</span></div>`}</div></section>${relations.outgoing.length ? `<section class="friend-section"><b>보낸 요청</b><div>${relations.outgoing.map((user) => person(user, `<span class="request-state">대기 중</span>`, "수락을 기다리고 있어요")).join("")}</div></section>` : ""}${candidates.length ? `<section class="friend-section friend-browse"><b>가입한 사용자</b><div>${candidates.map((user) => person(user, `<button onclick="requestFriend('${user.id}')">친구 요청</button>`, "Re:Tone에 가입했어요")).join("")}</div></section>` : ""}${relations.blocked.length ? `<details class="blocked-list"><summary>차단한 사용자 ${relations.blocked.length}명</summary><p>차단한 사용자는 친구 요청과 채팅을 시작할 수 없어요.</p></details>` : ""}</div></section></main>`;
   startInboxPolling(data);
 }
-async function requestFriend(id) {
+function openFriendAdd() {
+  popup(`<div class="friend-add-card"><span>친구 추가</span><h2>어떻게 친구를 찾을까요?</h2><p>상대가 요청을 수락해야 친구가 되고 1:1 대화를 시작할 수 있어요.</p><div class="friend-add-tabs"><button data-friend-add="phone" onclick="showFriendAddPanel('phone')">전화번호</button><button data-friend-add="code" onclick="showFriendAddPanel('code')">친구코드</button><button data-friend-add="qr" onclick="showFriendAddPanel('qr')">QR 코드</button></div><div id="friend-add-panel"></div></div>`);
+  showFriendAddPanel("phone");
+}
+function showFriendAddPanel(mode) {
+  document.querySelectorAll("[data-friend-add]").forEach((button) => button.classList.toggle("selected", button.dataset.friendAdd === mode));
+  const panel = document.querySelector("#friend-add-panel");
+  if (!panel) return;
+  if (mode === "phone") {
+    panel.innerHTML = `<label>친구 전화번호<input id="friend-phone" inputmode="numeric" autocomplete="tel" placeholder="전화번호를 입력해주세요"></label><small>전화번호는 친구를 찾는 데에만 사용되며, 상대에게 공개되지 않아요.</small><button onclick="lookupFriend('phone')">친구 찾기</button><div id="friend-search-result"></div>`;
+    return;
+  }
+  if (mode === "code") {
+    panel.innerHTML = `<label>친구코드<input id="friend-code" autocapitalize="characters" autocomplete="off" placeholder="예: RT-1234ABCD"></label><small>친구가 직접 알려준 코드를 입력해주세요.</small><button onclick="lookupFriend('code')">친구 찾기</button><div id="friend-search-result"></div>`;
+    return;
+  }
+  panel.innerHTML = `<div class="my-qr-card" id="my-friend-qr"><div class="thinking-loader"><i></i><i></i><i></i></div><small>내 QR 코드를 준비하고 있어요.</small></div><div class="qr-actions"><button class="quiet" onclick="copyFriendCode()">친구코드 복사</button><button onclick="shareFriendCode()">공유하기</button></div><label class="qr-scan-button">QR 사진으로 친구 추가<input type="file" accept="image/*" capture="environment" onchange="scanFriendQr(this)"></label><small class="qr-help">상대의 Re:Tone QR을 카메라로 찍거나, 저장한 QR 사진을 선택하세요.</small>`;
+  loadMyFriendQr();
+}
+async function loadMyFriendQr() {
+  const card = document.querySelector("#my-friend-qr");
+  if (!card) return;
+  try {
+    const profile = await api("/api/friends/me");
+    card.dataset.friendCode = profile.friend_code;
+    card.innerHTML = `<div class="qr-image">${profile.qr_svg}</div><b>${esc(profile.friend_code)}</b><small>상대가 이 QR을 스캔하면 나를 바로 찾을 수 있어요.</small>`;
+  } catch {
+    card.innerHTML = `<b>QR 코드를 불러오지 못했어요.</b><small>잠시 후 다시 열어주세요.</small>`;
+  }
+}
+function friendCodeFromQr(value) {
+  const matched = String(value || "").trim().match(/^RETONE-FRIEND:([A-Z0-9-]+)$/i);
+  return matched ? matched[1].toUpperCase() : "";
+}
+async function scanFriendQr(input) {
+  const file = input.files?.[0];
+  if (!file) return;
+  const Detector = window.BarcodeDetector;
+  if (!Detector || !window.createImageBitmap) {
+    alert("이 브라우저에서는 QR 사진 인식을 지원하지 않아요. 친구코드를 직접 입력해주세요.");
+    return;
+  }
+  try {
+    const bitmap = await createImageBitmap(file);
+    const codes = await new Detector({ formats: ["qr_code"] }).detect(bitmap);
+    const friendCode = friendCodeFromQr(codes[0]?.rawValue);
+    if (!friendCode) throw new Error("not-retone-qr");
+    showFriendAddPanel("code");
+    document.querySelector("#friend-code").value = friendCode;
+    lookupFriend("code");
+  } catch {
+    alert("Re:Tone 친구 QR을 읽지 못했어요. QR이 선명한 사진인지 확인하거나 친구코드를 입력해주세요.");
+  } finally {
+    input.value = "";
+  }
+}
+async function copyFriendCode() {
+  const code = document.querySelector("#my-friend-qr")?.dataset.friendCode;
+  if (!code) return;
+  try {
+    await navigator.clipboard.writeText(code);
+    alert("친구코드를 복사했어요.");
+  } catch {
+    alert(`친구코드: ${code}`);
+  }
+}
+async function shareFriendCode() {
+  const code = document.querySelector("#my-friend-qr")?.dataset.friendCode;
+  if (!code) return;
+  const text = `Re:Tone 친구코드: ${code}`;
+  if (navigator.share) {
+    try { await navigator.share({ title: "Re:Tone 친구 추가", text }); return; } catch {}
+  }
+  try { await navigator.clipboard.writeText(text); alert("친구코드를 복사했어요."); } catch { alert(text); }
+}
+async function lookupFriend(mode) {
+  const value = document.querySelector(mode === "phone" ? "#friend-phone" : "#friend-code")?.value.trim();
+  if (!value) return alert(mode === "phone" ? "전화번호를 입력해주세요." : "친구코드를 입력해주세요.");
+  const root = document.querySelector("#friend-search-result");
+  if (root) root.innerHTML = `<div class="friend-lookup-loading"><span class="thinking-loader"><i></i><i></i><i></i></span>친구를 찾고 있어요.</div>`;
+  try {
+    const result = await api("/api/friends/lookup", { method: "POST", body: JSON.stringify(mode === "phone" ? { phone: value } : { friend_code: value }) });
+    if (!root) return;
+    if (!result.user) {
+      root.innerHTML = `<div class="friend-search-empty">찾는 사용자가 없어요. 전화번호 또는 친구코드를 다시 확인해주세요.</div>`;
+      return;
+    }
+    const user = result.user;
+    root.innerHTML = `<article class="friend-search-result"><span class="avatar">${user.avatar_url ? `<img src="${user.avatar_url}" alt="">` : esc(user.name[0])}</span><span><b>${esc(user.name)}</b><small>이 사용자에게 친구 요청을 보낼까요?</small></span><button onclick="requestFriend('${user.id}',true)">요청 보내기</button></article>`;
+  } catch (error) {
+    if (root) root.innerHTML = `<div class="friend-search-empty">친구를 찾지 못했어요. 입력한 정보를 다시 확인해주세요.</div>`;
+  }
+}
+async function requestFriend(id, closeAfter = false) {
   try {
     await api("/api/friends/request", { method: "POST", body: JSON.stringify({ user_id: signedInId, target_id: id }) });
+    if (closeAfter) closePopup();
     friends();
   } catch {
     alert("친구 요청을 보내지 못했어요. 연결 상태를 확인한 뒤 다시 시도해주세요.");
@@ -602,7 +696,7 @@ function settings() {
   roomId = null;
   nav = "settings";
   if (isAdmin) {
-    app.innerHTML = `<main class="layout">${rail()}<section class="page"><header class="head"><h1>관리자</h1></header><div class="content"><div class="intro"><h2>Re:Tone 관리자 계정</h2><p>사용자별 계정과 AI 문의를 관리하는 공간이에요.</p></div><section class="admin-panel"><b>관리자 로그인 완료</b><span>일반 사용자 대화에는 관리자 권한이 자동으로 개입하지 않아요.</span><button onclick="openAdminReports()">AI 문의 확인</button></section><section class="admin-users"><div><b>가입 사용자</b><span>초기화할 계정을 개별로 선택하세요.</span></div><div id="admin-users-list" class="admin-users-list"><small>사용자 목록을 불러오는 중…</small></div></section><section class="admin-danger"><b>전체 서비스 데이터 초기화</b><p>모든 계정, 친구 관계, 채팅, 사진, 일정, 반응, AI 문의와 확인 기록을 삭제합니다.</p><button onclick="openGlobalReset()">전체 데이터 초기화</button></section><button class="room" onclick="logout()"><span class="avatar">↪</span><span class="copy"><b>로그아웃</b><span>관리자 세션을 안전하게 종료해요.</span></span></button></div></section></main>`;
+    app.innerHTML = `<main class="admin-layout"><header class="admin-top"><div class="admin-wordmark">Re:<i>Tone</i><span>관리자</span></div><button class="admin-logout" onclick="logout()">로그아웃</button></header><section class="admin-page"><header class="admin-page-head"><span>서비스 운영</span><h1>Re:Tone 관리자</h1><p>사용자별 계정 관리와 AI 문의를 한 곳에서 확인해요.</p></header><div class="admin-grid"><section class="admin-panel"><b>관리자 로그인 완료</b><span>일반 사용자 대화에는 관리자 권한이 자동으로 개입하지 않아요.</span><button onclick="openAdminReports()">AI 문의 확인</button></section><section class="admin-users"><div><b>가입 사용자</b><span>초기화할 계정을 개별로 선택하세요.</span></div><div id="admin-users-list" class="admin-users-list"><small>사용자 목록을 불러오는 중…</small></div></section><section class="admin-danger"><b>전체 서비스 데이터 초기화</b><p>모든 계정, 친구 관계, 채팅, 사진, 일정, 반응, AI 문의와 확인 기록을 삭제합니다.</p><button onclick="openGlobalReset()">전체 데이터 초기화</button></section></div></section></main>`;
     renderAdminUsers();
     startInboxPolling(data);
     return;
