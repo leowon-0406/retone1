@@ -1111,6 +1111,35 @@ async fn ai_check(State(app): State<App>, Json(input): Json<AiCheck>) -> Json<se
         "fucking",
         "wtf",
         "killyourself",
+        "시발새끼",
+        "씨발새끼",
+        "ㅅㅂ새끼",
+        "ㅂㅅ새끼",
+        "ㄲㅈ",
+        "ㄷㅊ",
+        "꺼져라",
+        "나가뒤져",
+        "자살해",
+        "자살이나",
+        "죽어라",
+        "좆밥",
+        "개씹",
+        "씹창",
+        "씹덕",
+        "애미없",
+        "애비없",
+        "부모없",
+        "느금",
+        "한남",
+        "김치녀",
+        "틀딱",
+        "급식충",
+        "개쓰레기",
+        "쓰레기새끼",
+        "노답",
+        "답없",
+        "꺼져버",
+        "패죽",
     ];
     if level == "off" || text.is_empty() || pass.iter().any(|p| text == *p || normalized == *p) {
         return Json(
@@ -1134,14 +1163,20 @@ async fn ai_check(State(app): State<App>, Json(input): Json<AiCheck>) -> Json<se
             serde_json::json!({"verdict":"PASS","suggestion":null,"info":{"level":"none","note":null,"queries":[]},"source":"light"}),
         );
     }
-    // 흔한 감탄사·질문·친구 사이의 가벼운 말에는 모델을 호출하지 않아요.
-    // 검토는 명백한 공격 대상이 있거나, 중요한 사실 주장일 때만 시작합니다.
+    // 가벼운 인사말은 빠르게 통과하되, 사전에 없는 공격·반복 압박은 모델이 한 번 더 봅니다.
     let tone_signals = [
         "꺼져", "닥쳐", "한심", "최악", "왜이래", "뭐하냐", "비꼬", "조롱", "쓸모없",
-        "한심해", "어이없", "정신차려",
+        "한심해", "어이없", "정신차려", "노답", "답없", "쓰레기", "역겨", "혐오",
+        "무시하", "망해", "나가", "찌질", "한심하", "한남", "김치녀", "틀딱",
     ];
     let direct_target = ["너", "네가", "니가", "당신", "쟤", "얘", "너희", "왜이래", "뭐하냐"];
     let directed_tone = tone_signals.iter().any(|signal| normalized.contains(signal))
+        && direct_target.iter().any(|target| normalized.contains(target));
+    let clear_hostility = ["꺼져", "닥쳐", "정신차려", "쓸모없", "노답", "답없", "쓰레기", "역겨", "혐오"]
+        .iter()
+        .any(|signal| normalized.contains(signal));
+    let pressure_signals = ["빨리답", "당장답", "대답해", "답장해", "또무시", "계속무시", "말좀해"];
+    let repeated_pressure = pressure_signals.iter().any(|signal| normalized.contains(signal))
         && direct_target.iter().any(|target| normalized.contains(target));
     let important_topics = [
         "응급", "사망", "중독", "백신", "병원", "약품", "복용", "의약", "처벌", "벌금", "대출",
@@ -1156,9 +1191,8 @@ async fn ai_check(State(app): State<App>, Json(input): Json<AiCheck>) -> Json<se
         && assertion_markers.iter().any(|marker| normalized.contains(marker));
     let tone_review = match sarcasm_level {
         "끄기" | "꺼짐" => false,
-        "민감하게" => tone_signals.iter().any(|signal| normalized.contains(signal))
-            && direct_target.iter().any(|target| normalized.contains(target)),
-        _ => directed_tone,
+        "민감하게" => directed_tone || clear_hostility || repeated_pressure,
+        _ => directed_tone || clear_hostility || repeated_pressure,
     };
     let source_review = match source_level {
         "끄기" | "꺼짐" => false,
@@ -1173,7 +1207,7 @@ async fn ai_check(State(app): State<App>, Json(input): Json<AiCheck>) -> Json<se
     let hash = format!(
         "{:x}",
         Sha256::digest(
-            format!("v4:{level}:{attack_level}:{sarcasm_level}:{source_level}:{normalized}")
+            format!("v5:{level}:{attack_level}:{sarcasm_level}:{source_level}:{normalized}")
                 .as_bytes()
         )
     );
@@ -1184,7 +1218,7 @@ async fn ai_check(State(app): State<App>, Json(input): Json<AiCheck>) -> Json<se
         );
     };
     let prompt = format!(
-        "너는 Re:Tone의 대화 거울이다. 판정자·검열자·사실확인 기관이 아니다. 현재 문장을 오직 '이렇게 들릴 수도 있어요'라는 제안으로만 비춘다.\n1) 최종 판단 대상은 현재 문장 하나다. 인사, 질문, 약속 잡기, 가벼운 불평, '야/야야/얘들아', ㅋㅋ, ㅠㅠ 같은 일상 표현은 PASS다. 친한 사이의 농담은 명백한 공격·조롱이 아닌 한 WARN하지 않는다.\n2) WARN은 현재 문장에 상대를 향한 뚜렷한 공격·조롱·압박이 있을 때만 쓴다. 애매하면 반드시 PASS다. WARN일 때 suggestion은 두 문장으로 쓴다. 첫 문장은 실제 문제 지점(단어·어조)을 따옴표로 짚고 어떻게 들릴 수 있는지 설명한다. 둘째 문장은 원래 의도를 살린 짧은 대체 표현이다.\n3) 출처 확인 개입 수준은 {source_level}이다. 중요한 정보 주장일 때만 info.level=check를 제안하며, 질문·추측·일상 경험에는 제안하지 않는다. 진실·거짓은 절대 판단하지 않는다.\n4) 비꼼·압박 개입 수준은 {sarcasm_level}, 전체 개입 강도는 {level}이다. 단, 설정이 꼼꼼해도 모호한 문장은 PASS한다.\n5) JSON만 출력: {{\"verdict\":\"PASS|WARN\",\"suggestion\":string|null,\"info\":{{\"level\":\"none|check\",\"note\":string|null,\"queries\":[string]}}}}. queries는 확인할 검색어 0~2개.\n문장: {text}"
+        "너는 Re:Tone의 대화 거울이다. 판정자·검열자·사실확인 기관이 아니다. 현재 문장을 오직 '이렇게 들릴 수도 있어요'라는 제안으로만 비춘다.\n1) 최종 판단 대상은 현재 문장 하나다. 인사, 약속 잡기, 단순 질문, '야/야야/얘들아', ㅋㅋ, ㅠㅠ만으로는 WARN하지 않는다.\n2) 그러나 상대를 낮추는 모욕, 욕설 우회, 조롱, 위협, 혐오, 반복적인 재촉·무시는 관계와 무관하게 WARN한다. 상대 이름·2인칭이 생략돼도 문장 전체의 공격 의도가 분명하면 WARN할 수 있다.\n3) WARN일 때 suggestion은 두 문장으로 쓴다. 첫 문장은 실제 문제 지점(단어·어조)을 따옴표로 짚고 어떻게 들릴 수 있는지 설명한다. 둘째 문장은 원래 의도를 살린 짧은 대체 표현이다.\n4) 출처 확인 개입 수준은 {source_level}이다. 중요한 정보 주장일 때만 info.level=check를 제안하며, 질문·추측·일상 경험에는 제안하지 않는다. 진실·거짓은 절대 판단하지 않는다.\n5) 비꼼·압박 개입 수준은 {sarcasm_level}, 전체 개입 강도는 {level}이다. 애매한 말은 PASS하되, 공격 의도가 명백하면 놓치지 마라.\n6) JSON만 출력: {{\"verdict\":\"PASS|WARN\",\"suggestion\":string|null,\"info\":{{\"level\":\"none|check\",\"note\":string|null,\"queries\":[string]}}}}. queries는 확인할 검색어 0~2개.\n문장: {text}"
     );
     let res = reqwest::Client::new()
         .post("https://api.openai.com/v1/responses")
@@ -1915,6 +1949,17 @@ async fn add_room_members(
     invitees.sort_unstable();
     invitees.dedup();
     invitees.retain(|id| *id != inviter_id);
+    let existing_members = sqlx::query_scalar::<_, Uuid>(
+        "SELECT user_id FROM retone_v2.room_members WHERE room_id=$1",
+    )
+    .bind(room_id)
+    .fetch_all(&app.db)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    // 중복 초대는 화면뿐 아니라 서버에서도 확실히 막습니다.
+    if invitees.iter().any(|id| existing_members.contains(id)) {
+        return Err(StatusCode::CONFLICT);
+    }
     for invitee_id in &invitees {
         let are_friends: bool = sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM retone_v2.friendships WHERE user_id=$1 AND friend_id=$2)",
@@ -1955,6 +2000,22 @@ async fn add_room_members(
         room.members = members.min(255) as u8;
     }
     Ok(Json(serde_json::json!({ "members": members })))
+}
+async fn room_members(
+    State(app): State<App>,
+    Path(room_id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<String>>, StatusCode> {
+    let user_id = require_user(&app, &headers).await?;
+    require_room_member(&app, room_id, user_id).await?;
+    let members = sqlx::query_scalar::<_, Uuid>(
+        "SELECT user_id FROM retone_v2.room_members WHERE room_id=$1",
+    )
+    .bind(room_id)
+    .fetch_all(&app.db)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(Json(members.into_iter().map(|id| id.to_string()).collect()))
 }
 async fn create_room(
     State(app): State<App>,
@@ -2325,7 +2386,7 @@ async fn main() {
         .route("/api/admin/reports", get(admin_reports))
         .route("/api/bootstrap", get(bootstrap))
         .route("/api/rooms", post(create_room))
-        .route("/api/rooms/{id}/members", post(add_room_members))
+        .route("/api/rooms/{id}/members", get(room_members).post(add_room_members))
         .route("/api/agreements", post(create_agreement))
         .route("/api/agreements/{id}/{action}", post(update_agreement))
         .route("/api/appointments", post(create_appointment))

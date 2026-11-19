@@ -251,8 +251,9 @@ const esc = (s) =>
     (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c],
   );
 const escAttr = (s) => esc(s).replace(/"/g, "&quot;");
+const AI_CACHE_VERSION = "v2";
 const aiCacheKey = (text) =>
-  `${activeAiIntervention()}|${JSON.stringify(aiDetails())}|${text.trim().toLowerCase()}`;
+  `${AI_CACHE_VERSION}|${activeAiIntervention()}|${JSON.stringify(aiDetails())}|${text.trim().toLowerCase()}`;
 function savedAiResult(text) {
   const result = aiSavedResults[aiCacheKey(text)] || null;
   return result && (result.verdict === "PASS" || result.verdict === "WARN")
@@ -1872,10 +1873,19 @@ function selectedInvitees() {
   );
 }
 async function inviteFriends() {
-  const users = (await api(`/api/friends?user_id=${encodeURIComponent(signedInId)}`)).friends;
-  popup(
-    `<h2>친구 초대</h2><p>친구를 고르면 참여 안내가 표시돼요.</p><div class="invite-list">${users.length ? users.map((user) => `<label><input type="checkbox" class="invite-user" value="${user.id}"> <b>${esc(user.name)}</b></label>`).join("") : "<small>초대할 가입 친구가 없어요.</small>"}</div><button onclick="confirmInviteFriends()">선택한 친구 초대</button>`,
-  );
+  try {
+    const [relations, memberIds] = await Promise.all([
+      api(`/api/friends?user_id=${encodeURIComponent(signedInId)}`),
+      api(`/api/rooms/${roomId}/members`),
+    ]);
+    const existing = new Set(memberIds);
+    const users = relations.friends.filter((user) => !existing.has(user.id));
+    popup(
+      `<div class="invite-friends-card"><span>친구 초대</span><h2>함께할 친구를 골라요</h2><p>이미 이 채팅방에 있는 친구는 목록에 표시하지 않아요.</p><div class="invite-list">${users.length ? users.map((user) => `<label><input type="checkbox" class="invite-user" value="${user.id}"> <b>${esc(user.name)}</b></label>`).join("") : "<small>초대할 수 있는 친구가 없어요. 이미 모두 참여 중이거나 친구를 먼저 추가해주세요.</small>"}</div>${users.length ? '<button onclick="confirmInviteFriends()">선택한 친구 초대</button>' : '<button class="quiet" onclick="closePopup()">확인</button>'}</div>`,
+    );
+  } catch {
+    alert("친구 목록을 불러오지 못했어요. 잠시 후 다시 시도해주세요.");
+  }
 }
 async function confirmInviteFriends() {
   const inviteeIds = selectedInvitees();
