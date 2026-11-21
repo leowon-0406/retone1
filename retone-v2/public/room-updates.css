@@ -1,0 +1,8 @@
+.chat .room-slot, .sendbar .room-slot { display: contents; }
+#typing-status { font-size: .76rem; font-weight: 600; }
+#typing-status:empty { display: none; }
+.schedule-fields { display: grid; gap: .45rem; }
+.schedule-field { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) auto; align-items: center; gap: .4rem; }
+.schedule-field input { min-width: 0; width: 100%; }
+.schedule-field button { padding: .4rem .65rem; }
+.appointment-editor { max-height: 80dvh; overflow-y: auto; }

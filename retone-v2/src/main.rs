@@ -1,3 +1,6 @@
+mod session;
+mod room_sync;
+mod sources;
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use axum::{
     Json, Router,
@@ -58,6 +61,14 @@ struct Agreement {
     confirmations: u8,
     revisions: u8,
 }
+#[derive(Clone, Serialize, Deserialize)]
+struct ScheduleField { label: String, value: String }
+fn checked_fields(fields: Vec<ScheduleField>) -> Result<Vec<ScheduleField>, StatusCode> {
+    if fields.len()>12 || fields.iter().any(|f| f.label.trim().is_empty() || f.label.chars().count()>30 || f.value.chars().count()>120) {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    Ok(fields)
+}
 #[derive(Clone, Serialize)]
 struct Appointment {
     id: String,
@@ -67,6 +78,8 @@ struct Appointment {
     place: String,
     #[serde(skip_serializing)]
     owner_id: String,
+    fields: Vec<ScheduleField>,
+    source_message_id: Option<Uuid>,
 }
 #[derive(Clone, Serialize)]
 struct Reflection {
@@ -100,6 +113,7 @@ struct Data {
 struct App {
     data: Arc<RwLock<Data>>,
     db: PgPool,
+    fact_locks: sources::Locks,
 }
 #[derive(Deserialize)]
 struct Send {
@@ -127,6 +141,9 @@ struct NewAgreement {
 }
 #[derive(Deserialize)]
 struct NewAppointment {
+    #[serde(default)] fields: Vec<ScheduleField>,
+    client_id: Option<Uuid>,
+    source_message_id: Option<Uuid>,
     title: String,
     room_id: Option<String>,
     date: String,
@@ -134,6 +151,7 @@ struct NewAppointment {
 }
 #[derive(Deserialize)]
 struct UpdateAppointment {
+    fields: Option<Vec<ScheduleField>>,
     title: String,
     date: String,
     place: String,
@@ -190,7 +208,7 @@ struct AiCheck {
 }
 #[derive(Deserialize)]
 struct FactCheck {
-    text: String,
+    message_id: Uuid,
 }
 #[derive(Deserialize)]
 struct RewriteRequest {
@@ -251,11 +269,6 @@ struct FriendIdentity {
 struct FriendLookupOut {
     user: Option<PublicUser>,
 }
-#[derive(Serialize)]
-struct AuthResponse {
-    user: PublicUser,
-    session_token: String,
-}
 async fn create_session(db: &PgPool, user_id: Uuid) -> Result<String, StatusCode> {
     let token = Uuid::new_v4();
     sqlx::query("INSERT INTO retone_v2.auth_sessions(token,user_id,expires_at) VALUES($1,$2,NOW()+INTERVAL '30 days')")
@@ -267,20 +280,19 @@ async fn create_session(db: &PgPool, user_id: Uuid) -> Result<String, StatusCode
     Ok(token.to_string())
 }
 async fn require_user(app: &App, headers: &HeaderMap) -> Result<Uuid, StatusCode> {
-    let raw = headers
-        .get("authorization")
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("Bearer "))
-        .ok_or(StatusCode::UNAUTHORIZED)?;
-    let token = Uuid::parse_str(raw).map_err(|_| StatusCode::UNAUTHORIZED)?;
-    sqlx::query_scalar(
+    let token = session::token(headers)?;
+    let user: Uuid =     sqlx::query_scalar(
         "SELECT user_id FROM retone_v2.auth_sessions WHERE token=$1 AND expires_at>NOW()",
     )
     .bind(token)
     .fetch_optional(&app.db)
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-    .ok_or(StatusCode::UNAUTHORIZED)
+    .ok_or(StatusCode::UNAUTHORIZED)?;
+    if let Some(expected) = headers.get("x-retone-user") {
+        if expected.to_str().ok() != Some(user.to_string().as_str()) { return Err(StatusCode::UNAUTHORIZED); }
+    }
+    Ok(user)
 }
 async fn require_room_member(app: &App, room_id: Uuid, user_id: Uuid) -> Result<(), StatusCode> {
     let member = sqlx::query_scalar::<_, bool>(
@@ -394,7 +406,7 @@ async fn health() -> Json<serde_json::Value> {
 async fn signup(
     State(app): State<App>,
     Json(input): Json<Credentials>,
-) -> Result<Json<AuthResponse>, StatusCode> {
+) -> Result<axum::response::Response, StatusCode> {
     let name = input.name.trim();
     let phone = phone_hash(&input.phone);
     if name.is_empty()
@@ -417,11 +429,7 @@ async fn signup(
     if result.is_err() {
         return Err(StatusCode::CONFLICT);
     };
-    let session_token = create_session(&app.db, id).await?;
-    Ok(Json(AuthResponse {
-        user: user_out(id, name.to_string(), None, level),
-        session_token,
-    }))
+    session::complete(&app.db, user_out(id, name.to_string(), None, level)).await
 }
 async fn phone_available(
     State(app): State<App>,
@@ -446,17 +454,25 @@ async fn phone_available(
 async fn login(
     State(app): State<App>,
     Json(input): Json<Credentials>,
-) -> Result<Json<AuthResponse>, StatusCode> {
-    let row=sqlx::query_as::<_,(Uuid,String,Option<String>,String,String)>("SELECT id,name,avatar_url,password_hash,ai_intervention FROM retone_v2.users WHERE phone_hash=$1 AND name=$2 AND deleted_at IS NULL").bind(phone_hash(&input.phone)).bind(input.name.trim()).fetch_optional(&app.db).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?.ok_or(StatusCode::UNAUTHORIZED)?;
-    let parsed = PasswordHash::new(&row.3).map_err(|_| StatusCode::UNAUTHORIZED)?;
-    Argon2::default()
-        .verify_password(input.password.as_bytes(), &parsed)
-        .map_err(|_| StatusCode::UNAUTHORIZED)?;
-    let session_token = create_session(&app.db, row.0).await?;
-    Ok(Json(AuthResponse {
-        user: user_out(row.0, row.1, row.2, row.4),
-        session_token,
-    }))
+) -> Result<axum::response::Response, StatusCode> {
+    let mut tx = app.db.begin().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let (id, name, avatar, hash, level, blocked) = sqlx::query_as::<_,(Uuid,String,Option<String>,String,String,bool)>(
+        "SELECT id,name,avatar_url,password_hash,ai_intervention,COALESCE(login_blocked_until>NOW(),false)
+         FROM retone_v2.users WHERE phone_hash=$1 AND name=$2 AND deleted_at IS NULL FOR UPDATE")
+        .bind(phone_hash(&input.phone)).bind(input.name.trim()).fetch_optional(&mut *tx).await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?.ok_or(StatusCode::UNAUTHORIZED)?;
+    if blocked { return Err(StatusCode::TOO_MANY_REQUESTS); }
+    let verified = tokio::task::spawn_blocking(move || PasswordHash::new(&hash)
+        .is_ok_and(|parsed| Argon2::default().verify_password(input.password.as_bytes(), &parsed).is_ok()))
+        .await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let failures = sqlx::query_scalar::<_, i32>("UPDATE retone_v2.users SET
+        login_failures=CASE WHEN $2 THEN 0 WHEN login_blocked_until IS NOT NULL THEN 1 ELSE login_failures+1 END,
+        login_blocked_until=CASE WHEN NOT $2 AND login_blocked_until IS NULL AND login_failures>=4 THEN NOW()+INTERVAL '15 minutes' END
+        WHERE id=$1 RETURNING login_failures")
+        .bind(id).bind(verified).fetch_one(&mut *tx).await.map_err(|_|StatusCode::INTERNAL_SERVER_ERROR)?;
+    tx.commit().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if !verified { return Err(if failures>=5 {StatusCode::TOO_MANY_REQUESTS} else {StatusCode::UNAUTHORIZED}); }
+    session::complete(&app.db, user_out(id, name, avatar, level)).await
 }
 async fn admin_login(Json(input): Json<AdminLogin>) -> Result<Json<PublicUser>, StatusCode> {
     let password = env::var("RETONE_ADMIN_PASSWORD").unwrap_or_else(|_| "3612asdf!!".into());
@@ -869,6 +885,41 @@ async fn update_avatar(
         serde_json::json!({"saved":true,"avatar_url":user.avatar_url}),
     ))
 }
+fn matched_span<'a>(text: &'a str, needle: &str) -> Option<&'a str> {
+    let mut compact = String::new();
+    let mut indices = Vec::new();
+    for (index, c) in text.char_indices().filter(|(_, c)| !c.is_whitespace() && !c.is_ascii_punctuation()) {
+        for folded in c.to_lowercase() {
+            indices.extend(std::iter::repeat_n((index,index+c.len_utf8()),folded.len_utf8()));
+            compact.push(folded);
+        }
+    }
+    if needle.is_empty() { return None; }
+    let offset = compact.find(needle)?;
+    Some(&text[indices[offset].0 .. indices[offset+needle.len()-1].1])
+}
+fn warning_evidence<'a>(text: &str, result: &'a serde_json::Value) -> Option<&'a str> {
+    if result["verdict"] != "WARN" || result["suggestion"].as_str().unwrap_or("").trim().is_empty() { return None; }
+    result["trigger"].as_str().map(str::trim).filter(|quote| !quote.is_empty() && text.contains(quote))
+}
+
+#[cfg(test)]
+mod warning_evidence_tests {
+    use super::*;
+
+    #[test]
+    fn requires_the_trigger_to_exist_in_the_current_message() {
+        let stale = serde_json::json!({"verdict":"WARN","trigger":"욕설","suggestion":"차분히 말해 볼까요?"});
+        assert!(warning_evidence("알겠어. 다시 확인할게.", &stale).is_none());
+        let current = serde_json::json!({"verdict":"WARN","trigger":"한심해","suggestion":"이 부분이 아쉬워. 다시 확인해 줄래?"});
+        assert_eq!(warning_evidence("너 진짜 한심해", &current), Some("한심해"));
+    }
+
+    #[test]
+    fn finds_dictionary_terms_across_spacing() {
+        assert_eq!(matched_span("ㅅ ㅂ 뭐야", "ㅅㅂ"), Some("ㅅ ㅂ"));
+    }
+}
 async fn ai_check(State(app): State<App>, Json(input): Json<AiCheck>) -> Json<serde_json::Value> {
     let text = input.text.trim();
     let normalized = text
@@ -1155,7 +1206,7 @@ async fn ai_check(State(app): State<App>, Json(input): Json<AiCheck>) -> Json<se
             .find(|p| normalized.contains(**p))
             .unwrap_or(&"강한 표현");
         return Json(
-            serde_json::json!({"verdict":"WARN","suggestion":format!("‘{matched}’처럼 강도가 높은 표현은 상대가 내용보다 공격받는 느낌을 먼저 받을 수 있어요. 하고 싶은 요청이나 감정을 구체적으로 말해보면 어떨까요?"),"info":{"level":"none","note":null,"queries":[]},"source":"dictionary"}),
+            serde_json::json!({"verdict":"WARN","trigger":matched_span(text,matched),"suggestion":format!("‘{matched}’처럼 강도가 높은 표현은 상대가 내용보다 공격받는 느낌을 먼저 받을 수 있어요. 하고 싶은 요청이나 감정을 구체적으로 말해보면 어떨까요?"),"info":{"level":"none","note":null,"queries":[]},"source":"dictionary"}),
         );
     }
     if level == "light" {
@@ -1207,23 +1258,23 @@ async fn ai_check(State(app): State<App>, Json(input): Json<AiCheck>) -> Json<se
     let hash = format!(
         "{:x}",
         Sha256::digest(
-            format!("v5:{level}:{attack_level}:{sarcasm_level}:{source_level}:{normalized}")
+            format!("v6:{level}:{attack_level}:{sarcasm_level}:{source_level}:{text}")
                 .as_bytes()
         )
     );
-    if let Ok(Some((verdict,suggestion,info_level,info_note,info_queries)))=sqlx::query_as::<_,(String,Option<String>,String,Option<String>,Vec<String>)>("SELECT verdict,suggestion,info_level,info_note,info_queries FROM retone_v2.ai_cache WHERE message_hash=$1").bind(&hash).fetch_optional(&app.db).await{return Json(serde_json::json!({"verdict":verdict,"suggestion":suggestion,"info":{"level":info_level,"note":info_note,"queries":info_queries},"source":"cache"}));}
+    if let Ok(Some((verdict,suggestion,info_level,info_note,info_queries,trigger)))=sqlx::query_as::<_,(String,Option<String>,String,Option<String>,Vec<String>,Option<String>)>("SELECT verdict,suggestion,info_level,info_note,info_queries,warning_trigger FROM retone_v2.ai_cache WHERE message_hash=$1").bind(&hash).fetch_optional(&app.db).await{return Json(serde_json::json!({"verdict":verdict,"trigger":trigger,"suggestion":suggestion,"info":{"level":info_level,"note":info_note,"queries":info_queries},"source":"cache"}));}
     let Some(key) = env::var("OPENAI_API_KEY").ok() else {
         return Json(
             serde_json::json!({"verdict":"PASS","suggestion":null,"info":{"level":"none","note":null,"queries":[]},"source":"unavailable"}),
         );
     };
     let prompt = format!(
-        "너는 Re:Tone의 대화 거울이다. 판정자·검열자·사실확인 기관이 아니다. 현재 문장을 오직 '이렇게 들릴 수도 있어요'라는 제안으로만 비춘다.\n1) 최종 판단 대상은 현재 문장 하나다. 인사, 약속 잡기, 단순 질문, '야/야야/얘들아', ㅋㅋ, ㅠㅠ만으로는 WARN하지 않는다.\n2) 그러나 상대를 낮추는 모욕, 욕설 우회, 조롱, 위협, 혐오, 반복적인 재촉·무시는 관계와 무관하게 WARN한다. 상대 이름·2인칭이 생략돼도 문장 전체의 공격 의도가 분명하면 WARN할 수 있다.\n3) WARN일 때 suggestion은 두 문장으로 쓴다. 첫 문장은 실제 문제 지점(단어·어조)을 따옴표로 짚고 어떻게 들릴 수 있는지 설명한다. 둘째 문장은 원래 의도를 살린 짧은 대체 표현이다.\n4) 출처 확인 개입 수준은 {source_level}이다. 중요한 정보 주장일 때만 info.level=check를 제안하며, 질문·추측·일상 경험에는 제안하지 않는다. 진실·거짓은 절대 판단하지 않는다.\n5) 비꼼·압박 개입 수준은 {sarcasm_level}, 전체 개입 강도는 {level}이다. 애매한 말은 PASS하되, 공격 의도가 명백하면 놓치지 마라.\n6) JSON만 출력: {{\"verdict\":\"PASS|WARN\",\"suggestion\":string|null,\"info\":{{\"level\":\"none|check\",\"note\":string|null,\"queries\":[string]}}}}. queries는 확인할 검색어 0~2개.\n문장: {text}"
+        "너는 Re:Tone의 대화 거울이다. 판정자·검열자·사실확인 기관이 아니다. 현재 문장을 오직 '이렇게 들릴 수도 있어요'라는 제안으로만 비춘다.\n1) 최종 판단 대상은 현재 문장 하나다. 인사, 약속 잡기, 단순 질문, '야/야야/얘들아', ㅋㅋ, ㅠㅠ만으로는 WARN하지 않는다.\n2) 그러나 상대를 낮추는 모욕, 욕설 우회, 조롱, 위협, 혐오, 반복적인 재촉·무시는 관계와 무관하게 WARN한다. 상대 이름·2인칭이 생략돼도 문장 전체의 공격 의도가 분명하면 WARN할 수 있다.\n3) WARN일 때 suggestion은 두 문장으로 쓴다. 첫 문장은 실제 문제 지점(단어·어조)을 따옴표로 짚고 어떻게 들릴 수 있는지 설명한다. 둘째 문장은 원래 의도를 살린 짧은 대체 표현이다.\n4) 출처 확인 개입 수준은 {source_level}이다. 중요한 정보 주장일 때만 info.level=check를 제안하며, 질문·추측·일상 경험에는 제안하지 않는다. 진실·거짓은 절대 판단하지 않는다.\n5) 비꼼·압박 개입 수준은 {sarcasm_level}, 전체 개입 강도는 {level}이다. 애매한 말은 PASS하되, 공격 의도가 명백하면 놓치지 마라.\n6) JSON만 출력: {{\"verdict\":\"PASS|WARN\",\"trigger\":string|null,\"suggestion\":string|null,\"info\":{{\"level\":\"none|check\",\"note\":string|null,\"queries\":[string]}}}}. WARN이면 trigger에 현재 문장에 실제로 연속해서 나오는 표현을 그대로 넣어라. PASS이면 null. queries는 확인할 검색어 0~2개.\n문장: {text}"
     );
     let res = reqwest::Client::new()
         .post("https://api.openai.com/v1/responses")
         .bearer_auth(key)
-        .json(&serde_json::json!({"model":"gpt-4o-mini","input":prompt,"max_output_tokens":80}))
+        .json(&serde_json::json!({"model":"gpt-4o-mini","input":prompt,"max_output_tokens":320,"store":false,"text":{"format":{"type":"json_object"}}}))
         .send()
         .await;
     let Ok(r) = res else {
@@ -1235,10 +1286,12 @@ async fn ai_check(State(app): State<App>, Json(input): Json<AiCheck>) -> Json<se
     let out = v["output"][0]["content"][0]["text"]
         .as_str()
         .unwrap_or("{}");
-    let parsed = serde_json::from_str::<serde_json::Value>(out)
-        .unwrap_or_else(|_| serde_json::json!({"verdict":"PASS","suggestion":null,"info":{"level":"none","note":null,"queries":[]}}));
-    let verdict = parsed["verdict"].as_str().unwrap_or("PASS");
-    let suggestion = parsed["suggestion"].as_str();
+    let Some(parsed) = serde_json::from_str::<serde_json::Value>(out).ok().filter(|v| matches!(v["verdict"].as_str(), Some("PASS" | "WARN"))) else {
+        return Json(serde_json::json!({"verdict":"PASS","source":"unavailable"}));
+    };
+    let trigger = warning_evidence(text, &parsed);
+    let verdict = if trigger.is_some() {"WARN"} else {"PASS"};
+    let suggestion = trigger.and(parsed["suggestion"].as_str());
     let info_level = if source_level == "꺼짐" || source_level == "끄기" {
         "none"
     } else {
@@ -1255,82 +1308,10 @@ async fn ai_check(State(app): State<App>, Json(input): Json<AiCheck>) -> Json<se
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    let _=sqlx::query("INSERT INTO retone_v2.ai_cache(message_hash,verdict,suggestion,info_level,info_note,info_queries) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(message_hash) DO UPDATE SET verdict=EXCLUDED.verdict,suggestion=EXCLUDED.suggestion,info_level=EXCLUDED.info_level,info_note=EXCLUDED.info_note,info_queries=EXCLUDED.info_queries,checked_at=NOW()").bind(&hash).bind(verdict).bind(suggestion).bind(info_level).bind(info_note).bind(&info_queries).execute(&app.db).await;
+    let _=sqlx::query("INSERT INTO retone_v2.ai_cache(message_hash,verdict,suggestion,info_level,info_note,info_queries,warning_trigger) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(message_hash) DO UPDATE SET verdict=EXCLUDED.verdict,suggestion=EXCLUDED.suggestion,info_level=EXCLUDED.info_level,info_note=EXCLUDED.info_note,info_queries=EXCLUDED.info_queries,warning_trigger=EXCLUDED.warning_trigger,checked_at=NOW()").bind(&hash).bind(verdict).bind(suggestion).bind(info_level).bind(info_note).bind(&info_queries).bind(trigger).execute(&app.db).await;
     Json(
-        serde_json::json!({"verdict":verdict,"suggestion":suggestion,"info":{"level":info_level,"note":info_note,"queries":info_queries},"source":"ai"}),
+        serde_json::json!({"verdict":verdict,"trigger":trigger,"suggestion":suggestion,"info":{"level":info_level,"note":info_note,"queries":info_queries},"source":"ai"}),
     )
-}
-async fn fact_check(Json(input): Json<FactCheck>) -> Json<serde_json::Value> {
-    let text = input.text.trim();
-    if text.is_empty() || text.chars().count() > 900 {
-        return Json(serde_json::json!({"status":"clear","summary":"","sources":[]}));
-    }
-    let Some(key) = env::var("OPENAI_API_KEY").ok() else {
-        return Json(serde_json::json!({"status":"unavailable","summary":"출처 확인 연결이 아직 준비되지 않았어요. 잠시 뒤 다시 시도해 주세요.","sources":[]}));
-    };
-    let prompt = format!(
-        "너는 Re:Tone의 출처 찾아보기 보조 도구다. 사람이나 문장의 진실·거짓을 판정하거나 단정하지 않는다. 반드시 웹 검색 도구로 현재 메시지의 정보성 주장만 검색한다. 검색 결과가 있으면 status=clear여도 sources에 실제로 확인한 링크를 최대 3개 넣어, 사용자가 어떤 출처가 무엇을 말하는지 볼 수 있게 한다. 신뢰할 수 있는 최신 출처들이 대체로 관련 있으면 status=clear, 출처가 부족하거나 날짜가 오래되었거나 믿을 만한 출처 사이에 중요한 차이가 있으면 status=check로 한다. summary는 사실 판정이 아닌 중립적 설명 1~2문장이다. status=check일 때는 '출처를 한 번 더 확인해 보면 좋아요'처럼 조심스럽게 말한다. source.note에는 해당 출처가 현재 메시지와 관련해 말하는 핵심을 80자 이내로 중립적으로 적고, 출처에 없는 해석은 만들지 않는다. 정부·공공기관·원문 연구·신뢰할 수 있는 언론 등 우선순위가 높은 출처를 우선한다. JSON만 출력한다: {{\"status\":\"clear|check\",\"summary\":\"...\",\"sources\":[{{\"title\":\"...\",\"url\":\"https://...\",\"date\":\"...\",\"note\":\"...\"}}]}}\n\n현재 메시지: {text}"
-    );
-    let response = reqwest::Client::new()
-        .post("https://api.openai.com/v1/responses")
-        .bearer_auth(key)
-        .json(&serde_json::json!({
-            "model":"gpt-4.1-mini",
-            "input":prompt,
-            "tools":[{"type":"web_search"}],
-            "tool_choice":"required",
-            "max_output_tokens":500
-        }))
-        .send()
-        .await;
-    let parsed = match response {
-        Ok(response) if response.status().is_success() => response.json::<serde_json::Value>().await.ok(),
-        Err(_) => None,
-        _ => None,
-    }
-    .and_then(|value| {
-        value["output"]
-            .as_array()
-            .and_then(|output| {
-                output.iter().find_map(|item| {
-                    item["content"]
-                        .as_array()
-                        .and_then(|content| content.iter().find_map(|part| part["text"].as_str()))
-                })
-            })
-            .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok())
-    });
-    let Some(parsed) = parsed else {
-        return Json(serde_json::json!({"status":"unavailable","summary":"출처 확인 서비스를 불러오지 못했어요. 잠시 뒤 다시 시도해 주세요.","sources":[]}));
-    };
-    let status = if parsed["status"].as_str() == Some("check") {
-        "check"
-    } else {
-        "clear"
-    };
-    let summary = parsed["summary"].as_str().unwrap_or("");
-    let sources = parsed["sources"]
-        .as_array()
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|item| {
-                    let url = item["url"].as_str()?;
-                    if !(url.starts_with("https://") || url.starts_with("http://")) {
-                        return None;
-                    }
-                    Some(serde_json::json!({
-                        "title": item["title"].as_str().unwrap_or(url),
-                        "url": url,
-                        "date": item["date"].as_str().unwrap_or(""),
-                        "note": item["note"].as_str().unwrap_or("").chars().take(120).collect::<String>()
-                    }))
-                })
-                .take(3)
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    Json(serde_json::json!({"status":status,"summary":summary,"sources":sources}))
 }
 async fn ai_rewrite(Json(input): Json<RewriteRequest>) -> Json<serde_json::Value> {
     let text = input.text.trim();
@@ -1458,6 +1439,51 @@ async fn ai_support(Json(input): Json<RewriteRequest>) -> Json<serde_json::Value
         Err(_) => String::new(),
     };
     Json(serde_json::json!({"reply":reply}))
+}
+
+async fn guarded_image_check(
+    State(app): State<App>,
+    headers: HeaderMap,
+    input: Json<ImageInput>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    require_user(&app, &headers).await?;
+    check_image(input).await
+}
+
+async fn guarded_ai_check(
+    State(app): State<App>,
+    headers: HeaderMap,
+    input: Json<AiCheck>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    require_user(&app, &headers).await?;
+    Ok(ai_check(State(app), input).await)
+}
+
+async fn guarded_ai_rewrite(
+    State(app): State<App>,
+    headers: HeaderMap,
+    input: Json<RewriteRequest>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    require_user(&app, &headers).await?;
+    Ok(ai_rewrite(input).await)
+}
+
+async fn guarded_conversation_analysis(
+    State(app): State<App>,
+    headers: HeaderMap,
+    input: Json<ConversationAnalysis>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    require_user(&app, &headers).await?;
+    Ok(analyze_conversation(input).await)
+}
+
+async fn guarded_ai_support(
+    State(app): State<App>,
+    headers: HeaderMap,
+    input: Json<RewriteRequest>,
+) -> Result<Json<serde_json::Value>, StatusCode> {
+    require_user(&app, &headers).await?;
+    Ok(ai_support(input).await)
 }
 async fn report_ai(
     State(app): State<App>,
@@ -2202,7 +2228,13 @@ async fn create_appointment(
     let starts_at = chrono::NaiveDateTime::parse_from_str(&input.date, "%Y-%m-%d %H:%M")
         .map_err(|_| StatusCode::BAD_REQUEST)?
         .and_utc();
-    let appointment_id = Uuid::new_v4();
+    if let Some(source) = input.source_message_id {
+        let matched = sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM retone_v2.messages WHERE id=$1 AND room_id=$2 AND deleted_at IS NULL)")
+            .bind(source).bind(room_uuid).fetch_one(&app.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        if !matched { return Err(StatusCode::BAD_REQUEST); }
+    }
+    let appointment_id = input.client_id.unwrap_or_else(Uuid::new_v4);
+    let fields = checked_fields(input.fields)?;
     let appointment = Appointment {
         id: appointment_id.to_string(),
         room_id: room_uuid.map(|value| value.to_string()).unwrap_or_default(),
@@ -2213,23 +2245,27 @@ async fn create_appointment(
         } else {
             input.place.trim().chars().take(50).collect()
         },
-        owner_id: user_id.to_string(),
+        owner_id: user_id.to_string(), fields, source_message_id: input.source_message_id,
     };
-    sqlx::query("INSERT INTO retone_v2.appointments(id,room_id,title,starts_at,place,created_by) VALUES($1,$2,$3,$4,$5,$6)")
+    let mut data = app.data.write().await;
+    let inserted = sqlx::query("INSERT INTO retone_v2.appointments(id,room_id,title,starts_at,place,created_by,fields,source_message_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT DO NOTHING")
         .bind(appointment_id)
         .bind(room_uuid)
         .bind(&appointment.title)
         .bind(starts_at)
         .bind(&appointment.place)
         .bind(user_id)
+        .bind(sqlx::types::Json(&appointment.fields)).bind(input.source_message_id)
         .execute(&app.db)
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    app.data
-        .write()
-        .await
-        .appointments
-        .push(appointment.clone());
+    if inserted.rows_affected()==0 {
+        let existing = data.appointments.iter().find(|a| a.room_id == appointment.room_id &&
+            ((a.id == appointment.id && a.owner_id == appointment.owner_id) ||
+             (appointment.source_message_id.is_some() && a.source_message_id == appointment.source_message_id)));
+        return existing.cloned().map(Json).ok_or(StatusCode::CONFLICT);
+    }
+    data.appointments.push(appointment.clone());
     Ok(Json(appointment))
 }
 async fn update_appointment(
@@ -2258,13 +2294,15 @@ async fn update_appointment(
     let starts_at = chrono::NaiveDateTime::parse_from_str(&input.date, "%Y-%m-%d %H:%M")
         .map_err(|_| StatusCode::BAD_REQUEST)?
         .and_utc();
-    let row = sqlx::query_as::<_, (Option<Uuid>, String, String, String, Uuid)>(
-        "UPDATE retone_v2.appointments SET title=$1,starts_at=$2,place=$3 WHERE id=$4 RETURNING room_id,title,TO_CHAR(starts_at,'YYYY-MM-DD HH24:MI'),COALESCE(place,'장소 미정'),created_by",
+    let fields = input.fields.map(checked_fields).transpose()?.map(sqlx::types::Json);
+    let mut data = app.data.write().await;
+    let row = sqlx::query_as::<_, (Option<Uuid>, String, String, String, Uuid, sqlx::types::Json<Vec<ScheduleField>>, Option<Uuid>)>(
+        "UPDATE retone_v2.appointments SET title=$1,starts_at=$2,place=$3,fields=COALESCE($5,fields) WHERE id=$4 RETURNING room_id,title,TO_CHAR(starts_at,'YYYY-MM-DD HH24:MI'),COALESCE(place,'장소 미정'),created_by,fields,source_message_id",
     )
     .bind(input.title.trim().chars().take(80).collect::<String>())
     .bind(starts_at)
     .bind(if input.place.trim().is_empty() { "장소 미정".to_string() } else { input.place.trim().chars().take(50).collect() })
-    .bind(id)
+    .bind(id).bind(fields)
     .fetch_one(&app.db)
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -2274,9 +2312,8 @@ async fn update_appointment(
         title: row.1,
         date: row.2,
         place: row.3,
-        owner_id: row.4.to_string(),
+        owner_id: row.4.to_string(), fields:row.5.0, source_message_id:row.6,
     };
-    let mut data = app.data.write().await;
     if let Some(item) = data.appointments.iter_mut().find(|item| item.id == appointment.id) {
         *item = appointment.clone();
     }
@@ -2335,8 +2372,8 @@ async fn restore_data(db: &PgPool) -> Data {
         .fetch_all(db).await.unwrap_or_default().into_iter().map(|(id,room_id,sender,sender_id,body,created,intent,image_url,reply_to)| { let alignment_hint = looks_like_alignment(&body); Message { id:id.to_string(),room_id:room_id.to_string(),sender:sender.unwrap_or_else(|| "알 수 없는 사용자".into()),sender_id:sender_id.map(|value| value.to_string()),mine:false,body,created,unread:0,intent,alignment_hint,image_url,reply_to:reply_to.map(|value| value.to_string()) } }).collect();
     let agreements = sqlx::query_as::<_, (Uuid, Uuid, String, String, String, i32, i32)>("SELECT id,room_id,task,assignee_name,deadline_text,confirmations,revisions FROM retone_v2.agreements WHERE completed_at IS NULL")
         .fetch_all(db).await.unwrap_or_default().into_iter().map(|(id,room_id,task,assignee,deadline,confirmations,revisions)| Agreement { id:id.to_string(), room_id:room_id.to_string(), task, assignee, deadline, confirmations:confirmations.clamp(0,u8::MAX as i32) as u8, revisions:revisions.clamp(0,u8::MAX as i32) as u8 }).collect();
-    let appointments = sqlx::query_as::<_, (Uuid, Option<Uuid>, String, String, String, Uuid)>("SELECT id,room_id,title,to_char(starts_at,'YYYY-MM-DD HH24:MI'),place,created_by FROM retone_v2.appointments ORDER BY starts_at")
-        .fetch_all(db).await.unwrap_or_default().into_iter().map(|(id,room_id,title,date,place,owner_id)| Appointment { id:id.to_string(), room_id:room_id.map(|value| value.to_string()).unwrap_or_default(), title, date, place, owner_id:owner_id.to_string() }).collect();
+    let appointments = sqlx::query_as::<_, (Uuid, Option<Uuid>, String, String, String, Uuid, sqlx::types::Json<Vec<ScheduleField>>, Option<Uuid>)>("SELECT id,room_id,title,to_char(starts_at,'YYYY-MM-DD HH24:MI'),COALESCE(place,''),created_by,fields,source_message_id FROM retone_v2.appointments ORDER BY starts_at")
+        .fetch_all(db).await.unwrap_or_default().into_iter().map(|(id,room_id,title,date,place,owner_id,fields,source_message_id)| Appointment { id:id.to_string(), room_id:room_id.map(|value| value.to_string()).unwrap_or_default(), title, date, place, fields:fields.0, source_message_id, owner_id:owner_id.to_string() }).collect();
     let reflections = sqlx::query_as::<_, (Uuid, Uuid, String, String, String)>("SELECT id,room_id,title,keep,next_step FROM retone_v2.reflections ORDER BY created_at")
         .fetch_all(db).await.unwrap_or_default().into_iter().map(|(id,room_id,title,keep,next)| Reflection { id:id.to_string(),room_id:room_id.to_string(),title,keep,next }).collect();
     let insights = sqlx::query_as::<_, (Uuid, Uuid, i32, bool, String, String, String, String)>("SELECT id,room_id,checkpoint,has_conflict,topic,summary,reason,suggestion FROM retone_v2.conversation_insights ORDER BY created_at")
@@ -2358,12 +2395,17 @@ async fn main() {
     let app_state = App {
         db,
         data: Arc::new(RwLock::new(restored)),
+        fact_locks: Default::default(),
     };
     let router = Router::new()
         .route("/api/health", get(health))
         .route("/api/auth/signup", post(signup))
         .route("/api/auth/phone-available", get(phone_available))
         .route("/api/auth/login", post(login))
+        .route("/api/auth/me", get(session::me))
+        .route("/api/auth/logout", post(session::logout))
+        .route("/api/rooms/{id}/sync", get(room_sync::sync))
+        .route("/api/rooms/{id}/typing", post(room_sync::typing))
         .route("/api/auth/admin-login", post(admin_login))
         .route("/api/users", get(users))
         .route("/api/friends", get(friends))
@@ -2377,12 +2419,12 @@ async fn main() {
         .route("/api/users/{id}", delete(delete_account))
         .route("/api/users/{id}/preferences", patch(update_preferences))
         .route("/api/users/{id}/avatar", post(update_avatar))
-        .route("/api/images/check", post(check_image))
-        .route("/api/ai/check", post(ai_check))
-        .route("/api/ai/fact-check", post(fact_check))
-        .route("/api/ai/rewrite", post(ai_rewrite))
-        .route("/api/ai/conversation-analysis", post(analyze_conversation))
-        .route("/api/ai/support", post(ai_support))
+        .route("/api/images/check", post(guarded_image_check))
+        .route("/api/ai/check", post(guarded_ai_check))
+        .route("/api/ai/fact-check", post(sources::fact_check))
+        .route("/api/ai/rewrite", post(guarded_ai_rewrite))
+        .route("/api/ai/conversation-analysis", post(guarded_conversation_analysis))
+        .route("/api/ai/support", post(guarded_ai_support))
         .route("/api/ai/reports", post(report_ai))
         .route("/api/admin/reports", get(admin_reports))
         .route("/api/bootstrap", get(bootstrap))

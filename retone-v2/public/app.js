@@ -21,7 +21,6 @@ let signupPhoneTimer = null;
 let selectedIntent = "";
 let aiPrefetch = { text: "", result: null, promise: null, timer: null };
 let roomPollTimer = null;
-let roomPollInFlight = false;
 let inboxPollTimer = null;
 let inboxPollInFlight = false;
 let roomLoadVersion = 0;
@@ -35,17 +34,13 @@ let aiSavedResults = (() => {
 })();
 let factFindings = (() => {
   try {
-    return JSON.parse(localStorage.getItem("retone-fact-findings-v1") || "{}");
+    return JSON.parse(localStorage.getItem("retone-citations-v3") || "{}");
   } catch {
     return {};
   }
 })();
 const factChecksInFlight = new Set();
-const FACT_FINDING_VERSION = 2;
-// Inline onclick attributes cannot safely carry an arbitrary chat message: quotes in
-// a message turn the attribute into invalid JavaScript. Keep the selected message
-// here while the fact-check confirmation modal is open instead.
-let pendingFactCheckText = "";
+const FACT_FINDING_VERSION = 3;
 const aiCategoryDefaults = {
   "강한 공격 표현": "강한 표현만",
   "비꼼·압박 표현": "균형 있게",
@@ -255,9 +250,9 @@ const esc = (s) =>
     (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c],
   );
 const escAttr = (s) => esc(s).replace(/"/g, "&quot;");
-const AI_CACHE_VERSION = "v2";
+const AI_CACHE_VERSION = "evidence-v1";
 const aiCacheKey = (text) =>
-  `${AI_CACHE_VERSION}|${activeAiIntervention()}|${JSON.stringify(aiDetails())}|${text.trim().toLowerCase()}`;
+  `${AI_CACHE_VERSION}|${signedInId}|${activeAiIntervention()}|${JSON.stringify(aiDetails())}|${text.trim()}`;
 function savedAiResult(text) {
   const result = aiSavedResults[aiCacheKey(text)] || null;
   return result && (result.verdict === "PASS" || result.verdict === "WARN")
@@ -265,6 +260,7 @@ function savedAiResult(text) {
     : null;
 }
 function rememberAiResult(text, result) {
+  if (["fallback","unavailable"].includes(result?.source)) return;
   const key = aiCacheKey(text);
   aiSavedResults[key] = { ...result, source: "saved" };
   const keys = Object.keys(aiSavedResults);
@@ -279,7 +275,7 @@ function rememberAiResult(text, result) {
 }
 async function api(url, options = {}) {
   const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
-  if (sessionToken) headers.Authorization = `Bearer ${sessionToken}`;
+  if (signedInId && !isAdmin && !url.startsWith("/api/auth/")) headers["X-ReTone-User"] = signedInId;
   const r = await fetch(url, {
     ...options,
     headers,
@@ -319,6 +315,10 @@ async function home() {
 }
 async function openRoom(id) {
   stopInboxPolling();
+  if (roomId === id && document.querySelector("#messages")?.dataset.room === id) {
+    syncRoomExtras(id,currentRoomMessages);
+    return refreshRoom(id).catch(()=>{});
+  }
   const loadVersion = ++roomLoadVersion;
   const refreshingCurrentRoom = roomId === id;
   const previousInput = refreshingCurrentRoom ? document.querySelector("#text") : null;
@@ -365,16 +365,7 @@ async function openRoom(id) {
       item.room_id === id &&
       (item.has_conflict || aiDetails()["대화 흐름 요약"] === "항상"),
   );
-  app.innerHTML = `<main class="layout">${rail()}<section class="chat"><header class="head"><button class="back-button" title="채팅 목록으로" aria-label="채팅 목록으로" onclick="home()"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14.5 5-7 7 7 7M8 12h9"/></svg></button><div class="room-title"><h1>${esc(room.name)}</h1><span>참여자 ${room.members}명 · AI ${roomRule(id)} · ${isRoomMuted(id) ? "알림 끔" : "연결됨"}</span>${conversationPulse(messages)}</div><div class="chat-actions"><button class="chat-primary-action" title="친구 초대" aria-label="친구 초대" onclick="inviteFriends()">＋</button><button class="chat-primary-action" title="AI 도움받기" aria-label="AI 도움받기" onclick="openAiHelp()">✦</button><button class="chat-secondary-action" title="약속 잡기" aria-label="약속 잡기" onclick="newAppointment()">◷</button><button class="chat-secondary-action" title="공동 확인" aria-label="공동 확인" onclick="newAgreement()">✓</button><button class="chat-secondary-action" title="회고 카드" aria-label="회고 카드" onclick="newReflection()">↻</button><button class="chat-secondary-action" title="채팅방 설정" aria-label="채팅방 설정" onclick="roomSettings()">⚙</button><button class="chat-more-action" title="더 보기" aria-label="더 보기" onclick="openChatMore()">⋯</button></div></header><section class="messages" id="messages">${insights.map(viewInsight).join("")}${messages.map(view).join("")}${alignmentCard(messages)}${appointments.map(viewAppointment).join("")}${reflections.map(viewReflection).join("")}${data.agreements
-    .filter((agreement) => agreement.room_id === id)
-    .slice(0, 1)
-    .map(
-      (a) =>
-        `<article class="agreement"><b>✓ 공동 확인 · ${esc(a.task)}</b><small>담당 ${esc(a.assignee)} · ${esc(a.deadline)} · 확인 ${a.confirmations} · 보완 ${a.revisions}</small><div><button onclick="answerAgreement('${a.id}','confirm')">확인했어요</button><button class="quiet" onclick="answerAgreement('${a.id}','revise')">보완 요청</button></div></article>`,
-    )
-    .join(
-      "",
-    )}</section><form class="sendbar" onsubmit="send(event)">${replyComposer()}<button type="button" class="intent-button" title="의도 표시" onclick="chooseIntent()">${selectedIntent ? "◎" : "＋"}</button><label class="image-upload" title="사진 보내기" aria-label="사진 보내기"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="3"/><circle cx="9" cy="10" r="1.5"/><path d="m5.5 17 4.5-4 3.2 2.7 2.4-2 2.9 3.3"/></svg><input hidden type="file" accept="image/*" onchange="sendImage(this)"></label><input id="text" placeholder="메시지를 입력하세요" autocomplete="off" oninput="queueAiCheck(this.value)"><span id="ai-status" class="ai-status"></span><button>↑</button></form></section></main>`;
+  app.innerHTML = `<main class="layout">${rail()}<section class="chat"><header class="head"><button class="back-button" title="채팅 목록으로" aria-label="채팅 목록으로" onclick="home()"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14.5 5-7 7 7 7M8 12h9"/></svg></button><div class="room-title"><h1>${esc(room.name)}</h1><span>참여자 ${room.members}명 · AI ${roomRule(id)} · ${isRoomMuted(id) ? "알림 끔" : "연결됨"}</span><small id="typing-status" role="status"></small><span class="room-slot" id="pulse-slot">${conversationPulse(messages)}</span></div><div class="chat-actions"><button class="chat-primary-action" title="친구 초대" aria-label="친구 초대" onclick="inviteFriends()">＋</button><button class="chat-primary-action" title="AI 도움받기" aria-label="AI 도움받기" onclick="openAiHelp()">✦</button><button class="chat-secondary-action" title="약속 잡기" aria-label="약속 잡기" onclick="newAppointment()">◷</button><button class="chat-secondary-action" title="공동 확인" aria-label="공동 확인" onclick="newAgreement()">✓</button><button class="chat-secondary-action" title="회고 카드" aria-label="회고 카드" onclick="newReflection()">↻</button><button class="chat-secondary-action" title="채팅방 설정" aria-label="채팅방 설정" onclick="roomSettings()">⚙</button><button class="chat-more-action" title="더 보기" aria-label="더 보기" onclick="openChatMore()">⋯</button></div></header><section class="messages" id="messages" data-room="${escAttr(id)}"><div class="room-slot" id="insights-slot">${insights.map(viewInsight).join("")}</div>${messages.map(view).join("")}<template id="message-end"></template><div class="room-slot" id="alignment-slot">${alignmentCard(messages)}</div><div class="room-slot" id="appointments-slot">${appointments.map(viewAppointment).join("")}</div><div class="room-slot" id="reflections-slot">${reflections.map(viewReflection).join("")}</div><div class="room-slot" id="agreements-slot">${agreementMarkup(id)}</div></section><form class="sendbar" onsubmit="send(event)"><span id="reply-slot" class="room-slot">${replyComposer()}</span><button type="button" class="intent-button" title="의도 표시" onclick="chooseIntent()">${selectedIntent ? "◎" : "＋"}</button><label class="image-upload" title="사진 보내기" aria-label="사진 보내기"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="3"/><circle cx="9" cy="10" r="1.5"/><path d="m5.5 17 4.5-4 3.2 2.7 2.4-2 2.9 3.3"/></svg><input hidden type="file" accept="image/*" onchange="sendImage(this)"></label><input id="text" placeholder="메시지를 입력하세요" autocomplete="off" oninput="onChatTyping(this.value)" onblur="stopTyping()"><span id="ai-status" class="ai-status"></span><button>↑</button></form></section></main>`;
   const list = document.querySelector("#messages");
   if (refreshingCurrentRoom && !wasNearBottom) list.scrollTop = previousScrollTop;
   else list.scrollTop = list.scrollHeight;
@@ -384,15 +375,16 @@ async function openRoom(id) {
     input.focus();
     input.setSelectionRange(cursor, cursor);
   }
-  startRoomPolling(id, messages);
+  startRoomPolling(id);
   queueFactChecks(messages);
 }
 function stopRoomPolling() {
+  ++syncSequence;
+  stopTyping();
   if (roomPollTimer) {
     clearInterval(roomPollTimer);
     roomPollTimer = null;
   }
-  roomPollInFlight = false;
 }
 function stopInboxPolling() {
   if (inboxPollTimer) {
@@ -478,47 +470,127 @@ function updateReadReceipts(messages) {
       receipt.textContent = unread;
       return;
     }
-    bubble.insertAdjacentHTML("beforeend", `<span class="read">${unread}</span>`);
+    (bubble.querySelector(".bubble-tools") || bubble).insertAdjacentHTML("beforeend", `<span class="read">${unread}</span>`);
   });
 }
-function startRoomPolling(id, initialMessages) {
-  let knownMessageIds = new Set(initialMessages.map((message) => message.id));
-  let knownReadState = JSON.stringify(
-    initialMessages.map((message) => [message.id, message.unread || 0]),
-  );
-  roomPollTimer = setInterval(async () => {
-    if (roomId !== id || roomPollInFlight) return;
-    roomPollInFlight = true;
-    try {
-      const latest = await api(
-        `/api/rooms/${id}/messages?user_id=${encodeURIComponent(signedInId)}`,
-      );
-      const latestReadState = JSON.stringify(
-        latest.map((message) => [message.id, message.unread || 0]),
-      );
-      const structureChanged =
-        latest.length !== knownMessageIds.size ||
-        latest.some((message) => !knownMessageIds.has(message.id));
-      if (structureChanged) {
-        const incoming = latest.filter(
-          (message) => !knownMessageIds.has(message.id) && !message.mine,
-        );
-        incoming.forEach((message) => notifyNewMessage(message));
-        knownMessageIds = new Set(latest.map((message) => message.id));
-        knownReadState = latestReadState;
-        currentRoomMessages = latest;
-        openRoom(id);
-      } else if (latestReadState !== knownReadState) {
-        knownReadState = latestReadState;
-        currentRoomMessages = latest;
-        updateReadReceipts(latest);
-      }
-    } catch {
-      // 다음 주기에 자동으로 다시 확인합니다.
-    } finally {
-      roomPollInFlight = false;
+let syncSequence = 0;
+let typingLease = null;
+let typingWrites = Promise.resolve();
+
+function signalTyping(room, active) {
+  // Serialize writes so a slow "started" cannot arrive after "stopped".
+  const account = signedInId;
+  typingWrites = typingWrites.then(() => {
+    if (signedInId !== account || (active && typingLease?.room !== room)) return;
+    return api(`/api/rooms/${room}/typing`, {method: "POST", body: JSON.stringify({active})});
+  }).catch(() => {});
+}
+function stopTyping() {
+  if (!typingLease) return;
+  const {room, idle} = typingLease;
+  clearTimeout(idle);
+  typingLease = null;
+  signalTyping(room, false);
+}
+function onChatTyping(value) {
+  queueAiCheck(value);
+  if (!value.trim() || !roomId) return stopTyping();
+  if (typingLease?.room !== roomId) {
+    stopTyping();
+    typingLease = {room:roomId, last:0};
+  }
+  if (Date.now() - typingLease.last > 2000) {
+    typingLease.last = Date.now();
+    signalTyping(roomId,true);
+  }
+  clearTimeout(typingLease.idle);
+  typingLease.idle = setTimeout(stopTyping, 3000);
+}
+function updateFragment(selector, markup) {
+  const target = document.querySelector(selector);
+  if (target && target._markup !== markup) {
+    target.innerHTML = markup;
+    target._markup = markup;
+  }
+}
+function agreementMarkup(id) {
+  return data.agreements
+    .filter((agreement) => agreement.room_id === id)
+    .slice(0, 1)
+    .map(
+      (a) =>
+        `<article class="agreement"><b>✓ 공동 확인 · ${esc(a.task)}</b><small>담당 ${esc(a.assignee)} · ${esc(a.deadline)} · 확인 ${a.confirmations} · 보완 ${a.revisions}</small><div><button onclick="answerAgreement('${a.id}','confirm')">확인했어요</button><button class="quiet" onclick="answerAgreement('${a.id}','revise')">보완 요청</button></div></article>`,
+    )
+    .join(
+      "",
+    );
+}
+function syncRoomExtras(id, messages) {
+  updateFragment("#agreements-slot",agreementMarkup(id));
+  updateFragment("#reflections-slot",(data.reflections || []).filter(a=>a.room_id===id).map(viewReflection).join(""));
+  const room = data.rooms.find(r=>r.id===id);
+  if (room) {
+    const header = document.querySelector(".room-title > span");
+    if(header) header.textContent = `참여자 ${room.members}명 · AI ${roomRule(id)} · ${isRoomMuted(id)?"알림 끔":"연결됨"}`;
+  }
+  updateFragment("#alignment-slot", alignmentCard(messages));
+  updateFragment("#appointments-slot", (data.appointments || []).filter(a=>a.room_id===id).map(viewAppointment).join(""));
+  updateFragment("#insights-slot", (data.insights || []).filter(i=>i.room_id===id && (i.has_conflict || aiDetails()["대화 흐름 요약"]==="항상")).map(viewInsight).join(""));
+  updateFragment("#pulse-slot", conversationPulse());
+  updateFragment("#reply-slot", replyComposer());
+}
+function reconcileBubbles(list, latest) {
+  const nearBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 80;
+  const previous = new Map(currentRoomMessages.map(m=>[m.id,m]));
+  currentRoomMessages = latest;
+  const ids = new Set(latest.map(m=>m.id));
+  const nodes = new Map();
+  for (const node of list.querySelectorAll(".bubble[data-message-id]")) {
+    if (ids.has(node.dataset.messageId)) nodes.set(node.dataset.messageId,node);
+    else node.remove();
+  }
+  let next = list.querySelector("#message-end");
+  for (let i=latest.length-1;i>=0;i--) {
+    const m = latest[i];
+    let node = nodes.get(m.id);
+    if (!node) {
+      next.insertAdjacentHTML("beforebegin", view(m));
+      node = next.previousElementSibling;
+      if (!m.mine && !previous.has(m.id)) notifyNewMessage(m);
+    } else if (m.reply_to && previous.has(m.reply_to) && !ids.has(m.reply_to)) {
+      node.outerHTML = view(m);
+      node = next.previousElementSibling;
     }
-  }, 3500);
+    next = node;
+  }
+  if (replyingTo && !ids.has(replyingTo.id)) replyingTo=null;
+  updateReadReceipts(latest);
+  syncRoomExtras(roomId, latest);
+  if (nearBottom) list.scrollTop = list.scrollHeight;
+  if (latest.some(m=>!previous.has(m.id))) queueFactChecks(latest);
+}
+async function refreshRoom(id) {
+  const list = document.querySelector("#messages");
+  if (roomId !== id || list?.dataset.room !== id) return;
+  const request = ++syncSequence;
+  const result = await api(`/api/rooms/${id}/sync`);
+  if (request !== syncSequence || roomId !== id || !list.isConnected) return;
+  for (const key of ["appointments", "agreements", "reflections", "insights"]) {
+    data[key] = (data[key] || []).filter(item=>item.room_id!==id).concat(result[key]);
+  }
+  const label = document.querySelector("#typing-status");
+  const names=result.typing;
+  const typing = !names.length ? "" : names.length===1 ? `${names[0]}님이 입력 중…` : `${names[0]}님 외 ${names.length-1}명 입력 중…`;
+  if (label.textContent !== typing) label.textContent = typing;
+  reconcileBubbles(list,result.messages);
+}
+function startRoomPolling(id) {
+  let busy = false;
+  roomPollTimer = setInterval(async () => {
+    if (roomId !== id || busy || document.hidden) return;
+    busy = true;
+    try { await refreshRoom(id); } catch {} finally { busy = false; }
+  }, 1800);
 }
 async function toggleBrowserNotifications() {
   if (!("Notification" in window)) return alert("이 브라우저에서는 알림을 지원하지 않아요.");
@@ -1062,7 +1134,9 @@ async function setAiIntervention(level) {
   sessionStorage.setItem("retone-v2-ai-level", aiIntervention);
   settings();
 }
-function logout() {
+async function logout() {
+  try { await api("/api/auth/logout", {method:"POST"}); }
+  catch { return alert("로그아웃을 완료하지 못했어요. 연결을 확인하고 다시 눌러 주세요."); }
   roomLoadVersion += 1;
   stopRoomPolling();
   stopInboxPolling();
@@ -1137,7 +1211,7 @@ function saveFactFindings() {
   const entries = Object.entries(factFindings).slice(-120);
   factFindings = Object.fromEntries(entries);
   try {
-    localStorage.setItem("retone-fact-findings-v1", JSON.stringify(factFindings));
+    localStorage.setItem("retone-citations-v3", JSON.stringify(factFindings));
   } catch {}
 }
 async function queueFactChecks(messages) {
@@ -1155,12 +1229,12 @@ async function queueFactChecks(messages) {
     try {
       const result = await api("/api/ai/fact-check", {
         method: "POST",
-        body: JSON.stringify({ text: message.body }),
+        body: JSON.stringify({ message_id: message.id }),
       });
       factFindings[message.id] = { ...result, version: FACT_FINDING_VERSION };
       saveFactFindings();
       if (roomId === message.room_id && (result.status === "check" || result.sources?.length))
-        openRoom(roomId);
+        refreshFactCue(message);
     } catch {
       // 연결 실패는 조용히 넘기며, 사용자가 다시 눌러 확인할 수 있게 둡니다.
     } finally {
@@ -1168,8 +1242,12 @@ async function queueFactChecks(messages) {
     }
   }
 }
+function refreshFactCue(message) {
+  const node = document.querySelector(`.bubble[data-message-id="${message.id}"]`);
+  if (node) node.outerHTML=view(message);
+}
 function view(m) {
-  const finding = !m.mine ? factFindings[m.id] : null;
+  const finding = !m.mine && factFindings[m.id]?.version === FACT_FINDING_VERSION ? factFindings[m.id] : null;
   const hasSources = Array.isArray(finding?.sources) && finding.sources.length > 0;
   const factCue =
     finding?.status === "check" || hasSources
@@ -1257,7 +1335,7 @@ function cancelMessagePress(resetSwipe = false) {
 function handleMessageTap(id) {
   if (Date.now() < suppressMessageTapUntil) return;
   const message = currentRoomMessages.find((item) => item.id === id);
-  if (message && !message.mine) inspectMessage(message.body);
+  if (message && !message.mine) inspectMessage(message.id);
 }
 function openPressedMessageActions(id) {
   const message = currentRoomMessages.find((item) => item.id === id);
@@ -1280,11 +1358,13 @@ function startReply(id) {
   if (!message) return;
   replyingTo = message;
   closePopup();
-  openRoom(roomId);
+  updateFragment("#reply-slot", replyComposer());
+  document.querySelector("#text")?.focus({ preventScroll: true });
 }
 function cancelReply() {
   replyingTo = null;
-  openRoom(roomId);
+  updateFragment("#reply-slot", "");
+  document.querySelector("#text")?.focus({ preventScroll: true });
 }
 function focusReply(id) {
   const target = document.querySelector(`[data-message-id="${id}"]`);
@@ -1374,7 +1454,7 @@ function viewReflection(item) {
   return `<article class="reflection-card"><span>↻ 약속 회고</span><b>${esc(item.title)}</b><p><strong>계속할 점</strong> ${esc(item.keep || "아직 작성하지 않았어요")}</p><p><strong>다음에는</strong> ${esc(item.next || "아직 작성하지 않았어요")}</p></article>`;
 }
 function viewAppointment(item) {
-  return `<article class="appointment-card"><span>◷ 함께 정한 약속</span><b>${esc(item.title)}</b><p><strong>${esc(item.date)}</strong>${item.place ? ` · ${esc(item.place)}` : ""}</p><button class="quiet" onclick="editAppointment('${item.id}')">함께 수정</button></article>`;
+  return `<article class="appointment-card"><span>◷ 함께 정한 약속</span><b>${esc(item.title)}</b><p><strong>${esc(item.date)}</strong>${item.place ? ` · ${esc(item.place)}` : ""}</p>${(item.fields||[]).map(f=>`<p><strong>${esc(f.label)}</strong> · ${esc(f.value)}</p>`).join("")}<button class="quiet" onclick="editAppointment('${item.id}')">함께 수정</button></article>`;
 }
 function setQuickDate(inputId, offset) {
   const date = new Date();
@@ -1395,7 +1475,7 @@ function alignmentCard(messages) {
     .reverse()
     .find(
       (item) =>
-        item.alignment_hint &&
+        item.alignment_hint && !(data.appointments || []).some(a=>a.source_message_id === item.id) &&
         localStorage.getItem(`retone-alignment-dismissed-${item.id}`) !== "1",
     );
   if (!message) return "";
@@ -1406,32 +1486,11 @@ function dismissAlignment(id) {
   openRoom(roomId);
 }
 function openAlignmentCard(id) {
-  popup(
-    `<div class="ai-check info"><span>말맞춤 카드</span><h2>약속을 함께 맞춰볼까요?</h2><p>상대의 의도를 추측하지 않고, 시간·장소·목적을 한 번에 정리해요.</p><input id="alignment-title" placeholder="무엇을 할지 입력해주세요"><div class="quick-date"><button type="button" onclick="setQuickDate('alignment-date',0)">오늘</button><button type="button" onclick="setQuickDate('alignment-date',1)">내일</button></div><input id="alignment-date" type="datetime-local"><input id="alignment-place" placeholder="장소 또는 온라인 링크를 입력해주세요"><button onclick="saveAlignmentCard('${id}')">약속 카드 만들기</button></div>`,
-  );
+  popup(appointmentEditorMarkup(null,id));
 }
-async function saveAlignmentCard(messageId) {
-  const title = document.querySelector("#alignment-title").value.trim(),
-    date = document.querySelector("#alignment-date").value;
-  if (!title || !date) return alert("무엇을 할지와 시간을 입력해주세요.");
-  await api("/api/appointments", {
-    method: "POST",
-    body: JSON.stringify({
-      title,
-      room_id: roomId,
-      date: date.replace("T", " "),
-      place: document.querySelector("#alignment-place").value.trim(),
-    }),
-  });
-  localStorage.setItem(`retone-alignment-dismissed-${messageId}`, "1");
-  closePopup();
-  data = await api(`/api/bootstrap?user_id=${encodeURIComponent(signedInId)}`);
-  openRoom(roomId);
-}
-function inspectMessage(text) {
-  pendingFactCheckText = String(text || "");
+function inspectMessage(id) {
   popup(
-    `<div class="ai-check info"><span>상대 메시지</span><h2>이 메시지를 함께 살펴볼까요?</h2><p>Re:Tone은 진실·거짓을 판정하지 않고, 확인에 필요한 단서를 제안해요.</p><button id="fact-check-start" onclick="factCheckPending()">사실여부 확인 도움받기</button></div>`,
+    `<div class="ai-check info"><span>상대 메시지</span><h2>이 메시지를 함께 살펴볼까요?</h2><p>Re:Tone은 진실·거짓을 판정하지 않고, 확인에 필요한 단서를 제안해요.</p><button id="fact-check-start" onclick="factCheckPending(this, \'${escAttr(id)}\')">사실여부 확인 도움받기</button></div>`,
   );
 }
 function safeLink(url) {
@@ -1457,10 +1516,9 @@ function openFactFinding(id) {
   const result = factFindings[id];
   if (result) popup(factFindingMarkup(result));
 }
-async function factCheckPending() {
-  const text = pendingFactCheckText.trim();
-  if (!text) return;
-  const button = document.querySelector("#fact-check-start");
+async function factCheckPending(button, id) {
+  const modal = button.closest(".modal");
+  if (!modal || button.disabled) return;
   if (button) {
     button.disabled = true;
     button.innerHTML = `<span class="thinking-loader" aria-hidden="true"><i></i><i></i><i></i></span>출처를 찾고 있어요`;
@@ -1468,9 +1526,10 @@ async function factCheckPending() {
   try {
     const result = await api("/api/ai/fact-check", {
       method: "POST",
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ message_id:id }),
     });
-    closePopup();
+    if (!modal.isConnected) return;
+    modal.remove();
     if (result.status === "unavailable") {
       popup(`<div class="ai-check info"><span>출처 찾아보기</span><h2>지금은 출처 확인을 연결하지 못했어요</h2><p>${esc(result.summary || "잠시 뒤 다시 시도하거나, 원문과 날짜를 함께 확인해 보세요.")}</p><button onclick="closePopup()">확인</button></div>`);
     } else if (result.status === "check" || result.sources?.length) {
@@ -1478,17 +1537,11 @@ async function factCheckPending() {
     } else {
       popup(`<div class="ai-check info"><span>출처 찾아보기</span><h2>관련 출처를 찾지 못했어요</h2><p>이 메시지의 출처나 작성 날짜를 직접 물어보거나, 조금 더 구체적인 검색어로 확인해 보세요.</p><small>Re:Tone은 이 메시지가 사실인지 거짓인지 판정하지 않아요.</small><button onclick="closePopup()">확인</button></div>`);
     }
-  } catch {
-    closePopup();
-    popup(`<div class="ai-check warn"><span>출처 찾아보기</span><h2>출처 확인을 불러오지 못했어요</h2><p>연결 상태를 확인한 뒤 다시 눌러주세요. 메시지는 전송되거나 바뀌지 않아요.</p><button onclick="closePopup()">확인</button></div>`);
-  } finally {
-    pendingFactCheckText = "";
+  } catch (error) {
+    if (!modal.isConnected) return;
+    modal.remove();
+    popup(`<div class="ai-check warn"><span>출처 찾아보기</span><h2>출처 확인을 불러오지 못했어요</h2><p>${error.status===422?"900자 이하의 텍스트 메시지에서 확인할 수 있어요.":"잠시 후 다시 눌러 주세요."}</p><button onclick="closePopup()">확인</button></div>`);
   }
-}
-// 다른 화면이나 이전 버전의 버튼에서도 같은 안전한 경로를 사용해요.
-function factCheck(text) {
-  pendingFactCheckText = String(text || "");
-  return factCheckPending();
 }
 function openAiHelp() {
   if (aiDetails()["감정 도움 AI"] === "끄기") return;
@@ -1625,6 +1678,7 @@ async function send(event) {
   const input = document.querySelector("#text"),
     body = input.value.trim();
   if (!body) return;
+  stopTyping();
   const skipAiOnce = rewrittenDraftBypass === body;
   rewrittenDraftBypass = "";
   pendingSend = { body, room: roomId, intent: selectedIntent, replyTo: replyingTo?.id || null };
@@ -1703,6 +1757,7 @@ function showCheckResult(result) {
   }
   if (pendingSend) pendingSend.result = result;
   const info = result.info || { level: "none", queries: [] };
+  const evidence = result.trigger && pendingSend?.body.includes(result.trigger) ? `<p>짚은 표현 · <q>${esc(result.trigger)}</q></p>` : "";
   const suggestion = result.suggestion
     ? `<p class="ai-suggestion">${esc(result.suggestion)}</p>`
     : "";
@@ -1713,7 +1768,7 @@ function showCheckResult(result) {
         ? ""
         : `<button class="quiet" onclick="rewritePending()">AI로 표현 바꾸기</button>`;
     popup(
-      `<div class="ai-check warn"><span>Re:Tone의 제안</span><h2>이렇게 들릴 수도 있어요</h2>${suggestion || "<p>상대에게는 공격적인 표현으로 들릴 수 있어요. 조금 다르게 말해볼까요?</p>"}<small>Re:Tone은 이 문장을 판단하거나 막지 않아요. 선택은 언제나 나에게 있어요.</small><div class="modal-actions">${rewrite}<button onclick="sendDespiteWarning()">그냥 보내기</button></div><button class="report-ai" onclick="reportAiResult()">AI 제안이 이상했나요? 문의하기</button></div>`,
+      `<div class="ai-check warn"><span>Re:Tone의 제안</span><h2>이렇게 들릴 수도 있어요</h2>${evidence}${suggestion || "<p>상대에게는 공격적인 표현으로 들릴 수 있어요. 조금 다르게 말해볼까요?</p>"}<small>Re:Tone은 이 문장을 판단하거나 막지 않아요. 선택은 언제나 나에게 있어요.</small><div class="modal-actions">${rewrite}<button onclick="sendDespiteWarning()">그냥 보내기</button></div><button class="report-ai" onclick="reportAiResult()">AI 제안이 이상했나요? 문의하기</button></div>`,
     );
     return;
   }
@@ -1806,7 +1861,18 @@ async function sendApproved() {
   }
   pendingSend = null;
   selectedIntent = "";
-  openRoom(next.room);
+  if (roomId === next.room) {
+    removePendingBubble();
+    const input = document.querySelector("#text");
+    if (input) {
+      input.disabled = false;
+      input.placeholder = "메시지를 입력하세요";
+      input.focus({preventScroll:true});
+    }
+    const intentButton = document.querySelector(".intent-button");
+    if (intentButton) intentButton.textContent="＋";
+    openRoom(next.room);
+  }
   if (aiDetails()["대화 흐름 요약"] !== "끄기")
     api(`/api/rooms/${next.room}/insight`, { method: "POST" })
       .then(async () => {
@@ -1988,10 +2054,19 @@ async function answerAgreement(id, action) {
 function newAppointment() {
   popup(appointmentEditorMarkup());
 }
-function appointmentEditorMarkup(item = null) {
+function scheduleFieldMarkup(field = {}) {
+  return `<div class="schedule-field"><input aria-label="항목 이름" maxlength="30" placeholder="예: 준비물" value="${escAttr(field.label)}"><input aria-label="항목 내용" maxlength="120" placeholder="예: 예매표 2장" value="${escAttr(field.value)}"><button type="button" class="quiet" aria-label="항목 삭제" onclick="this.parentElement.remove()">×</button></div>`;
+}
+function addScheduleField(button) {
+  const host = button.previousElementSibling;
+  if (host.children.length >= 12) return alert("세부 항목은 12개까지 추가할 수 있어요.");
+  host.insertAdjacentHTML("beforeend",scheduleFieldMarkup());
+  host.lastElementChild.firstElementChild.focus();
+}
+function appointmentEditorMarkup(item = null, sourceId = "") {
   const editing = Boolean(item);
   const date = item?.date ? String(item.date).replace(" ", "T").slice(0, 16) : "";
-  return `<div class="schedule-editor appointment-editor"><span>${editing ? "공동 약속 수정" : "함께할 약속"}</span><h2>${editing ? "서로 약속을 바꿔볼까요?" : "약속을 함께 정해요"}</h2><p>${editing ? "이 방의 참여자는 시간·장소·내용을 최신 계획으로 함께 바꿀 수 있어요." : "회의·보이스톡·만남 일정을 달력에서 골라 바로 공유해요."}</p><label>약속 이름<input id="appointmentTitle" value="${escAttr(item?.title || "")}" placeholder="예: 발표 방향 짧은 회의"></label><label>날짜와 시간<div class="quick-date"><button type="button" onclick="setQuickDate('appointmentDate',0)">오늘</button><button type="button" onclick="setQuickDate('appointmentDate',1)">내일</button></div><input id="appointmentDate" type="datetime-local" value="${escAttr(date)}"></label><label>장소 또는 온라인 링크<input id="appointmentPlace" value="${escAttr(item?.place === "장소 미정" ? "" : item?.place || "")}" placeholder="예: 교실, 디스코드, Google Meet"></label><button onclick="saveAppointment('${item?.id || ""}')">${editing ? "변경 사항 공유하기" : "약속 공유하기"}</button></div>`;
+  return `<div class="schedule-editor appointment-editor" data-client="${crypto.randomUUID()}" data-source="${escAttr(sourceId)}" data-room="${escAttr(roomId)}"><span>${editing ? "공동 약속 수정" : "함께할 약속"}</span><h2>${editing ? "서로 약속을 바꿔볼까요?" : "약속을 함께 정해요"}</h2><p>${editing ? "이 방의 참여자는 시간·장소·내용을 최신 계획으로 함께 바꿀 수 있어요." : "회의·보이스톡·만남 일정을 달력에서 골라 바로 공유해요."}</p><label>약속 이름<input id="appointmentTitle" value="${escAttr(item?.title || "")}" placeholder="예: 발표 방향 짧은 회의"></label><label>날짜와 시간<div class="quick-date"><button type="button" onclick="setQuickDate('appointmentDate',0)">오늘</button><button type="button" onclick="setQuickDate('appointmentDate',1)">내일</button></div><input id="appointmentDate" type="datetime-local" value="${escAttr(date)}"></label><label>장소 또는 온라인 링크<input id="appointmentPlace" value="${escAttr(item?.place === "장소 미정" ? "" : item?.place || "")}" placeholder="예: 교실, 디스코드, Google Meet"></label><div class="schedule-fields">${(item?.fields || []).map(scheduleFieldMarkup).join("")}</div><button type="button" class="quiet" onclick="addScheduleField(this)">＋ 세부 항목</button><button onclick="saveAppointment('${item?.id || ""}')">${editing ? "변경 사항 공유하기" : "약속 공유하기"}</button></div>`;
 }
 function editAppointment(id) {
   const item = (data?.appointments || []).find((appointment) => appointment.id === id);
@@ -2002,12 +2077,20 @@ async function saveAppointment(id = "") {
   const title = document.querySelector("#appointmentTitle").value.trim(),
     date = document.querySelector("#appointmentDate").value;
   if (!title || !date) return alert("약속 이름과 날짜·시간을 선택해주세요.");
+  const editor = document.querySelector(".appointment-editor");
+  if (!editor || editor.inert) return;
+  const fields = Array.from(editor.querySelectorAll(".schedule-field"), row=>({
+    label:row.children[0].value.trim(), value:row.children[1].value.trim()
+  })).filter(field=>field.label || field.value);
+  if (fields.some(field=>!field.label)) return alert("항목 이름을 입력해주세요.");
+  editor.inert = true;
   try {
     await api(id ? `/api/appointments/${id}` : "/api/appointments", {
       method: id ? "PATCH" : "POST",
       body: JSON.stringify({
         title,
-        ...(id ? {} : { room_id: roomId }),
+        fields,
+        ...(id ? {} : { room_id: editor.dataset.room || null, client_id: editor.dataset.client, source_message_id:editor.dataset.source || null }),
         date: date.replace("T", " "),
         place: document.querySelector("#appointmentPlace").value.trim(),
       }),
@@ -2017,6 +2100,7 @@ async function saveAppointment(id = "") {
     if (roomId) openRoom(roomId);
     else home();
   } catch {
+    editor.inert = false;
     alert("약속을 저장하지 못했어요. 날짜와 채팅방 참여 상태를 확인해주세요.");
   }
 }
@@ -2054,7 +2138,7 @@ function showAiPolicy() {
   );
 }
 function start() {
-  if (signedIn && (!signedInId || (!isAdmin && !sessionToken))) {
+  if (signedIn && !signedInId) {
     ["retone-v2-name", "retone-v2-user-id", "retone-v2-session", "retone-v2-ai-level"].forEach((key) => sessionStorage.removeItem(key));
     signedIn = "";
     signedInId = "";
@@ -2296,11 +2380,11 @@ async function completeSignup() {
       }),
     });
     const user = auth.user;
-    sessionToken = auth.session_token;
+    sessionToken = "";
     signedIn = user.name;
     signedInId = user.id;
     aiIntervention = user.ai_intervention || "standard";
-    sessionStorage.setItem("retone-v2-session", sessionToken);
+    sessionStorage.removeItem("retone-v2-session");
     sessionStorage.setItem("retone-v2-name", user.name);
     sessionStorage.setItem("retone-v2-user-id", user.id);
     sessionStorage.setItem("retone-v2-ai-level", aiIntervention);
@@ -2379,11 +2463,11 @@ async function finishAuth(mode) {
       },
     );
     const user = auth.user;
-    sessionToken = auth.session_token;
+    sessionToken = "";
     signedIn = user.name;
     signedInId = user.id;
     aiIntervention = user.ai_intervention || "standard";
-    sessionStorage.setItem("retone-v2-session", sessionToken);
+    sessionStorage.removeItem("retone-v2-session");
     sessionStorage.setItem("retone-v2-name", user.name);
     sessionStorage.setItem("retone-v2-user-id", user.id);
     sessionStorage.setItem("retone-v2-ai-level", aiIntervention);
@@ -2392,7 +2476,8 @@ async function finishAuth(mode) {
       consent || aiIntervention === "off" ? "yes" : "",
     );
     home();
-  } catch {
+  } catch (error) {
+    if (error.status === 429) return alert("로그인에 5번 실패했어요. 15분 뒤 다시 시도해 주세요.");
     alert(
       mode === "signup"
         ? "이미 가입된 전화번호이거나 입력값을 확인해 주세요."
@@ -2400,4 +2485,28 @@ async function finishAuth(mode) {
     );
   }
 }
-start();
+async function restoreLogin() {
+  if (isAdmin) return start();
+  try {
+    const headers = sessionToken ? {Authorization: `Bearer ${sessionToken}`} : {};
+    const user = await api("/api/auth/me", {headers});
+    signedIn = user.name;
+    signedInId = user.id;
+    aiIntervention = user.ai_intervention;
+    sessionStorage.setItem("retone-v2-name",user.name);
+    sessionStorage.setItem("retone-v2-user-id",user.id);
+    sessionStorage.setItem("retone-v2-ai-level",aiIntervention);
+  } catch (err) {
+    if (err.status !== 401) {
+      app.innerHTML = '<section class="auth-card"><p>로그인 상태를 확인하지 못했어요.</p><button onclick="restoreLogin()">다시 연결</button></section>';
+      return;
+    }
+    signedIn = signedInId = "";
+    sessionStorage.removeItem("retone-v2-name");
+    sessionStorage.removeItem("retone-v2-user-id");
+  }
+  sessionToken = "";
+  sessionStorage.removeItem("retone-v2-session");
+  start();
+}
+restoreLogin();

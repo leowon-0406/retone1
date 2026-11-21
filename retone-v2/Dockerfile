@@ -4,6 +4,7 @@ WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 RUN mkdir src && echo "fn main() {}" > src/main.rs && cargo build --release && rm -rf src
 
+COPY migrations ./migrations
 COPY src ./src
 COPY public ./public
 RUN touch src/main.rs && cargo build --release

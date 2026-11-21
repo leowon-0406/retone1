@@ -155,3 +155,11 @@ ALTER TABLE retone_v2.agreements ADD COLUMN IF NOT EXISTS assignee_name TEXT NOT
 ALTER TABLE retone_v2.agreements ADD COLUMN IF NOT EXISTS deadline_text TEXT NOT NULL DEFAULT '미정';
 ALTER TABLE retone_v2.agreements ADD COLUMN IF NOT EXISTS confirmations INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE retone_v2.agreements ADD COLUMN IF NOT EXISTS revisions INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE retone_v2.room_members ADD COLUMN IF NOT EXISTS typing_until TIMESTAMPTZ;
+ALTER TABLE retone_v2.users ADD COLUMN IF NOT EXISTS login_failures INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE retone_v2.users ADD COLUMN IF NOT EXISTS login_blocked_until TIMESTAMPTZ;
+ALTER TABLE retone_v2.appointments ADD COLUMN IF NOT EXISTS fields JSONB NOT NULL DEFAULT '[]';
+ALTER TABLE retone_v2.appointments ADD COLUMN IF NOT EXISTS source_message_id UUID REFERENCES retone_v2.messages(id) ON DELETE SET NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS appointment_source_unique ON retone_v2.appointments(source_message_id);
+ALTER TABLE retone_v2.messages ADD COLUMN IF NOT EXISTS fact_result JSONB;
+ALTER TABLE retone_v2.ai_cache ADD COLUMN IF NOT EXISTS warning_trigger TEXT;
