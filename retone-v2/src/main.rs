@@ -150,6 +150,7 @@ struct Agreement {
     deadline: String,
     confirmations: u8,
     revisions: u8,
+    revision_note: Option<String>,
     source_message_id: Option<Uuid>,
 }
 #[derive(Clone, Serialize, Deserialize)]
@@ -250,6 +251,10 @@ struct NewAgreement {
     assignee: String,
     deadline: String,
     source_message_id: Option<Uuid>,
+}
+#[derive(Deserialize)]
+struct AgreementUpdate {
+    suggestion: Option<String>,
 }
 #[derive(Deserialize)]
 struct NewAppointment {
@@ -2873,6 +2878,7 @@ async fn create_agreement(
         },
         confirmations: 0,
         revisions: 0,
+        revision_note: None,
         source_message_id: input.source_message_id,
     };
     sqlx::query("INSERT INTO retone_v2.agreements(id,room_id,task,assignee_name,deadline_text,source_message_id) VALUES($1,$2,$3,$4,$5,$6)")
@@ -2892,6 +2898,7 @@ async fn update_agreement(
     State(app): State<App>,
     Path((id, action)): Path<(String, String)>,
     headers: HeaderMap,
+    Json(input): Json<AgreementUpdate>,
 ) -> Result<Json<Agreement>, StatusCode> {
     let user_id = require_user(&app, &headers).await?;
     let agreement_id = Uuid::parse_str(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
@@ -2902,21 +2909,28 @@ async fn update_agreement(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
         .ok_or(StatusCode::NOT_FOUND)?;
     require_room_member(&app, room_id, user_id).await?;
-    let query = match action.as_str() {
-        "confirm" => {
-            "UPDATE retone_v2.agreements SET confirmations=confirmations+1 WHERE id=$1 RETURNING id,room_id,task,assignee_name,deadline_text,confirmations,revisions,source_message_id"
-        }
-        "revise" => {
-            "UPDATE retone_v2.agreements SET revisions=revisions+1 WHERE id=$1 RETURNING id,room_id,task,assignee_name,deadline_text,confirmations,revisions,source_message_id"
-        }
-        _ => return Err(StatusCode::BAD_REQUEST),
-    };
-    let row =
-        sqlx::query_as::<_, (Uuid, Uuid, String, String, String, i32, i32, Option<Uuid>)>(query)
-            .bind(agreement_id)
-            .fetch_one(&app.db)
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if !matches!(action.as_str(), "confirm" | "revise") {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let suggestion = input
+        .suggestion
+        .unwrap_or_default()
+        .trim()
+        .chars()
+        .take(300)
+        .collect::<String>();
+    if action == "revise" && suggestion.is_empty() {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let row = sqlx::query_as::<_, (Uuid, Uuid, String, String, String, i32, i32, Option<String>, Option<Uuid>)>(
+        "UPDATE retone_v2.agreements SET confirmations=confirmations+CASE WHEN $2='confirm' THEN 1 ELSE 0 END,revisions=revisions+CASE WHEN $2='revise' THEN 1 ELSE 0 END,revision_note=CASE WHEN $2='revise' THEN $3 ELSE revision_note END WHERE id=$1 RETURNING id,room_id,task,assignee_name,deadline_text,confirmations,revisions,revision_note,source_message_id",
+    )
+    .bind(agreement_id)
+    .bind(&action)
+    .bind(&suggestion)
+    .fetch_one(&app.db)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     let agreement = Agreement {
         id: row.0.to_string(),
         room_id: row.1.to_string(),
@@ -2925,7 +2939,8 @@ async fn update_agreement(
         deadline: row.4,
         confirmations: row.5.clamp(0, u8::MAX as i32) as u8,
         revisions: row.6.clamp(0, u8::MAX as i32) as u8,
-        source_message_id: row.7,
+        revision_note: row.7,
+        source_message_id: row.8,
     };
     let mut data = app.data.write().await;
     if let Some(item) = data.agreements.iter_mut().find(|item| item.id == id) {
@@ -3291,8 +3306,8 @@ async fn restore_data(db: &PgPool) -> Data {
         .fetch_all(db).await.unwrap_or_default().into_iter().map(|(id,name,members,is_group,has_messages,last,updated)| Room { id:id.to_string(),name,members:members.min(255) as u8,is_group,has_messages,avatar_url:None,unread:0,pinned:false,last,updated }).collect();
     let messages = sqlx::query_as::<_, (Uuid, Uuid, Option<String>, Option<Uuid>, String, i64, Option<String>, Option<String>, Option<Uuid>, Option<String>, Option<String>, Option<String>, bool, Option<String>, Option<String>)>("SELECT m.id,m.room_id,u.name,m.sender_id,m.body,FLOOR(EXTRACT(EPOCH FROM m.created_at)*1000)::BIGINT,m.intent,m.image_url,m.reply_to,m.ai_verdict,m.ai_suggestion,m.ai_trigger,m.alignment_hint,m.alignment_kind,m.alignment_summary FROM retone_v2.messages m LEFT JOIN retone_v2.users u ON u.id=m.sender_id WHERE m.deleted_at IS NULL ORDER BY m.created_at")
         .fetch_all(db).await.unwrap_or_default().into_iter().map(|(id,room_id,sender,sender_id,body,created,intent,image_url,reply_to,ai_verdict,ai_suggestion,ai_trigger,alignment_hint,alignment_kind,alignment_summary)| { Message { id:id.to_string(),room_id:room_id.to_string(),sender:sender.unwrap_or_else(|| "알 수 없는 사용자".into()),sender_id:sender_id.map(|value| value.to_string()),mine:false,body,created,unread:0,intent,alignment_hint,alignment_kind,alignment_summary,image_url,reply_to:reply_to.map(|value| value.to_string()),ai_verdict,ai_suggestion,ai_trigger } }).collect();
-    let agreements = sqlx::query_as::<_, (Uuid, Uuid, String, String, String, i32, i32, Option<Uuid>)>("SELECT id,room_id,task,assignee_name,deadline_text,confirmations,revisions,source_message_id FROM retone_v2.agreements WHERE completed_at IS NULL")
-        .fetch_all(db).await.unwrap_or_default().into_iter().map(|(id,room_id,task,assignee,deadline,confirmations,revisions,source_message_id)| Agreement { id:id.to_string(), room_id:room_id.to_string(), task, assignee, deadline, confirmations:confirmations.clamp(0,u8::MAX as i32) as u8, revisions:revisions.clamp(0,u8::MAX as i32) as u8, source_message_id }).collect();
+    let agreements = sqlx::query_as::<_, (Uuid, Uuid, String, String, String, i32, i32, Option<String>, Option<Uuid>)>("SELECT id,room_id,task,assignee_name,deadline_text,confirmations,revisions,revision_note,source_message_id FROM retone_v2.agreements WHERE completed_at IS NULL")
+        .fetch_all(db).await.unwrap_or_default().into_iter().map(|(id,room_id,task,assignee,deadline,confirmations,revisions,revision_note,source_message_id)| Agreement { id:id.to_string(), room_id:room_id.to_string(), task, assignee, deadline, confirmations:confirmations.clamp(0,u8::MAX as i32) as u8, revisions:revisions.clamp(0,u8::MAX as i32) as u8, revision_note, source_message_id }).collect();
     let appointments = sqlx::query_as::<_, (Uuid, Option<Uuid>, String, String, String, Uuid, sqlx::types::Json<Vec<ScheduleField>>, Option<Uuid>, Option<sqlx::types::Json<AppointmentChange>>)>("SELECT id,room_id,title,to_char(starts_at,'YYYY-MM-DD HH24:MI'),COALESCE(place,''),created_by,fields,source_message_id,pending_change FROM retone_v2.appointments ORDER BY starts_at")
         .fetch_all(db).await.unwrap_or_default().into_iter().map(|(id,room_id,title,date,place,owner_id,fields,source_message_id,pending_change)| Appointment { id:id.to_string(), room_id:room_id.map(|value| value.to_string()).unwrap_or_default(), title, date, place, fields:fields.0, source_message_id, owner_id:owner_id.to_string(), pending_change:pending_change.map(|value|value.0) }).collect();
     let reflections = sqlx::query_as::<_, (Uuid, Uuid, String, String, String, Uuid)>(

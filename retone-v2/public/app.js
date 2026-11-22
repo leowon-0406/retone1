@@ -394,7 +394,7 @@ async function openRoom(id) {
   app.innerHTML = `<main class="layout">${rail()}<section class="chat"><header class="head"><button class="back-button" title="채팅 목록으로" aria-label="채팅 목록으로" onclick="home()"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14.5 5-7 7 7 7M8 12h9"/></svg></button><span class="room-head-avatar avatar">${avatarContent(room.name, room.avatar_url)}</span><div class="room-title"><h1>${esc(room.name)}</h1>${room.members >= 3 ? `<span class="room-participants">참여자 ${room.members}명</span>` : ""}<span class="room-slot" id="pulse-slot">${conversationPulse()}</span></div><div class="chat-actions"><button class="chat-primary-action" title="친구 초대" aria-label="친구 초대" onclick="inviteFriends()">＋</button><button class="chat-primary-action" title="AI 도움받기" aria-label="AI 도움받기" onclick="openAiHelp()">✦</button><button class="chat-secondary-action" title="약속 잡기" aria-label="약속 잡기" onclick="newAppointment()">◷</button><button class="chat-secondary-action" title="공동 확인" aria-label="공동 확인" onclick="newAgreement()">✓</button><button class="chat-secondary-action" title="회고 카드" aria-label="회고 카드" onclick="newReflection()">↻</button><button class="chat-secondary-action" title="채팅방 설정" aria-label="채팅방 설정" onclick="roomSettings()">⚙</button><button class="chat-more-action" title="더 보기" aria-label="더 보기" onclick="openChatMore()">⋯</button></div></header><section class="messages" id="messages" data-room="${escAttr(id)}">${messages.map(view).join("")}<template id="message-end"></template><div id="typing-status" class="typing-bubble" role="status" aria-live="polite"></div><div class="room-slot" id="alignment-slot">${alignmentCard(messages)}</div><div class="room-slot" id="appointments-slot">${appointments.map(viewAppointment).join("")}</div><div class="room-slot" id="reflections-slot">${reflections.map(viewReflection).join("")}</div><div class="room-slot" id="agreements-slot">${agreementMarkup(id)}</div></section><form class="sendbar" onsubmit="send(event)"><span id="reply-slot" class="room-slot">${replyComposer()}</span><button type="button" class="intent-button" title="의도 표시" onclick="chooseIntent()">${selectedIntent ? "◎" : "＋"}</button><label class="image-upload" title="사진 보내기" aria-label="사진 보내기"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="3"/><circle cx="9" cy="10" r="1.5"/><path d="m5.5 17 4.5-4 3.2 2.7 2.4-2 2.9 3.3"/></svg><input hidden type="file" accept="image/*" onchange="sendImage(this)"></label><input id="text" placeholder="메시지를 입력하세요" autocomplete="off" oninput="onChatTyping(this.value)" onblur="stopTyping()"><span id="ai-status" class="ai-status"></span><button>↑</button></form></section></main>`;
   document.querySelector(".chat > .head")?.insertAdjacentHTML(
     "afterend",
-    `<div class="appointment-notice-slot" id="appointment-notice-slot">${appointmentNotice(appointments)}</div>`,
+    `<div class="appointment-notice-slot" id="appointment-notice-slot">${agreementNotice(id)}${appointmentNotice(appointments)}</div>`,
   );
   const quickAiButton = document.querySelector(".intent-button");
   if (quickAiButton) {
@@ -565,6 +565,18 @@ function agreementMarkup(id) {
       "",
     );
 }
+function agreementNotice(id) {
+  const item = [...(data.agreements || [])]
+    .reverse()
+    .find((agreement) => agreement.room_id === id && Number(agreement.confirmations || 0) > 0);
+  if (!item) return "";
+  return `<button class="agreement-notice" onclick="openAgreementDetails('${item.id}')"><span class="appointment-notice-icon">✓</span><span><small>공동 확인 공지</small><b>${esc(item.task)}</b><em>담당 ${esc(item.assignee)} · ${esc(item.deadline)}</em></span><i>›</i></button>`;
+}
+function openAgreementDetails(id) {
+  const item = (data.agreements || []).find((agreement) => agreement.id === id);
+  if (!item) return alert("공동 확인을 찾지 못했어요.");
+  popup(`<div class="appointment-detail agreement-detail"><span>✓ 공동 확인 공지</span><h2>${esc(item.task)}</h2><p><strong>담당자</strong><br>${esc(item.assignee)}</p><p><strong>마감</strong><br>${esc(item.deadline)}</p><p><strong>진행</strong><br>확인 ${item.confirmations} · 보완 요청 ${item.revisions}</p>${item.revision_note ? `<div class="agreement-revision-note"><b>최근 보완 제안</b><p>${esc(item.revision_note)}</p></div>` : ""}<div class="modal-actions"><button class="quiet" onclick="openAgreementRevision('${item.id}')">보완 제안</button><button onclick="closePopup()">확인</button></div></div>`);
+}
 function syncRoomExtras(id, messages) {
   updateFragment("#agreements-slot",agreementMarkup(id));
   updateFragment("#reflections-slot",(data.reflections || []).filter(a=>a.room_id===id).map(viewReflection).join(""));
@@ -574,7 +586,7 @@ function syncRoomExtras(id, messages) {
     if (header && room.members >= 3) header.textContent = `참여자 ${room.members}명`;
   }
   updateFragment("#alignment-slot", alignmentCard(messages));
-  updateFragment("#appointment-notice-slot", appointmentNotice((data.appointments || []).filter(a=>a.room_id===id)));
+  updateFragment("#appointment-notice-slot", agreementNotice(id) + appointmentNotice((data.appointments || []).filter(a=>a.room_id===id)));
   updateFragment("#appointments-slot", "");
   updateFragment("#pulse-slot", conversationPulse());
   updateFragment("#reply-slot", replyComposer());
@@ -2383,7 +2395,19 @@ async function saveAgreement() {
     alert("공동 확인을 만들지 못했어요. 이 방의 참여 상태와 연결을 확인해주세요.");
   }
 }
-async function answerAgreement(id, action, button) {
+function openAgreementRevision(id) {
+  const item = (data.agreements || []).find((agreement) => agreement.id === id);
+  if (!item) return alert("공동 확인을 찾지 못했어요.");
+  popup(`<div class="schedule-editor agreement-revision-editor"><span>보완 제안</span><h2>어떤 부분을 바꾸면 좋을까요?</h2><p>횟수만 남기지 않고, 구성원이 확인할 수 있도록 제안 내용을 함께 공유해요.</p><textarea id="agreement-revision-text" maxlength="300" placeholder="예: 마감 시간을 오후 7시에서 8시로 바꾸면 좋겠어요.">${esc(item.revision_note || "")}</textarea><div class="modal-actions"><button class="quiet" onclick="closePopup()">취소</button><button onclick="submitAgreementRevision('${id}')">제안 공유</button></div></div>`);
+  document.querySelector("#agreement-revision-text")?.focus();
+}
+function submitAgreementRevision(id) {
+  const suggestion = document.querySelector("#agreement-revision-text")?.value.trim();
+  if (!suggestion) return alert("보완할 내용을 적어주세요.");
+  answerAgreement(id, "revise", document.querySelector(".agreement-revision-editor .modal-actions button:last-child"), suggestion);
+}
+async function answerAgreement(id, action, button, suggestion = "") {
+  if (action === "revise" && !suggestion) return openAgreementRevision(id);
   if (button?.disabled) return;
   const originalLabel = button?.textContent || "";
   if (button) {
@@ -2391,17 +2415,22 @@ async function answerAgreement(id, action, button) {
     button.textContent = "반영 중…";
   }
   try {
-    const updated = await api(`/api/agreements/${id}/${action}`, { method: "POST" });
+    const updated = await api(`/api/agreements/${id}/${action}`, {
+      method: "POST",
+      body: JSON.stringify({ suggestion: suggestion || null }),
+    });
     const index = (data.agreements || []).findIndex((item) => item.id === id);
     if (index >= 0) data.agreements[index] = updated;
     else data.agreements = [...(data.agreements || []), updated];
     updateFragment("#agreements-slot", agreementMarkup(roomId));
+    updateFragment("#appointment-notice-slot", agreementNotice(roomId) + appointmentNotice((data.appointments || []).filter((item) => item.room_id === roomId)));
     const card = document.querySelector(`[data-agreement-id="${CSS.escape(id)}"]`);
     const feedback = card?.querySelector(".agreement-feedback");
     if (feedback) {
       feedback.textContent = action === "confirm" ? "확인이 반영됐어요." : "보완 요청이 반영됐어요.";
       feedback.classList.add("show");
     }
+    if (action === "revise") closePopup();
     setAiStatus(action === "confirm" ? "공동 확인에 반영했어요" : "보완 요청을 남겼어요");
   } catch {
     if (button) {

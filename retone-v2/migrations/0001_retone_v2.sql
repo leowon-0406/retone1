@@ -155,6 +155,7 @@ ALTER TABLE retone_v2.agreements ADD COLUMN IF NOT EXISTS assignee_name TEXT NOT
 ALTER TABLE retone_v2.agreements ADD COLUMN IF NOT EXISTS deadline_text TEXT NOT NULL DEFAULT '미정';
 ALTER TABLE retone_v2.agreements ADD COLUMN IF NOT EXISTS confirmations INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE retone_v2.agreements ADD COLUMN IF NOT EXISTS revisions INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE retone_v2.agreements ADD COLUMN IF NOT EXISTS revision_note TEXT;
 ALTER TABLE retone_v2.room_members ADD COLUMN IF NOT EXISTS typing_until TIMESTAMPTZ;
 ALTER TABLE retone_v2.users ADD COLUMN IF NOT EXISTS login_failures INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE retone_v2.users ADD COLUMN IF NOT EXISTS login_blocked_until TIMESTAMPTZ;

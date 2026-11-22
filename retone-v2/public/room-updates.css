@@ -40,7 +40,7 @@
 /* Kakao-style appointment notice: always visible between the room header and messages. */
 .chat { grid-template-rows: 76px auto minmax(0, 1fr) auto !important; }
 .appointment-notice-slot:empty { display:block; min-height:0; padding:0; border:0; }
-.appointment-notice-slot { z-index: 5; padding: 8px max(34px, calc((100% - 850px)/2)); border-bottom: 1px solid #e8dfd0; background: #fffaf1; }
+.appointment-notice-slot { z-index: 5; display:grid; gap:6px; padding: 8px max(34px, calc((100% - 850px)/2)); border-bottom: 1px solid #e8dfd0; background: #fffaf1; }
 .appointment-notice { display:grid; grid-template-columns:34px minmax(0,1fr) 20px; align-items:center; width:100%; gap:10px; padding:9px 12px; border:1px solid #e1dfb0; border-radius:14px; background:linear-gradient(135deg,#fffdf1,#f6f7d8); color:#424637; text-align:left; box-shadow:0 5px 14px #6c622514; }
 .appointment-notice-icon { display:grid; width:32px; height:32px; place-items:center; border-radius:11px; background:#e6eb91; color:#5f6728; font-size:16px; }
 .appointment-notice>span:nth-child(2) { display:grid; min-width:0; gap:1px; }
@@ -49,6 +49,7 @@
 .appointment-notice b { font-size:12px; }
 .appointment-notice em { color:#858578; font-size:10px; font-style:normal; }
 .appointment-notice>i { color:#8b903a; font-size:24px; font-style:normal; }
+.agreement-notice{display:grid;grid-template-columns:34px minmax(0,1fr) 20px;align-items:center;width:100%;gap:10px;padding:9px 12px;border:1px solid #dfe3a0;border-radius:14px;background:linear-gradient(135deg,#fafcdf,#f2f5c7);color:#414633;text-align:left;box-shadow:0 5px 14px #6c762214}.agreement-notice>span:nth-child(2){display:grid;min-width:0;gap:1px}.agreement-notice small{color:#838c2e;font-size:9px;font-weight:900}.agreement-notice b,.agreement-notice em{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.agreement-notice b{font-size:12px}.agreement-notice em{color:#7e826d;font-size:10px;font-style:normal}.agreement-notice>i{color:#899331;font-size:24px;font-style:normal}.agreement-revision-note{margin:10px 0;padding:11px;border:1px solid #e1e5a8;border-radius:12px;background:#f8f9e3}.agreement-revision-note>b{color:#737d28;font-size:11px}.agreement-revision-note>p{margin:5px 0 0!important;color:#555c43!important}.agreement-revision-editor textarea{min-height:130px}.dark .agreement-notice{border-color:#5d6539;background:linear-gradient(135deg,#34392d,#3d432e);color:#f1f3df}.dark .agreement-notice small{color:#dbe78d}.dark .agreement-notice em{color:#c7cbb2}.dark .agreement-revision-note{border-color:#596139;background:#34392d}.dark .agreement-revision-note>b{color:#e1eb94}.dark .agreement-revision-note>p{color:#eef0dd!important}
 .appointment-notice.past { grid-template-columns:minmax(0,1fr) auto; border-color:#e7d5b9; background:linear-gradient(135deg,#fff9ed,#f6eddd); }
 .appointment-notice-body { display:grid; grid-template-columns:34px minmax(0,1fr) 20px; align-items:center; min-width:0; gap:10px; padding:0; background:transparent!important; color:inherit!important; text-align:left; box-shadow:none!important; }
 .appointment-notice-body>span:nth-child(2) { display:grid; min-width:0; gap:1px; }
