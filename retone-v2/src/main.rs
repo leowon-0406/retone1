@@ -26,7 +26,21 @@ pub(crate) fn openai_fast_model() -> String {
 }
 
 pub(crate) fn openai_quality_model() -> String {
-    env::var("OPENAI_QUALITY_MODEL").unwrap_or_else(|_| "gpt-6.1-terra".into())
+    // Keep the app in budget mode by default. Premium analysis is opt-in so an
+    // old OPENAI_QUALITY_MODEL value cannot silently make every check expensive.
+    let premium_enabled = env::var("OPENAI_ENABLE_PREMIUM_MODEL")
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false);
+    if premium_enabled {
+        env::var("OPENAI_QUALITY_MODEL").unwrap_or_else(|_| openai_fast_model())
+    } else {
+        openai_fast_model()
+    }
 }
 
 pub(crate) async fn openai_response_json(
