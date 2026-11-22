@@ -2998,14 +2998,18 @@ async fn update_appointment(
         return Err(StatusCode::BAD_REQUEST);
     }
     let user_id = require_user(&app, &headers).await?;
-    let (room_id, created_by) = sqlx::query_as::<_, (Option<Uuid>, Uuid)>(
-        "SELECT room_id,created_by FROM retone_v2.appointments WHERE id=$1",
-    )
-    .bind(id)
-    .fetch_optional(&app.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-    .ok_or(StatusCode::NOT_FOUND)?;
+    let (room_id, created_by, pending_change) =
+        sqlx::query_as::<_, (Option<Uuid>, Uuid, Option<serde_json::Value>)>(
+            "SELECT room_id,created_by,pending_change FROM retone_v2.appointments WHERE id=$1",
+        )
+        .bind(id)
+        .fetch_optional(&app.db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    if pending_change.is_some() {
+        return Err(StatusCode::CONFLICT);
+    }
     if let Some(room_id) = room_id {
         require_room_member(&app, room_id, user_id).await?;
     } else if created_by != user_id {

@@ -1698,7 +1698,7 @@ function viewAppointment(item) {
   const ownerAction = item.owner_id === signedInId ? `<button class="quiet danger" onclick="confirmDeleteAppointment('${item.id}')">모두에게 삭제</button>` : "";
   const alreadyApproved = item.pending_change?.approvals?.includes(signedInId);
   const pending = item.pending_change ? `<p class="appointment-pending"><strong>변경 동의 대기</strong> ${item.pending_change.approvals.length}/${item.pending_change.required}</p>${alreadyApproved?`<small class="appointment-waiting">내 동의 완료 · 다른 구성원을 기다리는 중</small>`:`<button onclick="approveAppointmentChange('${item.id}')">변경안 동의</button>`}` : "";
-  return `<article class="appointment-card"><span>◷ 함께 정한 약속</span><b>${esc(item.title)}</b><p><strong>${esc(item.date)}</strong>${item.place ? ` · ${esc(item.place)}` : ""}</p>${(item.fields||[]).map(f=>`<p><strong>${esc(f.label)}</strong> · ${esc(f.value)}</p>`).join("")}${pending}<div class="appointment-actions"><button class="quiet" onclick="editAppointment('${item.id}')">수정 제안</button><button class="quiet" onclick="hideAppointment('${item.id}')">내 화면에서 숨기기</button>${ownerAction}</div></article>`;
+  return `<article class="appointment-card"><span>◷ 함께 정한 약속</span><b>${esc(item.title)}</b><p><strong>${esc(item.date)}</strong>${item.place ? ` · ${esc(item.place)}` : ""}</p>${(item.fields||[]).map(f=>`<p><strong>${esc(f.label)}</strong> · ${esc(f.value)}</p>`).join("")}${pending}<div class="appointment-actions">${item.pending_change?"":`<button class="quiet" onclick="editAppointment('${item.id}')">수정 제안</button>`}<button class="quiet" onclick="hideAppointment('${item.id}')">내 화면에서 숨기기</button>${ownerAction}</div></article>`;
 }
 
 function visibleAppointments(items) {
@@ -1716,7 +1716,7 @@ function openAppointmentDetails(id) {
   const item=(data.appointments||[]).find((appointment)=>appointment.id===id);
   if (!item) return alert("약속을 찾지 못했어요.");
   const canApprove=item.pending_change && !item.pending_change.approvals?.includes(signedInId);
-  popup(`<div class="appointment-detail"><span>◷ 약속 공지</span><h2>${esc(item.title)}</h2><p><strong>날짜와 시간</strong><br>${esc(item.date)}</p><p><strong>장소</strong><br>${esc(item.place||"장소 미정")}</p>${(item.fields||[]).map(field=>`<p><strong>${esc(field.label)}</strong><br>${esc(field.value)}</p>`).join("")}${item.pending_change?`<div class="appointment-change-preview"><b>수정 제안이 있어요</b><span>${esc(item.pending_change.title)} · ${esc(item.pending_change.date)}</span><small>동의 ${item.pending_change.approvals.length}/${item.pending_change.required}</small></div>`:""}<div class="modal-actions"><button class="quiet" onclick="closePopup();hideAppointment('${item.id}')">내 화면에서 숨기기</button><button onclick="closePopup();editAppointment('${item.id}')">수정 제안</button>${canApprove?`<button onclick="approveAppointmentChange('${item.id}')">변경안 동의</button>`:""}</div></div>`);
+  popup(`<div class="appointment-detail"><span>◷ 약속 공지</span><h2>${esc(item.title)}</h2><p><strong>날짜와 시간</strong><br>${esc(item.date)}</p><p><strong>장소</strong><br>${esc(item.place||"장소 미정")}</p>${(item.fields||[]).map(field=>`<p><strong>${esc(field.label)}</strong><br>${esc(field.value)}</p>`).join("")}${item.pending_change?`<div class="appointment-change-preview"><b>수정 제안이 있어요</b><span>${esc(item.pending_change.title)} · ${esc(item.pending_change.date)}</span><small>동의 ${item.pending_change.approvals.length}/${item.pending_change.required}</small></div>`:""}<div class="modal-actions"><button class="quiet" onclick="closePopup();hideAppointment('${item.id}')">내 화면에서 숨기기</button>${item.pending_change?"":`<button onclick="closePopup();editAppointment('${item.id}')">수정 제안</button>`}${canApprove?`<button onclick="approveAppointmentChange('${item.id}')">변경안 동의</button>`:""}</div></div>`);
 }
 function hideAppointment(id) {
   localStorage.setItem(`retone-appointment-hidden-${signedInId}-${id}`,"1");
@@ -2455,7 +2455,9 @@ async function saveAppointment(id = "") {
     else home();
   } catch (error) {
     editor.inert = false;
-    const message = error.status === 403
+    const message = error.status === 409
+      ? "이미 다른 수정 제안이 동의를 기다리고 있어요. 먼저 그 제안을 마무리해주세요."
+      : error.status === 403
       ? "이 채팅방의 참여자만 약속을 수정할 수 있어요."
       : error.status === 400
         ? "약속 이름, 날짜와 세부 항목을 다시 확인해주세요."
