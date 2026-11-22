@@ -44,12 +44,12 @@ async function main() {
     const messengerTyping=document.querySelectorAll('#typing-status .typing-dots i').length===3 && document.querySelector('#typing-status')?.textContent.includes('친구님이 입력 중');
     const schedule = appointmentEditorMarkup({id:'plan',date:'2026-11-22 18:00',place:'회의실',title:'회의',fields:[{label:'준비물',value:'발표 자료'}]});
     const scheduleFields = schedule.includes('준비물') && schedule.includes('발표 자료') && schedule.includes('＋ 세부 항목');
-    const scheduleCard = viewAppointment({id:'plan',date:'2026-11-22 18:00',place:'회의실',title:'회의',fields:[]});
-    const scheduleActions = scheduleCard.includes('함께 수정') && scheduleCard.includes('일정 삭제');
+    const scheduleCard = viewAppointment({id:'plan',owner_id:'me',date:'2026-11-22 18:00',place:'회의실',title:'회의',fields:[]});
+    const scheduleActions = scheduleCard.includes('수정 제안') && scheduleCard.includes('모두에게 삭제');
     const localScheduleTime = localDateTimeValue(new Date(2026,10,22,18,5)) === '2026-11-22T18:05';
     const loginPhoneFormat = formatPhoneNumber('01012345678') === '010-1234-5678';
     data.appointments=[];
-    const planAlignment = alignmentCard([{id:'align-1',body:'발표 자료는 내가 준비할게',alignment_hint:true,alignment_kind:'plan',alignment_summary:'발표 자료 준비 역할 정하기'}]);
+    const planAlignment = alignmentCard([{id:'align-1',body:'발표 자료는 내가 준비할게',mine:true,alignment_hint:true,alignment_kind:'plan',alignment_summary:'발표 자료 준비 역할 정하기'}]);
     const planAlignmentVisible = planAlignment.includes('말맞춤 제안 · 계획') && planAlignment.includes('발표 자료 준비 역할 정하기');
     let aiRequestBody=null;
     api=async(url,options)=>{if(url==='/api/ai/check'){aiRequestBody=JSON.parse(options.body);return {verdict:'PASS',source:'quick',info:{level:'none'}}} throw new Error('unexpected')};
@@ -81,7 +81,10 @@ async function main() {
     const aiPanelStaysOpen=advanced.open && group.open && choice.classList.contains('selected');
     const avatarMarkup=avatarContent('민서','https://example.test/avatar.jpg');
     const roomAvatarVisible=avatarMarkup.includes('<img') && avatarMarkup.includes('avatar.jpg');
-    return {draftKept,oldKept,newAdded,writes,scheduleFields,scheduleActions,localScheduleTime,loginPhoneFormat,planAlignmentVisible,friendCodeVisible,qrVisible,qrCodeParsed,exactNameSearchVisible,strongerAiDefaults,aiPanelStaysOpen,quickBeforeSend,manualFlow,settingsSelected,newestRoomFirst,messengerTyping,roomAvatarVisible};
+    const notice=appointmentNotice([{id:'plan',title:'회의',date:'2026-11-22 18:00',place:'회의실',fields:[]}]);
+    const appointmentNoticeVisible=notice.includes('약속 공지') && notice.includes('openAppointmentDetails');
+    const otherAlignmentHidden=alignmentCard([{id:'align-other',body:'내일 만나자',mine:false,alignment_hint:true,alignment_kind:'appointment'}])==='';
+    return {draftKept,oldKept,newAdded,writes,scheduleFields,scheduleActions,localScheduleTime,loginPhoneFormat,planAlignmentVisible,friendCodeVisible,qrVisible,qrCodeParsed,exactNameSearchVisible,strongerAiDefaults,aiPanelStaysOpen,quickBeforeSend,manualFlow,settingsSelected,newestRoomFirst,messengerTyping,roomAvatarVisible,appointmentNoticeVisible,otherAlignmentHidden};
   })()`, context);
   assert.equal(result.draftKept, true);
   assert.equal(result.oldKept, true);
@@ -105,6 +108,8 @@ async function main() {
   assert.equal(result.newestRoomFirst, true);
   assert.equal(result.messengerTyping, true);
   assert.equal(result.roomAvatarVisible, true);
+  assert.equal(result.appointmentNoticeVisible, true);
+  assert.equal(result.otherAlignmentHidden, true);
   assert.ok((source.match(/id="auth-phone" inputmode="numeric" maxlength="13" autocomplete="tel" oninput="formatPhoneInput\(this\)" placeholder="010-1234-5678"/g) || []).length >= 2);
   assert.match(roomCss, /#reply-slot:not\(:empty\).*grid-column:\s*1\s*\/\s*-1/s);
   assert.match(roomCss, /@keyframes messengerTyping/);

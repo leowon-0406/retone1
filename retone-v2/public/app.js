@@ -9,6 +9,7 @@ let isAdmin = sessionStorage.getItem("retone-v2-admin") === "yes";
 let aiIntervention = sessionStorage.getItem("retone-v2-ai-level") || "standard";
 let pendingSend = null;
 let replyingTo = null;
+let pendingRoomInvitees = [];
 let messagePressTimer = null;
 let messageSwipe = null;
 let suppressMessageTapUntil = 0;
@@ -391,6 +392,16 @@ async function openRoom(id) {
       (item.has_conflict || aiDetails()["대화 흐름 요약"] === "항상"),
   );
   app.innerHTML = `<main class="layout">${rail()}<section class="chat"><header class="head"><button class="back-button" title="채팅 목록으로" aria-label="채팅 목록으로" onclick="home()"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14.5 5-7 7 7 7M8 12h9"/></svg></button><span class="room-head-avatar avatar">${avatarContent(room.name, room.avatar_url)}</span><div class="room-title"><h1>${esc(room.name)}</h1>${room.members >= 3 ? `<span class="room-participants">참여자 ${room.members}명</span>` : ""}<span class="room-slot" id="pulse-slot">${conversationPulse()}</span></div><div class="chat-actions"><button class="chat-primary-action" title="친구 초대" aria-label="친구 초대" onclick="inviteFriends()">＋</button><button class="chat-primary-action" title="AI 도움받기" aria-label="AI 도움받기" onclick="openAiHelp()">✦</button><button class="chat-secondary-action" title="약속 잡기" aria-label="약속 잡기" onclick="newAppointment()">◷</button><button class="chat-secondary-action" title="공동 확인" aria-label="공동 확인" onclick="newAgreement()">✓</button><button class="chat-secondary-action" title="회고 카드" aria-label="회고 카드" onclick="newReflection()">↻</button><button class="chat-secondary-action" title="채팅방 설정" aria-label="채팅방 설정" onclick="roomSettings()">⚙</button><button class="chat-more-action" title="더 보기" aria-label="더 보기" onclick="openChatMore()">⋯</button></div></header><section class="messages" id="messages" data-room="${escAttr(id)}">${messages.map(view).join("")}<template id="message-end"></template><div id="typing-status" class="typing-bubble" role="status" aria-live="polite"></div><div class="room-slot" id="alignment-slot">${alignmentCard(messages)}</div><div class="room-slot" id="appointments-slot">${appointments.map(viewAppointment).join("")}</div><div class="room-slot" id="reflections-slot">${reflections.map(viewReflection).join("")}</div><div class="room-slot" id="agreements-slot">${agreementMarkup(id)}</div></section><form class="sendbar" onsubmit="send(event)"><span id="reply-slot" class="room-slot">${replyComposer()}</span><button type="button" class="intent-button" title="의도 표시" onclick="chooseIntent()">${selectedIntent ? "◎" : "＋"}</button><label class="image-upload" title="사진 보내기" aria-label="사진 보내기"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="3"/><circle cx="9" cy="10" r="1.5"/><path d="m5.5 17 4.5-4 3.2 2.7 2.4-2 2.9 3.3"/></svg><input hidden type="file" accept="image/*" onchange="sendImage(this)"></label><input id="text" placeholder="메시지를 입력하세요" autocomplete="off" oninput="onChatTyping(this.value)" onblur="stopTyping()"><span id="ai-status" class="ai-status"></span><button>↑</button></form></section></main>`;
+  document.querySelector(".chat > .head")?.insertAdjacentHTML(
+    "afterend",
+    `<div class="appointment-notice-slot" id="appointment-notice-slot">${appointmentNotice(appointments)}</div>`,
+  );
+  const quickAiButton = document.querySelector(".intent-button");
+  if (quickAiButton) {
+    quickAiButton.textContent = "✦";
+    quickAiButton.title = "AI 기본 설정";
+    quickAiButton.setAttribute("aria-label", "AI 기본 설정");
+  }
   const list = document.querySelector("#messages");
   if (refreshingCurrentRoom && !wasNearBottom) list.scrollTop = previousScrollTop;
   else list.scrollTop = list.scrollHeight;
@@ -563,7 +574,8 @@ function syncRoomExtras(id, messages) {
     if (header && room.members >= 3) header.textContent = `참여자 ${room.members}명`;
   }
   updateFragment("#alignment-slot", alignmentCard(messages));
-  updateFragment("#appointments-slot", (data.appointments || []).filter(a=>a.room_id===id).map(viewAppointment).join(""));
+  updateFragment("#appointment-notice-slot", appointmentNotice((data.appointments || []).filter(a=>a.room_id===id)));
+  updateFragment("#appointments-slot", "");
   updateFragment("#pulse-slot", conversationPulse());
   updateFragment("#reply-slot", replyComposer());
 }
@@ -1461,7 +1473,7 @@ function view(m) {
   const replyButton = `<button class="reply-shortcut" title="답장" aria-label="답장" onpointerdown="event.stopPropagation()" onclick="event.stopPropagation();startReply('${m.id}')"><span>↩</span><em>답장</em></button>`;
   const tap = m.mine ? "" : `onclick="handleMessageTap('${m.id}')"`;
   const press = `onpointerdown="beginMessagePress(event,'${m.id}',${m.mine})" onpointerup="endMessageGesture(event,'${m.id}',${m.mine})" onpointerleave="endMessageGesture(event,'${m.id}',${m.mine})" onpointermove="trackMessageSwipe(event,'${m.id}',${m.mine})" onpointercancel="cancelMessagePress(true)" oncontextmenu="return false"`;
-  return `<article class="bubble ${m.mine ? "mine" : ""}" data-message-id="${esc(m.id)}" ${tap} ${press}><div class="meta"><span>${esc(m.sender)}${m.intent ? ` · <span class="intent-tag">${esc(m.intent)}</span>` : ""}</span>${messageMenu}</div>${quote}${m.image_url ? `<img class="chat-image" src="${m.image_url}" alt="보낸 사진">` : ""}${m.body ? `<span>${esc(m.body)}</span>` : ""}<div class="bubble-tools">${contextCue}${factCue}${replyButton}${m.mine && m.unread ? `<span class="read">${m.unread}</span>` : ""}</div></article>`;
+  return `<article class="bubble ${m.mine ? "mine" : ""}" data-message-id="${esc(m.id)}" ${tap} ${press}><div class="meta"><span>${esc(m.sender)}</span>${messageMenu}</div>${quote}${m.image_url ? `<img class="chat-image" src="${m.image_url}" alt="보낸 사진"><small class="image-message-label">사진을 보냈어요</small>` : ""}${m.body ? `<span>${esc(m.body)}</span>` : ""}<div class="bubble-tools">${contextCue}${factCue}${replyButton}${m.mine && m.unread ? `<span class="read">${m.unread}</span>` : ""}</div></article>`;
 }
 function openContextToneFinding(id) {
   const message = currentRoomMessages.find((item) => item.id === id);
@@ -1665,21 +1677,51 @@ function chooseConflictPath(path) {
   );
 }
 function chooseIntent() {
-  popup(
-    `<div class="ai-check info"><span>의도 확인</span><h2>이 메시지를 어떤 마음으로 보내나요?</h2><p>상대가 내 말을 추측하지 않도록, 선택한 의도를 메시지에 함께 표시해요.</p><div class="choice-stack">${["진지한 요청", "가벼운 농담", "서운한 마음", "재촉이 아닌 확인"].map((intent) => `<button onclick="setIntent('${intent}')">${intent}</button>`).join("")}</div><button class="quiet" onclick="setIntent('')">의도 없이 보내기</button></div>`,
-  );
+  const levels = [
+    ["off", "AI 끄기", "이 방에서는 점검하지 않아요"],
+    ["light", "가볍게", "강한 표현만 확인해요"],
+    ["standard", "균형 있게", "공격 표현과 말맞춤을 확인해요"],
+    ["careful", "꼼꼼하게", "비꼼과 맥락까지 세심하게 확인해요"],
+  ];
+  popup(`<div class="ai-check info quick-ai-settings"><span>이 채팅방 AI</span><h2>도움 정도를 바로 바꿔요</h2><p>설정은 이 채팅방에만 적용되며 언제든 다시 바꿀 수 있어요.</p><div class="choice-stack">${levels.map(([key,title,desc])=>`<button class="${activeAiIntervention()===key?"selected":""}" onclick="setQuickRoomAi('${key}')"><b>${title}</b><small>${desc}</small></button>`).join("")}</div></div>`);
 }
-function setIntent(intent) {
-  selectedIntent = intent;
+function setQuickRoomAi(level) {
+  saveRoomAiConfig({...roomAiConfig(), mode:level});
   closePopup();
-  const button = document.querySelector(".intent-button");
-  if (button) button.textContent = intent ? "◎" : "＋";
+  document.querySelector("#text")?.focus({preventScroll:true});
 }
 function viewReflection(item) {
-  return `<article class="reflection-card"><span>↻ 약속 회고</span><b>${esc(item.title)}</b><p><strong>계속할 점</strong> ${esc(item.keep || "아직 작성하지 않았어요")}</p><p><strong>다음에는</strong> ${esc(item.next || "아직 작성하지 않았어요")}</p></article>`;
+  const remove = item.owner_id === signedInId ? `<button class="reflection-delete" onclick="confirmDeleteReflection('${item.id}')">삭제</button>` : "";
+  return `<article class="reflection-card"><span>↻ 약속 회고</span><b>${esc(item.title)}</b><p><strong>계속할 점</strong> ${esc(item.keep || "아직 작성하지 않았어요")}</p><p><strong>다음에는</strong> ${esc(item.next || "아직 작성하지 않았어요")}</p>${remove}</article>`;
 }
 function viewAppointment(item) {
-  return `<article class="appointment-card"><span>◷ 함께 정한 약속</span><b>${esc(item.title)}</b><p><strong>${esc(item.date)}</strong>${item.place ? ` · ${esc(item.place)}` : ""}</p>${(item.fields||[]).map(f=>`<p><strong>${esc(f.label)}</strong> · ${esc(f.value)}</p>`).join("")}<div class="appointment-actions"><button class="quiet" onclick="editAppointment('${item.id}')">함께 수정</button><button class="quiet danger" onclick="confirmDeleteAppointment('${item.id}')">일정 삭제</button></div></article>`;
+  const ownerAction = item.owner_id === signedInId ? `<button class="quiet danger" onclick="confirmDeleteAppointment('${item.id}')">모두에게 삭제</button>` : "";
+  const alreadyApproved = item.pending_change?.approvals?.includes(signedInId);
+  const pending = item.pending_change ? `<p class="appointment-pending"><strong>변경 동의 대기</strong> ${item.pending_change.approvals.length}/${item.pending_change.required}</p>${alreadyApproved?`<small class="appointment-waiting">내 동의 완료 · 다른 구성원을 기다리는 중</small>`:`<button onclick="approveAppointmentChange('${item.id}')">변경안 동의</button>`}` : "";
+  return `<article class="appointment-card"><span>◷ 함께 정한 약속</span><b>${esc(item.title)}</b><p><strong>${esc(item.date)}</strong>${item.place ? ` · ${esc(item.place)}` : ""}</p>${(item.fields||[]).map(f=>`<p><strong>${esc(f.label)}</strong> · ${esc(f.value)}</p>`).join("")}${pending}<div class="appointment-actions"><button class="quiet" onclick="editAppointment('${item.id}')">수정 제안</button><button class="quiet" onclick="hideAppointment('${item.id}')">내 화면에서 숨기기</button>${ownerAction}</div></article>`;
+}
+
+function visibleAppointments(items) {
+  return [...items]
+    .filter((item)=>localStorage.getItem(`retone-appointment-hidden-${signedInId}-${item.id}`)!=="1")
+    .sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+}
+function appointmentNotice(items) {
+  const visible = visibleAppointments(items);
+  if (!visible.length) return "";
+  const item = visible[0];
+  return `<button class="appointment-notice" onclick="openAppointmentDetails('${item.id}')"><span class="appointment-notice-icon">◷</span><span><small>약속 공지${visible.length>1?` · 외 ${visible.length-1}개`:""}</small><b>${esc(item.title)}</b><em>${esc(item.date)}${item.place?` · ${esc(item.place)}`:""}</em></span><i>›</i></button>`;
+}
+function openAppointmentDetails(id) {
+  const item=(data.appointments||[]).find((appointment)=>appointment.id===id);
+  if (!item) return alert("약속을 찾지 못했어요.");
+  const canApprove=item.pending_change && !item.pending_change.approvals?.includes(signedInId);
+  popup(`<div class="appointment-detail"><span>◷ 약속 공지</span><h2>${esc(item.title)}</h2><p><strong>날짜와 시간</strong><br>${esc(item.date)}</p><p><strong>장소</strong><br>${esc(item.place||"장소 미정")}</p>${(item.fields||[]).map(field=>`<p><strong>${esc(field.label)}</strong><br>${esc(field.value)}</p>`).join("")}${item.pending_change?`<div class="appointment-change-preview"><b>수정 제안이 있어요</b><span>${esc(item.pending_change.title)} · ${esc(item.pending_change.date)}</span><small>동의 ${item.pending_change.approvals.length}/${item.pending_change.required}</small></div>`:""}<div class="modal-actions"><button class="quiet" onclick="closePopup();hideAppointment('${item.id}')">내 화면에서 숨기기</button><button onclick="closePopup();editAppointment('${item.id}')">수정 제안</button>${canApprove?`<button onclick="approveAppointmentChange('${item.id}')">변경안 동의</button>`:""}</div></div>`);
+}
+function hideAppointment(id) {
+  localStorage.setItem(`retone-appointment-hidden-${signedInId}-${id}`,"1");
+  closePopup();
+  if (roomId) syncRoomExtras(roomId,currentRoomMessages);
 }
 function localDateTimeValue(date) {
   const pad = (value) => String(value).padStart(2, "0");
@@ -1704,7 +1746,7 @@ function alignmentCard(messages) {
     .reverse()
     .find(
       (item) =>
-        item.alignment_hint && !(data.appointments || []).some(a=>a.source_message_id === item.id) && !(data.agreements || []).some(a=>a.source_message_id === item.id) &&
+        item.mine && item.alignment_hint && !(data.appointments || []).some(a=>a.source_message_id === item.id) && !(data.agreements || []).some(a=>a.source_message_id === item.id) &&
         localStorage.getItem(`retone-alignment-dismissed-${item.id}`) !== "1",
     );
   if (!message) return "";
@@ -2125,7 +2167,7 @@ async function sendApproved() {
       input.focus({preventScroll:true});
     }
     const intentButton = document.querySelector(".intent-button");
-    if (intentButton) intentButton.textContent="＋";
+    if (intentButton) intentButton.textContent="✦";
     openRoom(next.room);
   }
   if (sentMessage?.id) queueContextToneCheck(next.room, sentMessage.id);
@@ -2233,6 +2275,15 @@ async function inviteFriends() {
 async function confirmInviteFriends() {
   const inviteeIds = selectedInvitees();
   if (!inviteeIds.length) return alert("초대할 친구를 한 명 이상 골라 주세요.");
+  const room = data.rooms.find((item) => item.id === roomId);
+  if (room && !room.is_group && room.members === 2) {
+    pendingRoomInvitees = inviteeIds;
+    popup(`<div class="invite-friends-card"><span>단체 채팅 만들기</span><h2>새 단톡방 이름을 정해요</h2><p>개인 채팅에 친구를 더하면 기존 1:1 대화는 그대로 두고 새 단체 채팅방을 만들어요.</p><input id="converted-room-name" maxlength="50" placeholder="예: 우리 셋 모임"><button onclick="createGroupFromDirect()">단체 채팅 만들기</button><button class="quiet" onclick="closePopup()">취소</button></div>`);
+    return;
+  }
+  await addFriendsToCurrentRoom(inviteeIds);
+}
+async function addFriendsToCurrentRoom(inviteeIds) {
   try {
     await api(`/api/rooms/${roomId}/members`, {
       method: "POST",
@@ -2243,6 +2294,21 @@ async function confirmInviteFriends() {
     openRoom(roomId);
   } catch (error) {
     alert("친구를 초대하지 못했어요. 친구 상태와 채팅방 참여 상태를 다시 확인해주세요.");
+  }
+}
+async function createGroupFromDirect() {
+  const name=document.querySelector("#converted-room-name")?.value.trim();
+  if (!name) return alert("단체 채팅방 이름을 입력해주세요.");
+  const currentMembers=await api(`/api/rooms/${roomId}/members`);
+  const inviteeIds=[...new Set([...currentMembers.filter(id=>id!==signedInId),...pendingRoomInvitees])];
+  try {
+    const room=await api("/api/rooms",{method:"POST",body:JSON.stringify({name,creator_id:signedInId,invitee_ids:inviteeIds,direct:false})});
+    pendingRoomInvitees=[];
+    data=await api(`/api/bootstrap?user_id=${encodeURIComponent(signedInId)}`);
+    closePopup();
+    openRoom(room.id);
+  } catch {
+    alert("단체 채팅방을 만들지 못했어요. 친구 관계를 확인해주세요.");
   }
 }
 async function saveRoom() {
@@ -2350,6 +2416,17 @@ async function deleteAppointment(id) {
     alert(error.status === 403 ? "이 일정을 삭제할 권한이 없어요." : "일정을 삭제하지 못했어요. 잠시 후 다시 시도해주세요.");
   }
 }
+async function approveAppointmentChange(id) {
+  try {
+    const updated=await api(`/api/appointments/${id}/approve`,{method:"POST"});
+    const index=(data.appointments||[]).findIndex(item=>item.id===id);
+    if (index>=0) data.appointments[index]=updated;
+    closePopup();
+    if (roomId) openRoom(roomId);
+  } catch (error) {
+    alert(error.status===409?"이미 동의했거나 변경 제안이 끝났어요.":"변경안에 동의하지 못했어요.");
+  }
+}
 async function saveAppointment(id = "") {
   const title = document.querySelector("#appointmentTitle").value.trim(),
     date = document.querySelector("#appointmentDate").value;
@@ -2412,6 +2489,21 @@ async function saveReflection() {
     openRoom(roomId);
   } catch {
     alert("회고 카드를 저장하지 못했어요. 이 방의 참여 상태와 연결을 확인해주세요.");
+  }
+}
+function confirmDeleteReflection(id) {
+  const item=(data.reflections||[]).find(reflection=>reflection.id===id);
+  if (!item) return;
+  popup(`<div class="ai-check appointment-delete"><span>회고 삭제</span><h2>‘${esc(item.title)}’ 회고를 삭제할까요?</h2><p>작성한 사람만 삭제할 수 있으며 되돌릴 수 없어요.</p><div class="popup-actions"><button class="quiet" onclick="closePopup()">취소</button><button class="danger-action" onclick="deleteReflection('${id}')">삭제하기</button></div></div>`);
+}
+async function deleteReflection(id) {
+  try {
+    await api(`/api/reflections/${id}`,{method:"DELETE"});
+    data.reflections=(data.reflections||[]).filter(item=>item.id!==id);
+    closePopup();
+    if (roomId) syncRoomExtras(roomId,currentRoomMessages);
+  } catch (error) {
+    alert(error.status===403?"이 회고를 작성한 사람만 삭제할 수 있어요.":"회고를 삭제하지 못했어요.");
   }
 }
 function showAiPolicy() {

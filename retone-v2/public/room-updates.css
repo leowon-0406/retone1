@@ -36,6 +36,61 @@
 .appointment-delete .danger-action { background: #b65347 !important; color: #fff !important; }
 .dark .appointment-card .appointment-actions .danger { background: #4a302d !important; color: #ffb3a7 !important; }
 @media(max-width:700px) { .appointment-actions { display: grid; grid-template-columns: 1fr 1fr; } }
+
+/* Kakao-style appointment notice: always visible between the room header and messages. */
+.chat { grid-template-rows: 76px auto minmax(0, 1fr) auto !important; }
+.appointment-notice-slot:empty { display: none; }
+.appointment-notice-slot { z-index: 5; padding: 8px max(34px, calc((100% - 850px)/2)); border-bottom: 1px solid #e8dfd0; background: #fffaf1; }
+.appointment-notice { display:grid; grid-template-columns:34px minmax(0,1fr) 20px; align-items:center; width:100%; gap:10px; padding:9px 12px; border:1px solid #e1dfb0; border-radius:14px; background:linear-gradient(135deg,#fffdf1,#f6f7d8); color:#424637; text-align:left; box-shadow:0 5px 14px #6c622514; }
+.appointment-notice-icon { display:grid; width:32px; height:32px; place-items:center; border-radius:11px; background:#e6eb91; color:#5f6728; font-size:16px; }
+.appointment-notice>span:nth-child(2) { display:grid; min-width:0; gap:1px; }
+.appointment-notice small { color:#8b903a; font-size:9px; font-weight:900; }
+.appointment-notice b,.appointment-notice em { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+.appointment-notice b { font-size:12px; }
+.appointment-notice em { color:#858578; font-size:10px; font-style:normal; }
+.appointment-notice>i { color:#8b903a; font-size:24px; font-style:normal; }
+#appointments-slot { display:none !important; }
+.appointment-detail>span { color:#8b9639; font-size:11px; font-weight:900; }
+.appointment-detail>p { padding:9px 11px; border-radius:11px; background:#f8f4e8; }
+.appointment-change-preview { display:grid; gap:4px; margin:12px 0; padding:12px; border:1px solid #dfe39f; border-radius:13px; background:#f7f9df; }
+.appointment-change-preview span,.appointment-change-preview small { color:#74785b; font-size:11px; }
+.appointment-pending { padding:8px; border-radius:9px; background:#f3f5d5; }
+.appointment-waiting { color:#858b5d; font-size:10px; }
+.image-message-label { display:block; margin-top:5px; color:#8a8d7f; font-size:10px; }
+.reflection-card { position:relative; }
+.reflection-delete { justify-self:start; width:auto!important; margin-top:4px!important; padding:6px 9px!important; border-radius:8px!important; background:#f5e7e2!important; color:#a65a4e!important; font-size:10px!important; box-shadow:none!important; }
+.quick-ai-settings .choice-stack button { display:grid; gap:2px; text-align:left; }
+.quick-ai-settings .choice-stack button small { color:inherit; opacity:.72; font-size:10px; }
+.quick-ai-settings .choice-stack button.selected { box-shadow:inset 0 0 0 2px #b7c547!important; }
+
+/* Keep the message management dots reachable; reply sits below instead of covering them. */
+@media(hover:hover) and (pointer:fine) {
+  .bubble .reply-shortcut { top:auto!important; right:7px!important; bottom:6px!important; }
+  .bubble.mine .reply-shortcut { right:7px!important; }
+  .bubble.mine .meta { padding-right:24px; }
+  .message-menu { position:absolute; top:8px; right:8px; z-index:7; }
+}
+
+/* Denser detail controls: more options fit without feeling like large navigation tabs. */
+.ai-setting-group summary { padding:11px 13px!important; }
+.ai-category { gap:6px!important; padding:9px 0!important; }
+.ai-choice-row { gap:4px!important; }
+.ai-choice-row button { padding:5px 8px!important; border-radius:8px!important; font-size:10px!important; }
+.schedule-fields { gap:.3rem; }
+.schedule-field { gap:.28rem; }
+.schedule-field input { min-height:38px!important; padding:8px 9px!important; font-size:11px!important; }
+.schedule-field button { padding:.3rem .5rem!important; }
+
+.dark .appointment-notice-slot { border-color:#45463f; background:#292a25; }
+.dark .appointment-notice { border-color:#626640; background:linear-gradient(135deg,#35372d,#3b3e2d); color:#f0f1dd; }
+.dark .appointment-detail>p { background:#34352f; }
+.dark .appointment-change-preview { border-color:#5d6338; background:#353a2b; }
+@media(max-width:700px) {
+  .chat { grid-template-rows:64px auto minmax(0,1fr) auto!important; }
+  .appointment-notice-slot { padding:6px 10px; }
+  .appointment-notice { padding:7px 9px; border-radius:12px; }
+  .appointment-notice-icon { width:29px; height:29px; }
+}
 .friend-add-tabs { grid-template-columns: repeat(4, minmax(0, 1fr)) !important; }
 @media(max-width:390px) { .friend-add-tabs button { font-size: 10px !important; padding-inline: 2px !important; } }
 @media(max-width:700px) {

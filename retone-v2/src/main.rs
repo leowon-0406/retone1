@@ -162,10 +162,20 @@ struct Appointment {
     title: String,
     date: String,
     place: String,
-    #[serde(skip_serializing)]
     owner_id: String,
     fields: Vec<ScheduleField>,
     source_message_id: Option<Uuid>,
+    pending_change: Option<AppointmentChange>,
+}
+#[derive(Clone, Serialize, Deserialize)]
+struct AppointmentChange {
+    title: String,
+    date: String,
+    place: String,
+    fields: Vec<ScheduleField>,
+    proposed_by: String,
+    approvals: Vec<String>,
+    required: usize,
 }
 #[derive(Clone, Serialize)]
 struct Reflection {
@@ -174,6 +184,7 @@ struct Reflection {
     title: String,
     keep: String,
     next: String,
+    owner_id: String,
 }
 #[derive(Clone, Serialize)]
 struct ConversationInsight {
@@ -2456,7 +2467,11 @@ async fn send(
     let mut d = app.data.write().await;
     d.messages.push(message.clone());
     if let Some(room) = d.rooms.iter_mut().find(|r| r.id == id) {
-        room.last = message.body.clone();
+        room.last = if message.body.trim().is_empty() && message.image_url.is_some() {
+            "사진을 보냈어요".into()
+        } else {
+            message.body.clone()
+        };
         room.updated = message.created;
         room.has_messages = true;
     }
@@ -2822,8 +2837,8 @@ async fn create_agreement(
     let room_id = Uuid::parse_str(&input.room_id).map_err(|_| StatusCode::BAD_REQUEST)?;
     require_room_member(&app, room_id, user_id).await?;
     if let Some(source_message_id) = input.source_message_id {
-        let valid: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM retone_v2.messages WHERE id=$1 AND room_id=$2 AND deleted_at IS NULL)")
-            .bind(source_message_id).bind(room_id).fetch_one(&app.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let valid: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM retone_v2.messages WHERE id=$1 AND room_id=$2 AND sender_id=$3 AND deleted_at IS NULL)")
+            .bind(source_message_id).bind(room_id).bind(user_id).fetch_one(&app.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         if !valid {
             return Err(StatusCode::BAD_REQUEST);
         }
@@ -2926,8 +2941,8 @@ async fn create_appointment(
         .map_err(|_| StatusCode::BAD_REQUEST)?
         .and_utc();
     if let Some(source) = input.source_message_id {
-        let matched = sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM retone_v2.messages WHERE id=$1 AND room_id=$2 AND deleted_at IS NULL)")
-            .bind(source).bind(room_uuid).fetch_one(&app.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        let matched = sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM retone_v2.messages WHERE id=$1 AND room_id=$2 AND sender_id=$3 AND deleted_at IS NULL)")
+            .bind(source).bind(room_uuid).bind(user_id).fetch_one(&app.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
         if !matched {
             return Err(StatusCode::BAD_REQUEST);
         }
@@ -2947,6 +2962,7 @@ async fn create_appointment(
         owner_id: user_id.to_string(),
         fields,
         source_message_id: input.source_message_id,
+        pending_change: None,
     };
     let mut data = app.data.write().await;
     let inserted = sqlx::query("INSERT INTO retone_v2.appointments(id,room_id,title,starts_at,place,created_by,fields,source_message_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT DO NOTHING")
@@ -2998,11 +3014,54 @@ async fn update_appointment(
     let starts_at = chrono::NaiveDateTime::parse_from_str(&input.date, "%Y-%m-%d %H:%M")
         .map_err(|_| StatusCode::BAD_REQUEST)?
         .and_utc();
-    let fields = input
-        .fields
-        .map(checked_fields)
-        .transpose()?
-        .map(sqlx::types::Json);
+    let checked = input.fields.map(checked_fields).transpose()?;
+    if let Some(room_id) = room_id {
+        let required: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM retone_v2.room_members WHERE room_id=$1")
+                .bind(room_id)
+                .fetch_one(&app.db)
+                .await
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        if required > 1 {
+            let current_fields = app
+                .data
+                .read()
+                .await
+                .appointments
+                .iter()
+                .find(|item| item.id == id.to_string())
+                .map(|item| item.fields.clone())
+                .unwrap_or_default();
+            let proposal = AppointmentChange {
+                title: input.title.trim().chars().take(80).collect(),
+                date: input.date.trim().chars().take(30).collect(),
+                place: if input.place.trim().is_empty() {
+                    "장소 미정".into()
+                } else {
+                    input.place.trim().chars().take(50).collect()
+                },
+                fields: checked.clone().unwrap_or(current_fields),
+                proposed_by: user_id.to_string(),
+                approvals: vec![user_id.to_string()],
+                required: required as usize,
+            };
+            sqlx::query("UPDATE retone_v2.appointments SET pending_change=$1 WHERE id=$2")
+                .bind(sqlx::types::Json(&proposal))
+                .bind(id)
+                .execute(&app.db)
+                .await
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            let mut data = app.data.write().await;
+            let appointment = data
+                .appointments
+                .iter_mut()
+                .find(|item| item.id == id.to_string())
+                .ok_or(StatusCode::NOT_FOUND)?;
+            appointment.pending_change = Some(proposal);
+            return Ok(Json(appointment.clone()));
+        }
+    }
+    let fields = checked.map(sqlx::types::Json);
     let mut data = app.data.write().await;
     let row = sqlx::query_as::<_, (Option<Uuid>, String, String, String, Uuid, sqlx::types::Json<Vec<ScheduleField>>, Option<Uuid>)>(
         "UPDATE retone_v2.appointments SET title=$1,starts_at=$2,place=$3,fields=COALESCE($5,fields) WHERE id=$4 RETURNING room_id,title,TO_CHAR(starts_at,'YYYY-MM-DD HH24:MI'),COALESCE(place,'장소 미정'),created_by,fields,source_message_id",
@@ -3023,6 +3082,7 @@ async fn update_appointment(
         owner_id: row.4.to_string(),
         fields: row.5.0,
         source_message_id: row.6,
+        pending_change: None,
     };
     if let Some(item) = data
         .appointments
@@ -3047,10 +3107,11 @@ async fn delete_appointment(
     .await
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
     .ok_or(StatusCode::NOT_FOUND)?;
+    if created_by != user_id {
+        return Err(StatusCode::FORBIDDEN);
+    }
     if let Some(room_id) = room_id {
         require_room_member(&app, room_id, user_id).await?;
-    } else if created_by != user_id {
-        return Err(StatusCode::FORBIDDEN);
     }
     let deleted = sqlx::query("DELETE FROM retone_v2.appointments WHERE id=$1")
         .bind(id)
@@ -3067,6 +3128,70 @@ async fn delete_appointment(
         .appointments
         .retain(|item| item.id != id.to_string());
     Ok(StatusCode::NO_CONTENT)
+}
+async fn approve_appointment_change(
+    State(app): State<App>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<Json<Appointment>, StatusCode> {
+    let user_id = require_user(&app, &headers).await?;
+    let (room_id, pending) =
+        sqlx::query_as::<_, (Option<Uuid>, Option<sqlx::types::Json<AppointmentChange>>)>(
+            "SELECT room_id,pending_change FROM retone_v2.appointments WHERE id=$1",
+        )
+        .bind(id)
+        .fetch_optional(&app.db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let room_id = room_id.ok_or(StatusCode::BAD_REQUEST)?;
+    require_room_member(&app, room_id, user_id).await?;
+    let mut proposal = pending.map(|value| value.0).ok_or(StatusCode::CONFLICT)?;
+    let user = user_id.to_string();
+    if proposal.approvals.contains(&user) {
+        return Err(StatusCode::CONFLICT);
+    }
+    proposal.approvals.push(user);
+    proposal.required = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM retone_v2.room_members WHERE room_id=$1",
+    )
+    .bind(room_id)
+    .fetch_one(&app.db)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)? as usize;
+    let apply = proposal.approvals.len() >= proposal.required;
+    if apply {
+        let starts_at = chrono::NaiveDateTime::parse_from_str(&proposal.date, "%Y-%m-%d %H:%M")
+            .map_err(|_| StatusCode::BAD_REQUEST)?
+            .and_utc();
+        sqlx::query("UPDATE retone_v2.appointments SET title=$1,starts_at=$2,place=$3,fields=$4,pending_change=NULL WHERE id=$5")
+            .bind(&proposal.title).bind(starts_at).bind(&proposal.place)
+            .bind(sqlx::types::Json(&proposal.fields)).bind(id)
+            .execute(&app.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    } else {
+        sqlx::query("UPDATE retone_v2.appointments SET pending_change=$1 WHERE id=$2")
+            .bind(sqlx::types::Json(&proposal))
+            .bind(id)
+            .execute(&app.db)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    }
+    let mut data = app.data.write().await;
+    let item = data
+        .appointments
+        .iter_mut()
+        .find(|item| item.id == id.to_string())
+        .ok_or(StatusCode::NOT_FOUND)?;
+    if apply {
+        item.title = proposal.title;
+        item.date = proposal.date;
+        item.place = proposal.place;
+        item.fields = proposal.fields;
+        item.pending_change = None;
+    } else {
+        item.pending_change = Some(proposal);
+    }
+    Ok(Json(item.clone()))
 }
 async fn create_reflection(
     State(app): State<App>,
@@ -3085,6 +3210,7 @@ async fn create_reflection(
         title: input.title.trim().chars().take(80).collect(),
         keep: input.keep.trim().chars().take(120).collect(),
         next: input.next.trim().chars().take(120).collect(),
+        owner_id: user_id.to_string(),
     };
     sqlx::query("INSERT INTO retone_v2.reflections(id,room_id,title,keep,next_step,created_by) VALUES($1,$2,$3,$4,$5,$6)")
         .bind(Uuid::parse_str(&reflection.id).map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?)
@@ -3098,6 +3224,34 @@ async fn create_reflection(
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     app.data.write().await.reflections.push(reflection.clone());
     Ok(Json(reflection))
+}
+async fn delete_reflection(
+    State(app): State<App>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<StatusCode, StatusCode> {
+    let user_id = require_user(&app, &headers).await?;
+    let created_by =
+        sqlx::query_scalar::<_, Uuid>("SELECT created_by FROM retone_v2.reflections WHERE id=$1")
+            .bind(id)
+            .fetch_optional(&app.db)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            .ok_or(StatusCode::NOT_FOUND)?;
+    if created_by != user_id {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    sqlx::query("DELETE FROM retone_v2.reflections WHERE id=$1")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    app.data
+        .write()
+        .await
+        .reflections
+        .retain(|item| item.id != id.to_string());
+    Ok(StatusCode::NO_CONTENT)
 }
 
 async fn prepare_storage() -> Option<PgPool> {
@@ -3115,27 +3269,28 @@ async fn prepare_storage() -> Option<PgPool> {
     Some(pool)
 }
 async fn restore_data(db: &PgPool) -> Data {
-    let rooms = sqlx::query_as::<_, (Uuid, String, i64, bool, bool, String, i64)>("SELECT r.id,r.name,(SELECT COUNT(*) FROM retone_v2.room_members rm WHERE rm.room_id=r.id),r.is_group,EXISTS(SELECT 1 FROM retone_v2.messages m WHERE m.room_id=r.id AND m.deleted_at IS NULL),COALESCE((SELECT m.body FROM retone_v2.messages m WHERE m.room_id=r.id AND m.deleted_at IS NULL ORDER BY m.created_at DESC LIMIT 1),'새 대화를 시작해 보세요.'),FLOOR(EXTRACT(EPOCH FROM COALESCE((SELECT MAX(m.created_at) FROM retone_v2.messages m WHERE m.room_id=r.id AND m.deleted_at IS NULL),r.created_at))*1000)::BIGINT FROM retone_v2.rooms r ORDER BY 7 DESC")
+    let rooms = sqlx::query_as::<_, (Uuid, String, i64, bool, bool, String, i64)>("SELECT r.id,r.name,(SELECT COUNT(*) FROM retone_v2.room_members rm WHERE rm.room_id=r.id),r.is_group,EXISTS(SELECT 1 FROM retone_v2.messages m WHERE m.room_id=r.id AND m.deleted_at IS NULL),COALESCE((SELECT COALESCE(NULLIF(m.body,''),CASE WHEN m.image_url IS NOT NULL THEN '사진을 보냈어요' END) FROM retone_v2.messages m WHERE m.room_id=r.id AND m.deleted_at IS NULL ORDER BY m.created_at DESC LIMIT 1),'새 대화를 시작해 보세요.'),FLOOR(EXTRACT(EPOCH FROM COALESCE((SELECT MAX(m.created_at) FROM retone_v2.messages m WHERE m.room_id=r.id AND m.deleted_at IS NULL),r.created_at))*1000)::BIGINT FROM retone_v2.rooms r ORDER BY 7 DESC")
         .fetch_all(db).await.unwrap_or_default().into_iter().map(|(id,name,members,is_group,has_messages,last,updated)| Room { id:id.to_string(),name,members:members.min(255) as u8,is_group,has_messages,avatar_url:None,unread:0,pinned:false,last,updated }).collect();
     let messages = sqlx::query_as::<_, (Uuid, Uuid, Option<String>, Option<Uuid>, String, i64, Option<String>, Option<String>, Option<Uuid>, Option<String>, Option<String>, Option<String>, bool, Option<String>, Option<String>)>("SELECT m.id,m.room_id,u.name,m.sender_id,m.body,FLOOR(EXTRACT(EPOCH FROM m.created_at)*1000)::BIGINT,m.intent,m.image_url,m.reply_to,m.ai_verdict,m.ai_suggestion,m.ai_trigger,m.alignment_hint,m.alignment_kind,m.alignment_summary FROM retone_v2.messages m LEFT JOIN retone_v2.users u ON u.id=m.sender_id WHERE m.deleted_at IS NULL ORDER BY m.created_at")
         .fetch_all(db).await.unwrap_or_default().into_iter().map(|(id,room_id,sender,sender_id,body,created,intent,image_url,reply_to,ai_verdict,ai_suggestion,ai_trigger,alignment_hint,alignment_kind,alignment_summary)| { Message { id:id.to_string(),room_id:room_id.to_string(),sender:sender.unwrap_or_else(|| "알 수 없는 사용자".into()),sender_id:sender_id.map(|value| value.to_string()),mine:false,body,created,unread:0,intent,alignment_hint,alignment_kind,alignment_summary,image_url,reply_to:reply_to.map(|value| value.to_string()),ai_verdict,ai_suggestion,ai_trigger } }).collect();
     let agreements = sqlx::query_as::<_, (Uuid, Uuid, String, String, String, i32, i32, Option<Uuid>)>("SELECT id,room_id,task,assignee_name,deadline_text,confirmations,revisions,source_message_id FROM retone_v2.agreements WHERE completed_at IS NULL")
         .fetch_all(db).await.unwrap_or_default().into_iter().map(|(id,room_id,task,assignee,deadline,confirmations,revisions,source_message_id)| Agreement { id:id.to_string(), room_id:room_id.to_string(), task, assignee, deadline, confirmations:confirmations.clamp(0,u8::MAX as i32) as u8, revisions:revisions.clamp(0,u8::MAX as i32) as u8, source_message_id }).collect();
-    let appointments = sqlx::query_as::<_, (Uuid, Option<Uuid>, String, String, String, Uuid, sqlx::types::Json<Vec<ScheduleField>>, Option<Uuid>)>("SELECT id,room_id,title,to_char(starts_at,'YYYY-MM-DD HH24:MI'),COALESCE(place,''),created_by,fields,source_message_id FROM retone_v2.appointments ORDER BY starts_at")
-        .fetch_all(db).await.unwrap_or_default().into_iter().map(|(id,room_id,title,date,place,owner_id,fields,source_message_id)| Appointment { id:id.to_string(), room_id:room_id.map(|value| value.to_string()).unwrap_or_default(), title, date, place, fields:fields.0, source_message_id, owner_id:owner_id.to_string() }).collect();
-    let reflections = sqlx::query_as::<_, (Uuid, Uuid, String, String, String)>(
-        "SELECT id,room_id,title,keep,next_step FROM retone_v2.reflections ORDER BY created_at",
+    let appointments = sqlx::query_as::<_, (Uuid, Option<Uuid>, String, String, String, Uuid, sqlx::types::Json<Vec<ScheduleField>>, Option<Uuid>, Option<sqlx::types::Json<AppointmentChange>>)>("SELECT id,room_id,title,to_char(starts_at,'YYYY-MM-DD HH24:MI'),COALESCE(place,''),created_by,fields,source_message_id,pending_change FROM retone_v2.appointments ORDER BY starts_at")
+        .fetch_all(db).await.unwrap_or_default().into_iter().map(|(id,room_id,title,date,place,owner_id,fields,source_message_id,pending_change)| Appointment { id:id.to_string(), room_id:room_id.map(|value| value.to_string()).unwrap_or_default(), title, date, place, fields:fields.0, source_message_id, owner_id:owner_id.to_string(), pending_change:pending_change.map(|value|value.0) }).collect();
+    let reflections = sqlx::query_as::<_, (Uuid, Uuid, String, String, String, Uuid)>(
+        "SELECT id,room_id,title,keep,next_step,created_by FROM retone_v2.reflections ORDER BY created_at",
     )
     .fetch_all(db)
     .await
     .unwrap_or_default()
     .into_iter()
-    .map(|(id, room_id, title, keep, next)| Reflection {
+    .map(|(id, room_id, title, keep, next, owner_id)| Reflection {
         id: id.to_string(),
         room_id: room_id.to_string(),
         title,
         keep,
         next,
+        owner_id: owner_id.to_string(),
     })
     .collect();
     let insights = sqlx::query_as::<_, (Uuid, Uuid, i32, bool, String, String, String, String)>("SELECT id,room_id,checkpoint,has_conflict,topic,summary,reason,suggestion FROM retone_v2.conversation_insights ORDER BY created_at")
@@ -3209,7 +3364,12 @@ async fn main() {
             "/api/appointments/{id}",
             patch(update_appointment).delete(delete_appointment),
         )
+        .route(
+            "/api/appointments/{id}/approve",
+            post(approve_appointment_change),
+        )
         .route("/api/reflections", post(create_reflection))
+        .route("/api/reflections/{id}", delete(delete_reflection))
         .route("/api/rooms/{id}/messages", get(messages).post(send))
         .route("/api/rooms/{id}/leave", delete(leave_room))
         .route("/api/rooms/{id}/insight", post(create_conversation_insight))

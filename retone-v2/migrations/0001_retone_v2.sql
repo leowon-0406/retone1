@@ -160,6 +160,7 @@ ALTER TABLE retone_v2.users ADD COLUMN IF NOT EXISTS login_failures INTEGER NOT 
 ALTER TABLE retone_v2.users ADD COLUMN IF NOT EXISTS login_blocked_until TIMESTAMPTZ;
 ALTER TABLE retone_v2.appointments ADD COLUMN IF NOT EXISTS fields JSONB NOT NULL DEFAULT '[]';
 ALTER TABLE retone_v2.appointments ADD COLUMN IF NOT EXISTS source_message_id UUID REFERENCES retone_v2.messages(id) ON DELETE SET NULL;
+ALTER TABLE retone_v2.appointments ADD COLUMN IF NOT EXISTS pending_change JSONB;
 CREATE UNIQUE INDEX IF NOT EXISTS appointment_source_unique ON retone_v2.appointments(source_message_id);
 ALTER TABLE retone_v2.messages ADD COLUMN IF NOT EXISTS fact_result JSONB;
 ALTER TABLE retone_v2.messages ADD COLUMN IF NOT EXISTS ai_trigger TEXT;
