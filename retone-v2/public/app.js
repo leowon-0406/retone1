@@ -615,12 +615,45 @@ async function friends() {
     return;
   }
   const person = (user, action, detail) => `<article class="friend-row"><span class="avatar">${user.avatar_url ? `<img src="${user.avatar_url}" alt="">` : esc(user.name[0])}</span><span class="copy"><b>${esc(user.name)}</b><span>${detail}</span></span>${action}</article>`;
-  app.innerHTML = `<main class="layout">${rail()}<section class="page"><header class="head"><h1>친구</h1><div class="friend-head-actions"><button class="new-room" onclick="openFriendAdd()">＋ 친구 추가</button><button class="head-quiet" onclick="home()">채팅 목록</button></div></header><div class="content"><div class="intro"><h2>내 친구</h2><p>전화번호, 친구코드 또는 QR로만 친구 요청을 보낼 수 있어요. 가입한 전체 사용자는 표시하지 않아요.</p></div>${relations.incoming.length ? `<section class="friend-section"><b>받은 친구 요청 <em>${relations.incoming.length}</em></b><div>${relations.incoming.map((user) => person(user, `<button onclick="acceptFriend('${user.id}')">수락</button><button class="soft" onclick="blockFriend('${user.id}')">차단</button>`, "친구 요청을 보냈어요")).join("")}</div></section>` : ""}<section class="friend-section"><b>친구 ${relations.friends.length}</b><div>${relations.friends.length ? relations.friends.map((user) => person(user, `<button onclick="startDirect('${esc(user.name)}','${user.id}')">채팅</button><button class="soft" onclick="blockFriend('${user.id}')">차단</button>`, "1:1 대화를 시작할 수 있어요")).join("") : `<div class="empty-chat"><b>아직 친구가 없어요</b><span>위의 ‘친구 추가’에서 전화번호, 코드 또는 QR로 요청을 보내보세요.</span></div>`}</div></section>${relations.outgoing.length ? `<section class="friend-section"><b>보낸 요청</b><div>${relations.outgoing.map((user) => person(user, `<span class="request-state">대기 중</span>`, "수락을 기다리고 있어요")).join("")}</div></section>` : ""}${relations.blocked.length ? `<details class="blocked-list"><summary>차단한 사용자 ${relations.blocked.length}명</summary><p>차단한 사용자는 친구 요청과 채팅을 시작할 수 없어요.</p></details>` : ""}</div></section></main>`;
+  app.innerHTML = `<main class="layout">${rail()}<section class="page"><header class="head"><h1>친구</h1><div class="friend-head-actions"><button class="new-room" onclick="openFriendAdd()">＋ 친구 추가</button><button class="head-quiet" onclick="home()">채팅 목록</button></div></header><div class="content"><div class="intro friend-intro"><div><h2>내 친구</h2><p>전화번호, 친구코드 또는 QR로만 친구 요청을 보낼 수 있어요. 가입한 전체 사용자는 표시하지 않아요.</p></div><button id="my-code-entry" class="my-code-entry" onclick="openFriendAdd('qr')"><span>내 친구코드</span><b>불러오는 중</b><i>QR 보기</i></button></div>${relations.incoming.length ? `<section class="friend-section"><b>받은 친구 요청 <em>${relations.incoming.length}</em></b><div>${relations.incoming.map((user) => person(user, `<button onclick="acceptFriend('${user.id}')">수락</button><button class="soft" onclick="blockFriend('${user.id}')">차단</button>`, "친구 요청을 보냈어요")).join("")}</div></section>` : ""}<section class="friend-section"><b>친구 ${relations.friends.length}</b><div>${relations.friends.length ? relations.friends.map((user) => person(user, `<button onclick="startDirect('${esc(user.name)}','${user.id}')">채팅</button><button class="soft" onclick="blockFriend('${user.id}')">차단</button>`, "1:1 대화를 시작할 수 있어요")).join("") : `<div class="empty-chat"><b>아직 친구가 없어요</b><span>위의 ‘친구 추가’에서 전화번호, 코드 또는 QR로 요청을 보내보세요.</span></div>`}</div></section>${relations.outgoing.length ? `<section class="friend-section"><b>보낸 요청</b><div>${relations.outgoing.map((user) => person(user, `<span class="request-state">대기 중</span>`, "수락을 기다리고 있어요")).join("")}</div></section>` : ""}${relations.blocked.length ? `<details class="blocked-list"><summary>차단한 사용자 ${relations.blocked.length}명</summary><p>차단한 사용자는 친구 요청과 채팅을 시작할 수 없어요.</p></details>` : ""}</div></section></main>`;
+  loadFriendCodeEntry();
   startInboxPolling(data);
 }
-function openFriendAdd() {
-  popup(`<div class="friend-add-card"><span>친구 추가</span><h2>어떻게 친구를 찾을까요?</h2><p>상대가 요청을 수락해야 친구가 되고 1:1 대화를 시작할 수 있어요.</p><div class="friend-add-tabs"><button data-friend-add="phone" onclick="showFriendAddPanel('phone')">전화번호</button><button data-friend-add="code" onclick="showFriendAddPanel('code')">친구코드</button><button data-friend-add="qr" onclick="showFriendAddPanel('qr')">QR 코드</button></div><div id="friend-add-panel"></div></div>`);
-  showFriendAddPanel("phone");
+let friendIdentityCache = null;
+async function getFriendIdentity() {
+  if (friendIdentityCache?.userId === signedInId) return friendIdentityCache.profile;
+  const profile = await api("/api/friends/me");
+  friendIdentityCache = {userId:signedInId, profile};
+  return profile;
+}
+async function loadFriendCodeEntry() {
+  const entry = document.querySelector("#my-code-entry");
+  if (!entry) return;
+  try {
+    const profile = await getFriendIdentity();
+    if (!document.contains(entry)) return;
+    entry.dataset.friendCode = profile.friend_code;
+    entry.querySelector("b").textContent = profile.friend_code;
+  } catch {
+    if (document.contains(entry)) entry.innerHTML = `<span>내 친구코드</span><b>다시 확인</b><i>눌러서 열기</i>`;
+  }
+}
+function openFriendAdd(initialMode = "phone") {
+  popup(`<div class="friend-add-card"><span>친구 추가</span><h2>친구를 찾아볼까요?</h2><p>상대가 요청을 수락하면 1:1 대화를 시작할 수 있어요.</p><button class="friend-code-overview" id="friend-code-overview" onclick="showFriendAddPanel('qr')"><span>내 친구코드</span><b>불러오는 중…</b><i>QR · 복사</i></button><div class="friend-add-tabs"><button data-friend-add="phone" onclick="showFriendAddPanel('phone')">전화번호</button><button data-friend-add="code" onclick="showFriendAddPanel('code')">친구코드</button><button data-friend-add="qr" onclick="showFriendAddPanel('qr')">내 QR</button></div><div id="friend-add-panel"></div></div>`);
+  hydrateFriendCodeOverview();
+  showFriendAddPanel(initialMode);
+}
+async function hydrateFriendCodeOverview() {
+  const entry = document.querySelector("#friend-code-overview");
+  if (!entry) return;
+  try {
+    const profile = await getFriendIdentity();
+    if (!document.contains(entry)) return;
+    entry.dataset.friendCode = profile.friend_code;
+    entry.querySelector("b").textContent = profile.friend_code;
+  } catch {
+    if (document.contains(entry)) entry.querySelector("b").textContent = "불러오지 못했어요";
+  }
 }
 function showFriendAddPanel(mode) {
   document.querySelectorAll("[data-friend-add]").forEach((button) => button.classList.toggle("selected", button.dataset.friendAdd === mode));
@@ -634,16 +667,16 @@ function showFriendAddPanel(mode) {
     panel.innerHTML = `<label>친구코드<input id="friend-code" autocapitalize="characters" autocomplete="off" maxlength="6" placeholder="예: A7K9Q2"></label><small>친구가 직접 알려준 6자리 코드를 입력해주세요.</small><button onclick="lookupFriend('code')">친구 찾기</button><div id="friend-search-result"></div>`;
     return;
   }
-  panel.innerHTML = `<div class="my-qr-card" id="my-friend-qr"><div class="thinking-loader"><i></i><i></i><i></i></div><small>내 QR 코드를 준비하고 있어요.</small></div><div class="qr-actions"><button class="quiet" onclick="copyFriendCode()">코드 복사</button><button onclick="shareFriendCode()">친구에게 공유</button></div><label class="qr-scan-button"><span>⌁</span> QR 사진으로 친구 추가<input type="file" accept="image/*" capture="environment" onchange="scanFriendQr(this)"></label><small class="qr-help">상대의 Re:Tone QR을 카메라로 찍거나 저장한 사진을 선택하세요.</small>`;
+  panel.innerHTML = `<div class="my-qr-card" id="my-friend-qr"><div class="thinking-loader"><i></i><i></i><i></i></div><small>내 QR 코드를 준비하고 있어요.</small></div><div class="qr-actions"><button class="quiet" onclick="copyFriendCode()">코드 복사</button><button onclick="shareFriendCode()">공유하기</button></div><div class="qr-divider"><span>친구의 QR을 받았다면</span></div><label class="qr-scan-button"><span>⌗</span><b>QR 사진 선택</b><small>카메라로 찍었거나 저장한 사진</small><input type="file" accept="image/*" capture="environment" onchange="scanFriendQr(this)"></label>`;
   loadMyFriendQr();
 }
 async function loadMyFriendQr() {
   const card = document.querySelector("#my-friend-qr");
   if (!card) return;
   try {
-    const profile = await api("/api/friends/me");
+    const profile = await getFriendIdentity();
     card.dataset.friendCode = profile.friend_code;
-    card.innerHTML = `<div class="qr-copy"><span>나의 친구 QR</span><b>스캔하면 바로<br>친구 요청을 보낼 수 있어요.</b><small>상대가 수락하면 채팅을 시작해요.</small></div><div class="qr-image">${profile.qr_svg}</div><button class="friend-code-chip" onclick="copyFriendCode()"><span>친구코드</span><b>${esc(profile.friend_code)}</b><i>복사</i></button>`;
+    card.innerHTML = `<div class="qr-title"><span>내 QR 코드</span><small>상대방이 스캔하면 내 친구코드가 입력돼요.</small></div><div class="qr-image">${profile.qr_svg}</div><button class="friend-code-chip" onclick="copyFriendCode()"><span>내 친구코드</span><b>${esc(profile.friend_code)}</b><i>복사</i></button>`;
   } catch {
     card.innerHTML = `<b>QR 코드를 불러오지 못했어요.</b><small>잠시 후 다시 열어주세요.</small>`;
   }
@@ -675,8 +708,10 @@ async function scanFriendQr(input) {
   }
 }
 async function copyFriendCode() {
-  const code = document.querySelector("#my-friend-qr")?.dataset.friendCode;
-  if (!code) return;
+  let code = document.querySelector("#my-friend-qr")?.dataset.friendCode || document.querySelector("#friend-code-overview")?.dataset.friendCode || document.querySelector("#my-code-entry")?.dataset.friendCode;
+  if (!code) {
+    try { code = (await getFriendIdentity()).friend_code; } catch { return alert("친구코드를 불러오지 못했어요. 잠시 후 다시 시도해주세요."); }
+  }
   try {
     await navigator.clipboard.writeText(code);
     alert("친구코드를 복사했어요.");
@@ -685,8 +720,10 @@ async function copyFriendCode() {
   }
 }
 async function shareFriendCode() {
-  const code = document.querySelector("#my-friend-qr")?.dataset.friendCode;
-  if (!code) return;
+  let code = document.querySelector("#my-friend-qr")?.dataset.friendCode || document.querySelector("#friend-code-overview")?.dataset.friendCode;
+  if (!code) {
+    try { code = (await getFriendIdentity()).friend_code; } catch { return alert("친구코드를 불러오지 못했어요. 잠시 후 다시 시도해주세요."); }
+  }
   const text = `Re:Tone 친구코드: ${code}`;
   if (navigator.share) {
     try { await navigator.share({ title: "Re:Tone 친구 추가", text }); return; } catch {}
@@ -709,7 +746,8 @@ async function lookupFriend(mode) {
       return;
     }
     const user = result.user;
-    root.innerHTML = `<article class="friend-search-result"><span class="avatar">${user.avatar_url ? `<img src="${user.avatar_url}" alt="">` : esc(user.name[0])}</span><span><b>${esc(user.name)}</b><small>이 사용자에게 친구 요청을 보낼까요?</small></span><button onclick="requestFriend('${user.id}',true)">요청 보내기</button></article>`;
+    const state = {friend:"이미 친구예요",outgoing:"이미 요청을 보냈어요",incoming:"나에게 요청을 보낸 사용자예요",blocked:"차단된 사용자예요"}[result.relationship];
+    root.innerHTML = `<article class="friend-search-result"><span class="avatar">${user.avatar_url ? `<img src="${user.avatar_url}" alt="">` : esc(user.name[0])}</span><span><b>${esc(user.name)}</b><small>${state || "이 사용자에게 친구 요청을 보낼까요?"}</small></span>${result.relationship === "none" ? `<button onclick="requestFriend('${user.id}',true)">요청 보내기</button>` : `<i class="friend-result-state">${state}</i>`}</article>`;
   } catch (error) {
     if (root) root.innerHTML = `<div class="friend-search-empty">친구를 찾지 못했어요. 입력한 정보를 다시 확인해주세요.</div>`;
   }
@@ -719,8 +757,8 @@ async function requestFriend(id, closeAfter = false) {
     await api("/api/friends/request", { method: "POST", body: JSON.stringify({ user_id: signedInId, target_id: id }) });
     if (closeAfter) closePopup();
     friends();
-  } catch {
-    alert("친구 요청을 보내지 못했어요. 연결 상태를 확인한 뒤 다시 시도해주세요.");
+  } catch (error) {
+    alert(error.status === 409 ? "이미 친구이거나 처리 중인 친구 요청이 있어요." : "친구 요청을 보내지 못했어요. 연결 상태를 확인한 뒤 다시 시도해주세요.");
   }
 }
 async function acceptFriend(id) {

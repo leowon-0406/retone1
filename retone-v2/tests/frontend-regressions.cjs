@@ -39,7 +39,12 @@ async function main() {
     stopTyping(); await Promise.resolve(); await Promise.resolve();
     const schedule = appointmentEditorMarkup({id:'plan',date:'2026-11-22 18:00',place:'회의실',title:'회의',fields:[{label:'준비물',value:'발표 자료'}]});
     const scheduleFields = schedule.includes('준비물') && schedule.includes('발표 자료') && schedule.includes('＋ 세부 항목');
-    return {draftKept,oldKept,newAdded,writes,scheduleFields};
+    friendIdentityCache={userId:'me',profile:{friend_code:'MZ3C4M',qr_svg:'<svg viewBox="0 0 10 10"></svg>'}};
+    openFriendAdd('qr'); await Promise.resolve(); await Promise.resolve();
+    const friendCodeVisible = document.querySelector('#friend-code-overview')?.textContent.includes('MZ3C4M');
+    const qrVisible = document.querySelector('#my-friend-qr .qr-image svg') !== null;
+    const qrCodeParsed = friendCodeFromQr('RETONE-FRIEND:mz3c4m') === 'MZ3C4M';
+    return {draftKept,oldKept,newAdded,writes,scheduleFields,friendCodeVisible,qrVisible,qrCodeParsed};
   })()`, context);
   assert.equal(result.draftKept, true);
   assert.equal(result.oldKept, true);
@@ -47,7 +52,10 @@ async function main() {
   assert.deepEqual(Array.from(result.writes, item=>item.active), [true, false]);
   assert.ok(result.writes.every(item=>item.url==='/api/rooms/room-1/typing'));
   assert.equal(result.scheduleFields, true);
-  console.log('Frontend regressions passed: draft, focus, incremental append, typing and schedule fields.');
+  assert.equal(result.friendCodeVisible, true);
+  assert.equal(result.qrVisible, true);
+  assert.equal(result.qrCodeParsed, true);
+  console.log('Frontend regressions passed: draft, focus, incremental append, typing, schedule and friend QR/code.');
 }
 
 main().catch(error=>{ console.error(error); process.exitCode=1; });

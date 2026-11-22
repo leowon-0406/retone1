@@ -268,6 +268,7 @@ struct FriendIdentity {
 #[derive(Serialize)]
 struct FriendLookupOut {
     user: Option<PublicUser>,
+    relationship: String,
 }
 async fn create_session(db: &PgPool, user_id: Uuid) -> Result<String, StatusCode> {
     let token = Uuid::new_v4();
@@ -376,6 +377,38 @@ async fn ensure_friend_codes(db: &PgPool) -> Result<(), StatusCode> {
             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     }
     Ok(())
+}
+async fn get_or_create_friend_code(db: &PgPool, id: Uuid) -> Result<String, StatusCode> {
+    let current = sqlx::query_scalar::<_, Option<String>>(
+        "SELECT friend_code FROM retone_v2.users WHERE id=$1 AND deleted_at IS NULL",
+    )
+    .bind(id)
+    .fetch_optional(db)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    .ok_or(StatusCode::NOT_FOUND)?;
+    if let Some(current) = current {
+        let normalized = normalize_friend_code(&current);
+        if normalized.len() == 6 {
+            if normalized != current {
+                sqlx::query("UPDATE retone_v2.users SET friend_code=$1 WHERE id=$2")
+                    .bind(&normalized)
+                    .bind(id)
+                    .execute(db)
+                    .await
+                    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            }
+            return Ok(normalized);
+        }
+    }
+    let code = allocate_friend_code(db, id).await?;
+    sqlx::query("UPDATE retone_v2.users SET friend_code=$1 WHERE id=$2")
+        .bind(&code)
+        .bind(id)
+        .execute(db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    Ok(code)
 }
 fn ai_level(value: Option<&str>) -> String {
     match value.unwrap_or("standard") {
@@ -619,15 +652,9 @@ async fn friend_identity(
     headers: HeaderMap,
 ) -> Result<Json<FriendIdentity>, StatusCode> {
     let user_id = require_user(&app, &headers).await?;
-    let friend_code: String = sqlx::query_scalar(
-        "SELECT friend_code FROM retone_v2.users WHERE id=$1 AND deleted_at IS NULL",
-    )
-    .bind(user_id)
-    .fetch_optional(&app.db)
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-    .flatten()
-    .ok_or(StatusCode::NOT_FOUND)?;
+    // Old accounts may predate friend codes. Repair them on demand instead of
+    // making the QR/code screen fail until the service restarts.
+    let friend_code = get_or_create_friend_code(&app.db, user_id).await?;
     let payload = format!("RETONE-FRIEND:{friend_code}");
     let qr_svg = QrCode::new(payload.as_bytes())
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
@@ -658,11 +685,11 @@ async fn lookup_friend(
         .await
     } else if let Some(friend_code) = input.friend_code {
         let normalized = normalize_friend_code(&friend_code);
-        if normalized.len() < 6 {
+        if normalized.len() != 6 {
             return Err(StatusCode::BAD_REQUEST);
         }
         sqlx::query_as::<_, (Uuid, String, Option<String>, String)>(
-            "SELECT id,name,avatar_url,ai_intervention FROM retone_v2.users WHERE replace(friend_code,'-','')=$1 AND id<>$2 AND deleted_at IS NULL",
+            "SELECT id,name,avatar_url,ai_intervention FROM retone_v2.users WHERE upper(regexp_replace(COALESCE(friend_code,''),'[^A-Za-z0-9]','','g'))=$1 AND id<>$2 AND deleted_at IS NULL",
         )
         .bind(normalized)
         .bind(user_id)
@@ -672,8 +699,26 @@ async fn lookup_friend(
         return Err(StatusCode::BAD_REQUEST);
     }
     .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let relationship = if let Some(target) = row.as_ref().map(|value| value.0) {
+        sqlx::query_scalar::<_, String>(
+            "SELECT CASE
+             WHEN EXISTS(SELECT 1 FROM retone_v2.blocks WHERE (blocker_id=$1 AND blocked_id=$2) OR (blocker_id=$2 AND blocked_id=$1)) THEN 'blocked'
+             WHEN EXISTS(SELECT 1 FROM retone_v2.friendships WHERE user_id=$1 AND friend_id=$2) THEN 'friend'
+             WHEN EXISTS(SELECT 1 FROM retone_v2.friend_requests WHERE from_id=$1 AND to_id=$2) THEN 'outgoing'
+             WHEN EXISTS(SELECT 1 FROM retone_v2.friend_requests WHERE from_id=$2 AND to_id=$1) THEN 'incoming'
+             ELSE 'none' END",
+        )
+        .bind(user_id)
+        .bind(target)
+        .fetch_one(&app.db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    } else {
+        "none".to_string()
+    };
     Ok(Json(FriendLookupOut {
         user: row.map(|value| user_out(value.0, value.1, value.2, value.3)),
+        relationship,
     }))
 }
 async fn request_friend(
@@ -689,6 +734,21 @@ async fn request_friend(
         .bind(user_id).bind(input.target_id).fetch_one(&app.db).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
     if blocked {
         return Err(StatusCode::FORBIDDEN);
+    }
+    let already_connected: bool = sqlx::query_scalar(
+        "SELECT EXISTS(
+           SELECT 1 FROM retone_v2.friendships WHERE user_id=$1 AND friend_id=$2
+           UNION ALL
+           SELECT 1 FROM retone_v2.friend_requests WHERE (from_id=$1 AND to_id=$2) OR (from_id=$2 AND to_id=$1)
+         )",
+    )
+    .bind(user_id)
+    .bind(input.target_id)
+    .fetch_one(&app.db)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if already_connected {
+        return Err(StatusCode::CONFLICT);
     }
     sqlx::query(
         "INSERT INTO retone_v2.friend_requests(from_id,to_id) VALUES($1,$2) ON CONFLICT DO NOTHING",
