@@ -1473,7 +1473,15 @@ function view(m) {
   const replyButton = `<button class="reply-shortcut" title="답장" aria-label="답장" onpointerdown="event.stopPropagation()" onclick="event.stopPropagation();startReply('${m.id}')"><span>↩</span><em>답장</em></button>`;
   const tap = m.mine ? "" : `onclick="handleMessageTap('${m.id}')"`;
   const press = `onpointerdown="beginMessagePress(event,'${m.id}',${m.mine})" onpointerup="endMessageGesture(event,'${m.id}',${m.mine})" onpointerleave="endMessageGesture(event,'${m.id}',${m.mine})" onpointermove="trackMessageSwipe(event,'${m.id}',${m.mine})" onpointercancel="cancelMessagePress(true)" oncontextmenu="return false"`;
-  return `<article class="bubble ${m.mine ? "mine" : ""}" data-message-id="${esc(m.id)}" ${tap} ${press}><div class="meta"><span>${esc(m.sender)}</span>${messageMenu}</div>${quote}${m.image_url ? `<img class="chat-image" src="${m.image_url}" alt="보낸 사진"><small class="image-message-label">사진을 보냈어요</small>` : ""}${m.body ? `<span>${esc(m.body)}</span>` : ""}<div class="bubble-tools">${contextCue}${factCue}${replyButton}${m.mine && m.unread ? `<span class="read">${m.unread}</span>` : ""}</div></article>`;
+  const image = m.image_url
+    ? `<button type="button" class="chat-image-button" aria-label="사진 크게 보기" onpointerdown="event.stopPropagation()" onclick="event.stopPropagation();openImageViewer('${m.id}')"><img class="chat-image" src="${escAttr(m.image_url)}" alt="${escAttr(m.sender)}님이 보낸 사진"></button><small class="image-message-label">눌러서 크게 보기</small>`
+    : "";
+  return `<article class="bubble ${m.mine ? "mine" : ""}" data-message-id="${esc(m.id)}" ${tap} ${press}><div class="meta"><span>${esc(m.sender)}</span>${messageMenu}</div>${quote}${image}${m.body ? `<span>${esc(m.body)}</span>` : ""}<div class="bubble-tools">${contextCue}${factCue}${replyButton}${m.mine && m.unread ? `<span class="read">${m.unread}</span>` : ""}</div></article>`;
+}
+function openImageViewer(id) {
+  const message = currentRoomMessages.find((item) => item.id === id);
+  if (!message?.image_url) return;
+  popup(`<div class="image-viewer"><div class="image-viewer-head"><span>${esc(message.sender)}님의 사진</span><button type="button" aria-label="사진 닫기" onclick="closePopup()">×</button></div><img src="${escAttr(message.image_url)}" alt="${escAttr(message.sender)}님이 보낸 사진"><small>화면 바깥을 누르면 닫혀요.</small></div>`);
 }
 function openContextToneFinding(id) {
   const message = currentRoomMessages.find((item) => item.id === id);
