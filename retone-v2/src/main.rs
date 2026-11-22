@@ -2523,6 +2523,37 @@ async fn update_appointment(
     }
     Ok(Json(appointment))
 }
+async fn delete_appointment(
+    State(app): State<App>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<StatusCode, StatusCode> {
+    let user_id = require_user(&app, &headers).await?;
+    let (room_id, created_by) = sqlx::query_as::<_, (Option<Uuid>, Uuid)>(
+        "SELECT room_id,created_by FROM retone_v2.appointments WHERE id=$1",
+    )
+    .bind(id)
+    .fetch_optional(&app.db)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    .ok_or(StatusCode::NOT_FOUND)?;
+    if let Some(room_id) = room_id {
+        require_room_member(&app, room_id, user_id).await?;
+    } else if created_by != user_id {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    let deleted = sqlx::query("DELETE FROM retone_v2.appointments WHERE id=$1")
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .rows_affected();
+    if deleted == 0 {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    app.data.write().await.appointments.retain(|item| item.id != id.to_string());
+    Ok(StatusCode::NO_CONTENT)
+}
 async fn create_reflection(
     State(app): State<App>,
     headers: HeaderMap,
@@ -2638,7 +2669,7 @@ async fn main() {
         .route("/api/agreements", post(create_agreement))
         .route("/api/agreements/{id}/{action}", post(update_agreement))
         .route("/api/appointments", post(create_appointment))
-        .route("/api/appointments/{id}", patch(update_appointment))
+        .route("/api/appointments/{id}", patch(update_appointment).delete(delete_appointment))
         .route("/api/reflections", post(create_reflection))
         .route("/api/rooms/{id}/messages", get(messages).post(send))
         .route("/api/rooms/{id}/leave", delete(leave_room))

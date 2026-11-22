@@ -19,4 +19,12 @@
 .schedule-field { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) auto; align-items: center; gap: .4rem; }
 .schedule-field input { min-width: 0; width: 100%; }
 .schedule-field button { padding: .4rem .65rem; }
+.appointment-actions { display: flex; flex-wrap: wrap; gap: .45rem; margin-top: .2rem; }
+.appointment-card .appointment-actions .quiet { margin-top: .35rem !important; }
+.appointment-card .appointment-actions .danger { background: #fff0eb !important; color: #a24d43 !important; }
+.popup-actions { display: grid; grid-template-columns: 1fr 1fr; gap: .55rem; margin-top: 1rem; }
+.popup-actions button { margin: 0 !important; }
+.appointment-delete .danger-action { background: #b65347 !important; color: #fff !important; }
+.dark .appointment-card .appointment-actions .danger { background: #4a302d !important; color: #ffb3a7 !important; }
+@media(max-width:700px) { .appointment-actions { display: grid; grid-template-columns: 1fr 1fr; } }
 .appointment-editor { max-height: 80dvh; overflow-y: auto; }

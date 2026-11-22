@@ -319,8 +319,9 @@ async function home() {
   const rooms = data.rooms.filter(
     (r) => !["science", "friends"].includes(r.id) && !hasLeftRoom(r.id),
   ).sort((a, b) => Number(b.updated || 0) - Number(a.updated || 0));
+  const now = localDateTimeValue(new Date()).replace("T", " ");
   const upcoming = (data.appointments || [])
-    .slice()
+    .filter((appointment) => appointment.date >= now)
     .sort((a, b) => a.date.localeCompare(b.date))[0];
   app.innerHTML = `<main class="layout">${rail()}<section class="page"><header class="head"><h1>채팅</h1><button class="new-room" onclick="newRoom()">＋ 새 대화</button></header><div class="content"><div class="intro"><h2>${esc(signedIn)}님, 반가워요.</h2><p>친구를 초대해 첫 대화를 시작해 보세요.</p></div><div class="dash"><section class="focus"><b>오늘의 공동 확인</b><span>채팅방에서 함께 확인할 일을 만들어 보세요.</span></section><section class="focus schedule"><b>다음 약속 <button onclick="newAppointment()">＋</button></b><span>${upcoming ? `${esc(upcoming.title)} · ${esc(upcoming.date)}` : "친구들과 약속을 정하면 여기에 보여요."}</span></section></div><div class="rooms">${rooms.length ? rooms.map((r) => `<button class="room" data-room-id="${esc(r.id)}" onclick="openRoom('${r.id}')"><span class="avatar">${esc(r.name[0])}</span><span class="copy"><b>${r.pinned ? "📌 " : ""}${esc(r.name)}</b><span class="room-last">${esc(r.last)}</span></span>${r.unread ? `<span class="badge">${r.unread}</span>` : ""}</button>`).join("") : `<button class="empty-chat" onclick="newRoom()"><b>아직 대화가 없어요</b><span>친구를 초대하거나 단체 채팅을 만들어 보세요. ＋</span></button>`}</div></div></section></main>`;
   startInboxPolling(data);
@@ -1567,17 +1568,21 @@ function viewReflection(item) {
   return `<article class="reflection-card"><span>↻ 약속 회고</span><b>${esc(item.title)}</b><p><strong>계속할 점</strong> ${esc(item.keep || "아직 작성하지 않았어요")}</p><p><strong>다음에는</strong> ${esc(item.next || "아직 작성하지 않았어요")}</p></article>`;
 }
 function viewAppointment(item) {
-  return `<article class="appointment-card"><span>◷ 함께 정한 약속</span><b>${esc(item.title)}</b><p><strong>${esc(item.date)}</strong>${item.place ? ` · ${esc(item.place)}` : ""}</p>${(item.fields||[]).map(f=>`<p><strong>${esc(f.label)}</strong> · ${esc(f.value)}</p>`).join("")}<button class="quiet" onclick="editAppointment('${item.id}')">함께 수정</button></article>`;
+  return `<article class="appointment-card"><span>◷ 함께 정한 약속</span><b>${esc(item.title)}</b><p><strong>${esc(item.date)}</strong>${item.place ? ` · ${esc(item.place)}` : ""}</p>${(item.fields||[]).map(f=>`<p><strong>${esc(f.label)}</strong> · ${esc(f.value)}</p>`).join("")}<div class="appointment-actions"><button class="quiet" onclick="editAppointment('${item.id}')">함께 수정</button><button class="quiet danger" onclick="confirmDeleteAppointment('${item.id}')">일정 삭제</button></div></article>`;
+}
+function localDateTimeValue(date) {
+  const pad = (value) => String(value).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 function setQuickDate(inputId, offset) {
   const date = new Date();
   date.setDate(date.getDate() + offset);
   date.setHours(18, 0, 0, 0);
-  const value = new Date(date.getTime() - date.getTimezoneOffset() * 60000)
-    .toISOString()
-    .slice(0, 16);
   const input = document.querySelector(`#${inputId}`);
-  if (input) input.value = value;
+  if (input) {
+    input.value = localDateTimeValue(date);
+    input.focus();
+  }
 }
 function viewInsight(item) {
   return `<article class="insight-card"><span>✦ 대화 흐름 말맞춤 · ${esc(item.topic || "대화 흐름")}</span><b>${esc(item.summary)}</b><p><strong>엇갈린 지점</strong> ${esc(item.reason)}</p><p><strong>이렇게 풀어볼까요?</strong> ${esc(item.suggestion)}</p><button onclick="openConflictGuide()">갈등 전환 모드 열기</button></article>`;
@@ -2199,6 +2204,32 @@ function editAppointment(id) {
   if (!item) return alert("이 약속을 찾지 못했어요. 화면을 새로고침한 뒤 다시 시도해주세요.");
   popup(appointmentEditorMarkup(item));
 }
+function confirmDeleteAppointment(id) {
+  const item = (data?.appointments || []).find((appointment) => appointment.id === id);
+  if (!item) return alert("이 약속을 찾지 못했어요. 화면을 새로고침한 뒤 다시 시도해주세요.");
+  popup(`<div class="ai-check appointment-delete"><span>일정 삭제</span><h2>‘${esc(item.title)}’ 약속을 삭제할까요?</h2><p>함께 보는 일정에서 사라지며 되돌릴 수 없어요.</p><div class="popup-actions"><button class="quiet" onclick="closePopup()">취소</button><button class="danger-action" onclick="deleteAppointment('${item.id}')">삭제하기</button></div></div>`);
+}
+async function deleteAppointment(id) {
+  const button = document.querySelector(".appointment-delete .danger-action");
+  if (button?.disabled) return;
+  if (button) {
+    button.disabled = true;
+    button.textContent = "삭제 중…";
+  }
+  try {
+    await api(`/api/appointments/${id}`, { method: "DELETE" });
+    data.appointments = (data.appointments || []).filter((appointment) => appointment.id !== id);
+    closePopup();
+    if (roomId) openRoom(roomId);
+    else home();
+  } catch (error) {
+    if (button) {
+      button.disabled = false;
+      button.textContent = "삭제하기";
+    }
+    alert(error.status === 403 ? "이 일정을 삭제할 권한이 없어요." : "일정을 삭제하지 못했어요. 잠시 후 다시 시도해주세요.");
+  }
+}
 async function saveAppointment(id = "") {
   const title = document.querySelector("#appointmentTitle").value.trim(),
     date = document.querySelector("#appointmentDate").value;
@@ -2225,9 +2256,14 @@ async function saveAppointment(id = "") {
     closePopup();
     if (roomId) openRoom(roomId);
     else home();
-  } catch {
+  } catch (error) {
     editor.inert = false;
-    alert("약속을 저장하지 못했어요. 날짜와 채팅방 참여 상태를 확인해주세요.");
+    const message = error.status === 403
+      ? "이 채팅방의 참여자만 약속을 수정할 수 있어요."
+      : error.status === 400
+        ? "약속 이름, 날짜와 세부 항목을 다시 확인해주세요."
+        : "약속을 저장하지 못했어요. 잠시 후 다시 시도해주세요.";
+    alert(message);
   }
 }
 function openChatMore() {

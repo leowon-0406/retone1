@@ -43,6 +43,9 @@ async function main() {
     const messengerTyping=document.querySelectorAll('#typing-status .typing-dots i').length===3 && document.querySelector('#typing-status')?.textContent.includes('친구님이 입력 중');
     const schedule = appointmentEditorMarkup({id:'plan',date:'2026-11-22 18:00',place:'회의실',title:'회의',fields:[{label:'준비물',value:'발표 자료'}]});
     const scheduleFields = schedule.includes('준비물') && schedule.includes('발표 자료') && schedule.includes('＋ 세부 항목');
+    const scheduleCard = viewAppointment({id:'plan',date:'2026-11-22 18:00',place:'회의실',title:'회의',fields:[]});
+    const scheduleActions = scheduleCard.includes('함께 수정') && scheduleCard.includes('일정 삭제');
+    const localScheduleTime = localDateTimeValue(new Date(2026,10,22,18,5)) === '2026-11-22T18:05';
     let aiRequestBody=null;
     api=async(url,options)=>{if(url==='/api/ai/check'){aiRequestBody=JSON.parse(options.body);return {verdict:'PASS',source:'quick',info:{level:'none'}}} throw new Error('unexpected')};
     aiPrefetch={text:'오늘 회의 어떻게 할까',result:null,promise:null,timer:null};
@@ -62,7 +65,7 @@ async function main() {
     localStorage.removeItem('retone-ai-sensitivity');
     const sensitivity=sensitivityState();
     const strongerAiDefaults=sensitivity.overall===55 && sensitivity.categories['강한 공격 표현']===65 && sensitivity.categories['비꼼·압박 표현']===60;
-    return {draftKept,oldKept,newAdded,writes,scheduleFields,friendCodeVisible,qrVisible,qrCodeParsed,strongerAiDefaults,quickBeforeSend,manualFlow,settingsSelected,newestRoomFirst,messengerTyping};
+    return {draftKept,oldKept,newAdded,writes,scheduleFields,scheduleActions,localScheduleTime,friendCodeVisible,qrVisible,qrCodeParsed,strongerAiDefaults,quickBeforeSend,manualFlow,settingsSelected,newestRoomFirst,messengerTyping};
   })()`, context);
   assert.equal(result.draftKept, true);
   assert.equal(result.oldKept, true);
@@ -70,6 +73,8 @@ async function main() {
   assert.deepEqual(Array.from(result.writes, item=>item.active), [true, false]);
   assert.ok(result.writes.every(item=>item.url==='/api/rooms/room-1/typing'));
   assert.equal(result.scheduleFields, true);
+  assert.equal(result.scheduleActions, true);
+  assert.equal(result.localScheduleTime, true);
   assert.equal(result.friendCodeVisible, true);
   assert.equal(result.qrVisible, true);
   assert.equal(result.qrCodeParsed, true);
