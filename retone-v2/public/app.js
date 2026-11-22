@@ -559,7 +559,7 @@ function agreementMarkup(id) {
     .slice(0, 1)
     .map(
       (a) =>
-        `<article class="agreement"><b>✓ 공동 확인 · ${esc(a.task)}</b><small>담당 ${esc(a.assignee)} · ${esc(a.deadline)} · 확인 ${a.confirmations} · 보완 ${a.revisions}</small><div><button onclick="answerAgreement('${a.id}','confirm')">확인했어요</button><button class="quiet" onclick="answerAgreement('${a.id}','revise')">보완 요청</button></div></article>`,
+        `<article class="agreement" data-agreement-id="${escAttr(a.id)}"><b>✓ 공동 확인 · ${esc(a.task)}</b><small>담당 ${esc(a.assignee)} · ${esc(a.deadline)} · 확인 ${a.confirmations} · 보완 ${a.revisions}</small><div><button onclick="answerAgreement('${a.id}','confirm',this)">확인했어요</button><button class="quiet" onclick="answerAgreement('${a.id}','revise',this)">보완 요청</button></div><span class="agreement-feedback" role="status" aria-live="polite"></span></article>`,
     )
     .join(
       "",
@@ -2383,12 +2383,31 @@ async function saveAgreement() {
     alert("공동 확인을 만들지 못했어요. 이 방의 참여 상태와 연결을 확인해주세요.");
   }
 }
-async function answerAgreement(id, action) {
+async function answerAgreement(id, action, button) {
+  if (button?.disabled) return;
+  const originalLabel = button?.textContent || "";
+  if (button) {
+    button.disabled = true;
+    button.textContent = "반영 중…";
+  }
   try {
-    await api(`/api/agreements/${id}/${action}`, { method: "POST" });
-    data = await api(`/api/bootstrap?user_id=${encodeURIComponent(signedInId)}`);
-    openRoom(roomId);
+    const updated = await api(`/api/agreements/${id}/${action}`, { method: "POST" });
+    const index = (data.agreements || []).findIndex((item) => item.id === id);
+    if (index >= 0) data.agreements[index] = updated;
+    else data.agreements = [...(data.agreements || []), updated];
+    updateFragment("#agreements-slot", agreementMarkup(roomId));
+    const card = document.querySelector(`[data-agreement-id="${CSS.escape(id)}"]`);
+    const feedback = card?.querySelector(".agreement-feedback");
+    if (feedback) {
+      feedback.textContent = action === "confirm" ? "확인이 반영됐어요." : "보완 요청이 반영됐어요.";
+      feedback.classList.add("show");
+    }
+    setAiStatus(action === "confirm" ? "공동 확인에 반영했어요" : "보완 요청을 남겼어요");
   } catch {
+    if (button) {
+      button.disabled = false;
+      button.textContent = originalLabel;
+    }
     alert("공동 확인을 업데이트하지 못했어요. 잠시 후 다시 시도해주세요.");
   }
 }
