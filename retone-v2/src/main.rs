@@ -22,25 +22,14 @@ use tower_http::services::ServeDir;
 use uuid::Uuid;
 
 pub(crate) fn openai_fast_model() -> String {
-    env::var("OPENAI_FAST_MODEL").unwrap_or_else(|_| "gpt-6-luna".into())
+    // Re:Tone's always-on chat checks must stay on the explicitly selected
+    // low-cost GPT-4 model. Use a new variable name so stale Render settings
+    // for the previous GPT-6 rollout cannot silently override this choice.
+    env::var("RETONE_OPENAI_MODEL").unwrap_or_else(|_| "gpt-4o-mini".into())
 }
 
 pub(crate) fn openai_quality_model() -> String {
-    // Keep the app in budget mode by default. Premium analysis is opt-in so an
-    // old OPENAI_QUALITY_MODEL value cannot silently make every check expensive.
-    let premium_enabled = env::var("OPENAI_ENABLE_PREMIUM_MODEL")
-        .map(|value| {
-            matches!(
-                value.trim().to_ascii_lowercase().as_str(),
-                "1" | "true" | "yes" | "on"
-            )
-        })
-        .unwrap_or(false);
-    if premium_enabled {
-        env::var("OPENAI_QUALITY_MODEL").unwrap_or_else(|_| openai_fast_model())
-    } else {
-        openai_fast_model()
-    }
+    openai_fast_model()
 }
 
 pub(crate) async fn openai_response_json(
