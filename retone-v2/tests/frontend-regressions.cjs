@@ -115,6 +115,7 @@ async function main() {
   assert.equal(result.otherAlignmentHidden, true);
   assert.ok((source.match(/id="auth-phone" inputmode="numeric" maxlength="13" autocomplete="tel" oninput="formatPhoneInput\(this\)" placeholder="010-1234-5678"/g) || []).length >= 2);
   assert.match(roomCss, /#reply-slot:not\(:empty\).*grid-column:\s*1\s*\/\s*-1/s);
+  assert.match(roomCss, /\.appointment-notice-slot:empty\s*\{[^}]*display:\s*block[^}]*padding:\s*0/s);
   assert.match(roomCss, /@keyframes messengerTyping/);
   assert.match(roomCss, /layout > \.rail[\s\S]*display:\s*flex\s*!important/);
   assert.match(authCss, /label>\.password-field\{margin-top:7px\}/);

@@ -39,7 +39,7 @@
 
 /* Kakao-style appointment notice: always visible between the room header and messages. */
 .chat { grid-template-rows: 76px auto minmax(0, 1fr) auto !important; }
-.appointment-notice-slot:empty { display: none; }
+.appointment-notice-slot:empty { display:block; min-height:0; padding:0; border:0; }
 .appointment-notice-slot { z-index: 5; padding: 8px max(34px, calc((100% - 850px)/2)); border-bottom: 1px solid #e8dfd0; background: #fffaf1; }
 .appointment-notice { display:grid; grid-template-columns:34px minmax(0,1fr) 20px; align-items:center; width:100%; gap:10px; padding:9px 12px; border:1px solid #e1dfb0; border-radius:14px; background:linear-gradient(135deg,#fffdf1,#f6f7d8); color:#424637; text-align:left; box-shadow:0 5px 14px #6c622514; }
 .appointment-notice-icon { display:grid; width:32px; height:32px; place-items:center; border-radius:11px; background:#e6eb91; color:#5f6728; font-size:16px; }
