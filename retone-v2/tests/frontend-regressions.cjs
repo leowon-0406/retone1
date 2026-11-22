@@ -81,10 +81,12 @@ async function main() {
     const aiPanelStaysOpen=advanced.open && group.open && choice.classList.contains('selected');
     const avatarMarkup=avatarContent('민서','https://example.test/avatar.jpg');
     const roomAvatarVisible=avatarMarkup.includes('<img') && avatarMarkup.includes('avatar.jpg');
-    const notice=appointmentNotice([{id:'plan',title:'회의',date:'2026-11-22 18:00',place:'회의실',fields:[]}]);
+    const notice=appointmentNotice([{id:'plan',title:'회의',date:'2099-11-22 18:00',place:'회의실',fields:[]}]);
     const appointmentNoticeVisible=notice.includes('약속 공지') && notice.includes('openAppointmentDetails');
+    const pastNotice=appointmentNotice([{id:'past-plan',title:'지난 회의',date:'2020-01-01 18:00',place:'회의실'}]);
+    const pastAppointmentVisible=pastNotice.includes('지난 일정') && pastNotice.includes('acknowledgePastAppointment');
     const otherAlignmentHidden=alignmentCard([{id:'align-other',body:'내일 만나자',mine:false,alignment_hint:true,alignment_kind:'appointment'}])==='';
-    return {draftKept,oldKept,newAdded,writes,scheduleFields,scheduleActions,localScheduleTime,loginPhoneFormat,planAlignmentVisible,friendCodeVisible,qrVisible,qrCodeParsed,exactNameSearchVisible,strongerAiDefaults,aiPanelStaysOpen,quickBeforeSend,manualFlow,settingsSelected,newestRoomFirst,messengerTyping,roomAvatarVisible,appointmentNoticeVisible,otherAlignmentHidden};
+    return {draftKept,oldKept,newAdded,writes,scheduleFields,scheduleActions,localScheduleTime,loginPhoneFormat,planAlignmentVisible,friendCodeVisible,qrVisible,qrCodeParsed,exactNameSearchVisible,strongerAiDefaults,aiPanelStaysOpen,quickBeforeSend,manualFlow,settingsSelected,newestRoomFirst,messengerTyping,roomAvatarVisible,appointmentNoticeVisible,pastAppointmentVisible,otherAlignmentHidden};
   })()`, context);
   assert.equal(result.draftKept, true);
   assert.equal(result.oldKept, true);
@@ -109,6 +111,7 @@ async function main() {
   assert.equal(result.messengerTyping, true);
   assert.equal(result.roomAvatarVisible, true);
   assert.equal(result.appointmentNoticeVisible, true);
+  assert.equal(result.pastAppointmentVisible, true);
   assert.equal(result.otherAlignmentHidden, true);
   assert.ok((source.match(/id="auth-phone" inputmode="numeric" maxlength="13" autocomplete="tel" oninput="formatPhoneInput\(this\)" placeholder="010-1234-5678"/g) || []).length >= 2);
   assert.match(roomCss, /#reply-slot:not\(:empty\).*grid-column:\s*1\s*\/\s*-1/s);

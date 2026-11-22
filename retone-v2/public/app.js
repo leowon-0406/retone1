@@ -1706,11 +1706,27 @@ function visibleAppointments(items) {
     .filter((item)=>localStorage.getItem(`retone-appointment-hidden-${signedInId}-${item.id}`)!=="1")
     .sort((a,b)=>String(a.date).localeCompare(String(b.date)));
 }
+function appointmentTime(item) {
+  const value = new Date(String(item?.date || "").replace(" ", "T")).getTime();
+  return Number.isFinite(value) ? value : Number.POSITIVE_INFINITY;
+}
 function appointmentNotice(items) {
   const visible = visibleAppointments(items);
   if (!visible.length) return "";
-  const item = visible[0];
+  const now = Date.now();
+  const past = visible
+    .filter((item)=>appointmentTime(item)<now && localStorage.getItem(`retone-appointment-past-seen-${signedInId}-${item.id}`)!=="1")
+    .sort((a,b)=>appointmentTime(b)-appointmentTime(a))[0];
+  if (past) {
+    return `<div class="appointment-notice past"><button class="appointment-notice-body" onclick="openAppointmentDetails('${past.id}')"><span class="appointment-notice-icon">✓</span><span><small>지난 일정 · 확인이 필요해요</small><b>${esc(past.title)}</b><em>${esc(past.date)}${past.place?` · ${esc(past.place)}`:""}</em></span><i>›</i></button><button class="past-appointment-confirm" onclick="acknowledgePastAppointment('${past.id}')">확인</button></div>`;
+  }
+  const item = visible.find((appointment)=>appointmentTime(appointment)>=now);
+  if (!item) return "";
   return `<button class="appointment-notice" onclick="openAppointmentDetails('${item.id}')"><span class="appointment-notice-icon">◷</span><span><small>약속 공지${visible.length>1?` · 외 ${visible.length-1}개`:""}</small><b>${esc(item.title)}</b><em>${esc(item.date)}${item.place?` · ${esc(item.place)}`:""}</em></span><i>›</i></button>`;
+}
+function acknowledgePastAppointment(id) {
+  localStorage.setItem(`retone-appointment-past-seen-${signedInId}-${id}`, "1");
+  if (roomId) syncRoomExtras(roomId,currentRoomMessages);
 }
 function openAppointmentDetails(id) {
   const item=(data.appointments||[]).find((appointment)=>appointment.id===id);

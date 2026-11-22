@@ -49,6 +49,15 @@
 .appointment-notice b { font-size:12px; }
 .appointment-notice em { color:#858578; font-size:10px; font-style:normal; }
 .appointment-notice>i { color:#8b903a; font-size:24px; font-style:normal; }
+.appointment-notice.past { grid-template-columns:minmax(0,1fr) auto; border-color:#e7d5b9; background:linear-gradient(135deg,#fff9ed,#f6eddd); }
+.appointment-notice-body { display:grid; grid-template-columns:34px minmax(0,1fr) 20px; align-items:center; min-width:0; gap:10px; padding:0; background:transparent!important; color:inherit!important; text-align:left; box-shadow:none!important; }
+.appointment-notice-body>span:nth-child(2) { display:grid; min-width:0; gap:1px; }
+.appointment-notice-body small { color:#a17145; font-size:9px; font-weight:900; }
+.appointment-notice-body b,.appointment-notice-body em { overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+.appointment-notice-body b { font-size:12px; }
+.appointment-notice-body em { color:#8a8075; font-size:10px; font-style:normal; }
+.appointment-notice-body>i { color:#a17145; font-size:24px; font-style:normal; }
+.past-appointment-confirm { min-width:52px; padding:8px 11px; border-radius:10px; background:#ead9bd!important; color:#704f32!important; font-size:11px; font-weight:900; box-shadow:none!important; }
 #appointments-slot { display:none !important; }
 .appointment-detail>span { color:#8b9639; font-size:11px; font-weight:900; }
 .appointment-detail>p { padding:9px 11px; border-radius:11px; background:#f8f4e8; }
@@ -83,6 +92,8 @@
 
 .dark .appointment-notice-slot { border-color:#45463f; background:#292a25; }
 .dark .appointment-notice { border-color:#626640; background:linear-gradient(135deg,#35372d,#3b3e2d); color:#f0f1dd; }
+.dark .appointment-notice.past { border-color:#655441; background:linear-gradient(135deg,#3a332a,#42372b); }
+.dark .past-appointment-confirm { background:#5b4936!important; color:#f4dcc0!important; }
 .dark .appointment-detail>p { background:#34352f; }
 .dark .appointment-change-preview { border-color:#5d6338; background:#353a2b; }
 @media(max-width:700px) {
