@@ -65,6 +65,35 @@ pub(crate) async fn openai_response_json(
     Err(StatusCode::BAD_GATEWAY)
 }
 
+pub(crate) fn openai_output_text(value: &serde_json::Value) -> Option<&str> {
+    value["output"]
+        .as_array()?
+        .iter()
+        .filter_map(|item| item["content"].as_array())
+        .flatten()
+        .find_map(|content| {
+            (content["type"] == "output_text")
+                .then(|| content["text"].as_str())
+                .flatten()
+        })
+}
+
+#[cfg(test)]
+mod openai_response_tests {
+    use super::*;
+
+    #[test]
+    fn finds_text_after_reasoning_items() {
+        let value = serde_json::json!({
+            "output": [
+                {"type":"reasoning","content":[]},
+                {"type":"message","content":[{"type":"output_text","text":"{\"verdict\":\"PASS\"}"}]}
+            ]
+        });
+        assert_eq!(openai_output_text(&value), Some("{\"verdict\":\"PASS\"}"));
+    }
+}
+
 #[derive(Clone, Serialize)]
 struct Room {
     id: String,
@@ -1636,9 +1665,7 @@ async fn ai_check(State(app): State<App>, Json(input): Json<AiCheck>) -> Json<se
             serde_json::json!({"verdict":"PASS","suggestion":null,"info":{"level":"none","note":null,"queries":[]},"source":"fallback"}),
         );
     };
-    let out = v["output"][0]["content"][0]["text"]
-        .as_str()
-        .unwrap_or("{}");
+    let out = openai_output_text(&v).unwrap_or("{}");
     let Some(parsed) = serde_json::from_str::<serde_json::Value>(out)
         .ok()
         .filter(|v| matches!(v["verdict"].as_str(), Some("PASS" | "WARN")))
@@ -1738,9 +1765,7 @@ async fn context_check_message(
         serde_json::json!({"input":prompt,"max_output_tokens":260,"store":false,"text":{"format":{"type":"json_object"}}}),
         25,
     ).await?;
-    let raw = value["output"][0]["content"][0]["text"]
-        .as_str()
-        .ok_or(StatusCode::BAD_GATEWAY)?;
+    let raw = openai_output_text(&value).ok_or(StatusCode::BAD_GATEWAY)?;
     let parsed: serde_json::Value =
         serde_json::from_str(raw).map_err(|_| StatusCode::BAD_GATEWAY)?;
     let trigger = warning_evidence(&body, &parsed).map(str::to_string);
@@ -1820,12 +1845,7 @@ async fn ai_rewrite(Json(input): Json<RewriteRequest>) -> Json<serde_json::Value
     .await;
     let suggestion = response
         .ok()
-        .and_then(|(v, _)| {
-            v["output"][0]["content"][0]["text"]
-                .as_str()
-                .map(str::trim)
-                .map(str::to_string)
-        })
+        .and_then(|(v, _)| openai_output_text(&v).map(str::trim).map(str::to_string))
         .unwrap_or_default()
         .trim_end_matches(|c| c == '.' || c == '。')
         .trim_end()
@@ -1866,8 +1886,7 @@ async fn analyze_conversation(Json(input): Json<ConversationAnalysis>) -> Json<s
         25,
     ).await;
     let parsed = response.ok().and_then(|(value, _)| {
-        value["output"][0]["content"][0]["text"]
-            .as_str()
+        openai_output_text(&value)
             .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok())
     });
     let Some(parsed) = parsed else {
@@ -1899,11 +1918,7 @@ async fn ai_support(Json(input): Json<RewriteRequest>) -> Json<serde_json::Value
     .await;
     let reply = response
         .ok()
-        .and_then(|(v, _)| {
-            v["output"][0]["content"][0]["text"]
-                .as_str()
-                .map(str::to_string)
-        })
+        .and_then(|(v, _)| openai_output_text(&v).map(str::to_string))
         .unwrap_or_default();
     Json(serde_json::json!({"reply":reply}))
 }
@@ -2503,9 +2518,7 @@ async fn create_conversation_insight(
     let Ok((value, _)) = response else {
         return Ok(Json(serde_json::json!({"created":false})));
     };
-    let text = value["output"][0]["content"][0]["text"]
-        .as_str()
-        .unwrap_or("{}");
+    let text = openai_output_text(&value).unwrap_or("{}");
     let parsed = serde_json::from_str::<serde_json::Value>(text).unwrap_or_default();
     let insight = ConversationInsight {
         id: Uuid::new_v4().to_string(),
