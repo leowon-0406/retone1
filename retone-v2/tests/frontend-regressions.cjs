@@ -44,7 +44,10 @@ async function main() {
     const friendCodeVisible = document.querySelector('#friend-code-overview')?.textContent.includes('MZ3C4M');
     const qrVisible = document.querySelector('#my-friend-qr .qr-image svg') !== null;
     const qrCodeParsed = friendCodeFromQr('RETONE-FRIEND:mz3c4m') === 'MZ3C4M';
-    return {draftKept,oldKept,newAdded,writes,scheduleFields,friendCodeVisible,qrVisible,qrCodeParsed};
+    localStorage.removeItem('retone-ai-sensitivity');
+    const sensitivity=sensitivityState();
+    const strongerAiDefaults=sensitivity.overall===55 && sensitivity.categories['강한 공격 표현']===65 && sensitivity.categories['비꼼·압박 표현']===60;
+    return {draftKept,oldKept,newAdded,writes,scheduleFields,friendCodeVisible,qrVisible,qrCodeParsed,strongerAiDefaults};
   })()`, context);
   assert.equal(result.draftKept, true);
   assert.equal(result.oldKept, true);
@@ -55,7 +58,8 @@ async function main() {
   assert.equal(result.friendCodeVisible, true);
   assert.equal(result.qrVisible, true);
   assert.equal(result.qrCodeParsed, true);
-  console.log('Frontend regressions passed: draft, focus, incremental append, typing, schedule and friend QR/code.');
+  assert.equal(result.strongerAiDefaults, true);
+  console.log('Frontend regressions passed: draft, focus, incremental append, typing, schedule, friend QR/code and AI strength defaults.');
 }
 
 main().catch(error=>{ console.error(error); process.exitCode=1; });

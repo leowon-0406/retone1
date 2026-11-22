@@ -68,9 +68,9 @@ const sensitivityKeys = [
   "대화 복구 문장",
 ];
 const initialCategorySensitivity = {
-  "강한 공격 표현": 25,
-  "비꼼·압박 표현": 20,
-  "출처 확인 제안": 25,
+  "강한 공격 표현": 65,
+  "비꼼·압박 표현": 60,
+  "출처 확인 제안": 35,
   "표현 바꾸기": 50,
   "입력 중 선검사": 50,
   "감정 도움 AI": 50,
@@ -91,33 +91,34 @@ function sensitivityState() {
     const saved = JSON.parse(
       localStorage.getItem("retone-ai-sensitivity") || "{}",
     );
-    // 이전 버전은 모든 항목을 50으로 저장해 일상 대화까지 과하게 확인했어요.
-    // 사용자가 직접 세부 설정을 만진 적이 없는 기존값만 새 기본값으로 부드럽게 옮겨요.
-    const legacyDefault =
-      saved.categoryVersion !== 2 &&
-      sensitivityKeys.every((key) => saved.categories?.[key] === 50);
+    // v3 restores the intended baseline for attack and indirect-pressure checks.
+    // Explicitly disabled (0) categories stay disabled.
+    const strengthenBaseline = Number(saved.categoryVersion || 0) < 3;
+    const savedOverall = Number.isFinite(saved.overall) ? saved.overall : 55;
     return {
-      overall: Number.isFinite(saved.overall)
-        ? legacyDefault && saved.overall === 50
-          ? 35
-          : saved.overall
-        : 35,
+      overall:
+        strengthenBaseline && savedOverall > 0
+          ? Math.max(55, savedOverall)
+          : savedOverall,
       categories: Object.fromEntries(
-        sensitivityKeys.map((key) => [
-          key,
-          legacyDefault
-            ? initialCategorySensitivity[key]
-            : Number.isFinite(saved.categories?.[key])
-              ? saved.categories[key]
-              : initialCategorySensitivity[key],
-        ]),
+        sensitivityKeys.map((key) => {
+          const savedValue = Number.isFinite(saved.categories?.[key])
+            ? saved.categories[key]
+            : initialCategorySensitivity[key];
+          const baseline = initialCategorySensitivity[key] ?? 50;
+          const shouldStrengthen =
+            strengthenBaseline &&
+            savedValue > 0 &&
+            ["강한 공격 표현", "비꼼·압박 표현"].includes(key);
+          return [key, shouldStrengthen ? Math.max(savedValue, baseline) : savedValue];
+        }),
       ),
       overrides: saved.overrides || {},
       learning: saved.learning || {},
     };
   } catch {
     return {
-      overall: 35,
+      overall: 55,
       categories: defaultSensitivityCategories(),
       overrides: {},
       learning: {},
@@ -127,7 +128,7 @@ function sensitivityState() {
 function saveSensitivity(state) {
   localStorage.setItem(
     "retone-ai-sensitivity",
-    JSON.stringify({ ...state, categoryVersion: 2 }),
+    JSON.stringify({ ...state, categoryVersion: 3 }),
   );
 }
 function learnFromSendAnyway(category) {
@@ -190,7 +191,13 @@ function saveRoomAiConfig(config, id = roomId) {
 }
 function activeAiIntervention() {
   const mode = roomAiConfig().mode;
-  return mode === "inherit" ? aiIntervention : mode;
+  if (mode !== "inherit") return mode;
+  const localLevel = interventionFromSensitivity(sensitivityState().overall);
+  if (aiIntervention === "off" || localLevel === "off") return "off";
+  const rank = { light: 1, standard: 2, careful: 3 };
+  return (rank[localLevel] || 2) > (rank[aiIntervention] || 2)
+    ? localLevel
+    : aiIntervention;
 }
 const aiDetails = (useRoomOverride = true) => {
   const state = sensitivityState();
@@ -250,7 +257,7 @@ const esc = (s) =>
     (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c],
   );
 const escAttr = (s) => esc(s).replace(/"/g, "&quot;");
-const AI_CACHE_VERSION = "evidence-v1";
+const AI_CACHE_VERSION = "evidence-v2";
 const aiCacheKey = (text) =>
   `${AI_CACHE_VERSION}|${signedInId}|${activeAiIntervention()}|${JSON.stringify(aiDetails())}|${text.trim()}`;
 function savedAiResult(text) {

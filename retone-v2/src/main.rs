@@ -1247,6 +1247,17 @@ async fn ai_check(State(app): State<App>, Json(input): Json<AiCheck>) -> Json<se
         "급식충",
         "개쓰레기",
         "쓰레기새끼",
+        "한심해",
+        "한심한",
+        "쓸모없",
+        "역겨",
+        "재수없",
+        "미친새",
+        "미친개",
+        "꺼지",
+        "대가리",
+        "또라이",
+        "꼴통",
         "노답",
         "답없",
         "꺼져버",
@@ -1274,11 +1285,15 @@ async fn ai_check(State(app): State<App>, Json(input): Json<AiCheck>) -> Json<se
             serde_json::json!({"verdict":"PASS","suggestion":null,"info":{"level":"none","note":null,"queries":[]},"source":"light"}),
         );
     }
-    // 가벼운 인사말은 빠르게 통과하되, 사전에 없는 공격·반복 압박은 모델이 한 번 더 봅니다.
+    // Exact everyday pass phrases stay local. Other meaningful messages are
+    // reviewed by the model so indirect ridicule and coercion are not skipped.
     let tone_signals = [
         "꺼져", "닥쳐", "한심", "최악", "왜이래", "뭐하냐", "비꼬", "조롱", "쓸모없",
         "한심해", "어이없", "정신차려", "노답", "답없", "쓰레기", "역겨", "혐오",
         "무시하", "망해", "나가", "찌질", "한심하", "한남", "김치녀", "틀딱",
+        "그것도못", "이것도못", "똑바로해", "제대로해", "생각이없", "눈치없",
+        "말이안통", "너때문", "네탓", "니탓", "잘도하", "잘한다", "웃기고있",
+        "그러니까", "몇번을말", "말귀", "수준", "꼴", "재수없", "답답하",
     ];
     let direct_target = ["너", "네가", "니가", "당신", "쟤", "얘", "너희", "왜이래", "뭐하냐"];
     let directed_tone = tone_signals.iter().any(|signal| normalized.contains(signal))
@@ -1300,10 +1315,14 @@ async fn ai_check(State(app): State<App>, Json(input): Json<AiCheck>) -> Json<se
     let fact_claim = !is_question
         && important_topics.iter().any(|topic| normalized.contains(topic))
         && assertion_markers.iter().any(|marker| normalized.contains(marker));
+    let meaningful_message = normalized.chars().count() >= 3;
     let tone_review = match sarcasm_level {
         "끄기" | "꺼짐" => false,
-        "민감하게" => directed_tone || clear_hostility || repeated_pressure,
-        _ => directed_tone || clear_hostility || repeated_pressure,
+        "가볍게" => directed_tone || clear_hostility || repeated_pressure,
+        "민감하게" => true,
+        // At the normal setting, review every non-trivial message not handled by
+        // the explicit pass dictionary. This restores subtle-context detection.
+        _ => meaningful_message || directed_tone || clear_hostility || repeated_pressure,
     };
     let source_review = match source_level {
         "끄기" | "꺼짐" => false,
@@ -1318,7 +1337,7 @@ async fn ai_check(State(app): State<App>, Json(input): Json<AiCheck>) -> Json<se
     let hash = format!(
         "{:x}",
         Sha256::digest(
-            format!("v6:{level}:{attack_level}:{sarcasm_level}:{source_level}:{text}")
+            format!("v7:{level}:{attack_level}:{sarcasm_level}:{source_level}:{text}")
                 .as_bytes()
         )
     );
@@ -1329,7 +1348,7 @@ async fn ai_check(State(app): State<App>, Json(input): Json<AiCheck>) -> Json<se
         );
     };
     let prompt = format!(
-        "너는 Re:Tone의 대화 거울이다. 판정자·검열자·사실확인 기관이 아니다. 현재 문장을 오직 '이렇게 들릴 수도 있어요'라는 제안으로만 비춘다.\n1) 최종 판단 대상은 현재 문장 하나다. 인사, 약속 잡기, 단순 질문, '야/야야/얘들아', ㅋㅋ, ㅠㅠ만으로는 WARN하지 않는다.\n2) 그러나 상대를 낮추는 모욕, 욕설 우회, 조롱, 위협, 혐오, 반복적인 재촉·무시는 관계와 무관하게 WARN한다. 상대 이름·2인칭이 생략돼도 문장 전체의 공격 의도가 분명하면 WARN할 수 있다.\n3) WARN일 때 suggestion은 두 문장으로 쓴다. 첫 문장은 실제 문제 지점(단어·어조)을 따옴표로 짚고 어떻게 들릴 수 있는지 설명한다. 둘째 문장은 원래 의도를 살린 짧은 대체 표현이다.\n4) 출처 확인 개입 수준은 {source_level}이다. 중요한 정보 주장일 때만 info.level=check를 제안하며, 질문·추측·일상 경험에는 제안하지 않는다. 진실·거짓은 절대 판단하지 않는다.\n5) 비꼼·압박 개입 수준은 {sarcasm_level}, 전체 개입 강도는 {level}이다. 애매한 말은 PASS하되, 공격 의도가 명백하면 놓치지 마라.\n6) JSON만 출력: {{\"verdict\":\"PASS|WARN\",\"trigger\":string|null,\"suggestion\":string|null,\"info\":{{\"level\":\"none|check\",\"note\":string|null,\"queries\":[string]}}}}. WARN이면 trigger에 현재 문장에 실제로 연속해서 나오는 표현을 그대로 넣어라. PASS이면 null. queries는 확인할 검색어 0~2개.\n문장: {text}"
+        "너는 Re:Tone의 대화 거울이다. 판정자·검열자·사실확인 기관이 아니다. 현재 문장을 오직 '이렇게 들릴 수도 있어요'라는 제안으로만 비춘다.\n1) 최종 판단 대상은 현재 문장 하나다. 인사, 약속 잡기, 정보 전달, 단순 질문, '야/야야/얘들아', ㅋㅋ, ㅠㅠ만으로는 WARN하지 않는다.\n2) 상대를 낮추는 모욕, 욕설·초성·우회표현, 조롱, 비꼼, 위협, 혐오, 강요, 죄책감 유도, 반복 재촉, 무시·배제, 능력이나 인격을 깎아내리는 말은 WARN한다. 욕설이 없어도 '그것도 못 해?', '잘도 하겠다', '너 때문에 망했어', '몇 번을 말해야 알아들어?'처럼 상대를 공격하거나 비웃는 핵심이 분명하면 WARN한다. 이름이나 2인칭이 생략돼도 마찬가지다.\n3) 단순한 반대 의견, 정중한 요청, 사실 설명은 WARN하지 않는다. 친한 관계를 핑계로 명백한 모욕을 통과시키지는 않되, '야' 같은 호칭만으로 경고하지 않는다.\n4) WARN일 때 suggestion은 두 문장으로 쓴다. 첫 문장은 실제 문제 지점(단어·어조)을 따옴표로 짚고 어떻게 들릴 수 있는지 설명한다. 둘째 문장은 원래 의도를 살린 짧은 대체 표현이다.\n5) 출처 확인 개입 수준은 {source_level}이다. 중요한 정보 주장일 때만 info.level=check를 제안하며, 질문·추측·일상 경험에는 제안하지 않는다. 진실·거짓은 절대 판단하지 않는다.\n6) 비꼼·압박 개입 수준은 {sarcasm_level}, 전체 개입 강도는 {level}이다. 균형 있게 이상에서는 애매하다는 이유만으로 명백한 공격 단서를 놓치지 마라.\n7) JSON만 출력: {{\"verdict\":\"PASS|WARN\",\"trigger\":string|null,\"suggestion\":string|null,\"info\":{{\"level\":\"none|check\",\"note\":string|null,\"queries\":[string]}}}}. WARN이면 trigger에 현재 문장에 실제로 연속해서 나오는 가장 핵심적인 표현을 그대로 넣어라. PASS이면 null. queries는 확인할 검색어 0~2개.\n문장: {text}"
     );
     let res = reqwest::Client::new()
         .post("https://api.openai.com/v1/responses")
