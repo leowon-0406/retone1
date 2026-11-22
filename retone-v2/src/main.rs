@@ -31,6 +31,9 @@ struct Room {
     id: String,
     name: String,
     members: u8,
+    is_group: bool,
+    has_messages: bool,
+    avatar_url: Option<String>,
     unread: u8,
     pinned: bool,
     last: String,
@@ -978,6 +981,26 @@ async fn update_avatar(
         serde_json::json!({"saved":true,"avatar_url":user.avatar_url}),
     ))
 }
+async fn delete_avatar(
+    State(app): State<App>,
+    Path(id): Path<Uuid>,
+    headers: HeaderMap,
+) -> Result<StatusCode, StatusCode> {
+    if require_user(&app, &headers).await? != id {
+        return Err(StatusCode::FORBIDDEN);
+    }
+    let result = sqlx::query(
+        "UPDATE retone_v2.users SET avatar_url=NULL WHERE id=$1 AND deleted_at IS NULL",
+    )
+    .bind(id)
+    .execute(&app.db)
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    if result.rows_affected() == 0 {
+        return Err(StatusCode::NOT_FOUND);
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
 fn matched_span<'a>(text: &'a str, needle: &str) -> Option<&'a str> {
     let mut compact = String::new();
     let mut indices = Vec::new();
@@ -1809,8 +1832,8 @@ async fn bootstrap(
         }
         // A one-to-one room has one shared database record, but its title must be
         // personalised: each participant should see the other person's name.
-        if let Ok(rows) = sqlx::query_as::<_, (Uuid, String)>(
-            "SELECT r.id,COALESCE(u.name,'탈퇴한 사용자') FROM retone_v2.rooms r JOIN retone_v2.room_members mine ON mine.room_id=r.id AND mine.user_id=$1 JOIN retone_v2.room_members peer ON peer.room_id=r.id AND peer.user_id<>$1 LEFT JOIN retone_v2.users u ON u.id=peer.user_id WHERE r.is_group=FALSE",
+        if let Ok(rows) = sqlx::query_as::<_, (Uuid, String, Option<String>)>(
+            "SELECT r.id,COALESCE(u.name,'(이름 없음)'),u.avatar_url FROM retone_v2.rooms r JOIN retone_v2.room_members mine ON mine.room_id=r.id AND mine.user_id=$1 LEFT JOIN retone_v2.room_members peer ON peer.room_id=r.id AND peer.user_id<>$1 LEFT JOIN retone_v2.users u ON u.id=peer.user_id AND u.deleted_at IS NULL WHERE r.is_group=FALSE",
         )
         .bind(user_id)
         .fetch_all(&app.db)
@@ -1818,11 +1841,12 @@ async fn bootstrap(
         {
             let titles = rows
                 .into_iter()
-                .map(|(id, name)| (id.to_string(), name))
+                .map(|(id, name, avatar)| (id.to_string(), (name, avatar)))
                 .collect::<HashMap<_, _>>();
             rooms.iter_mut().for_each(|room| {
-                if let Some(name) = titles.get(&room.id) {
+                if let Some((name, avatar)) = titles.get(&room.id) {
                     room.name = name.clone();
+                    room.avatar_url = avatar.clone();
                 }
             });
         }
@@ -2099,6 +2123,7 @@ async fn send(
     if let Some(room) = d.rooms.iter_mut().find(|r| r.id == id) {
         room.last = message.body.clone();
         room.updated = message.created;
+        room.has_messages = true;
     }
     Ok(Json(message))
 }
@@ -2264,6 +2289,10 @@ async fn leave_room(
         .find(|room| room.id == room_id.to_string())
     {
         room.members = room.members.saturating_sub(1);
+        if !room.is_group && room.members < 2 {
+            room.name = "(이름 없음)".into();
+            room.avatar_url = None;
+        }
     }
     Ok(StatusCode::NO_CONTENT)
 }
@@ -2379,6 +2408,9 @@ async fn create_room(
         id: Uuid::new_v4().to_string(),
         name: name.chars().take(30).collect(),
         members: 1 + invitees.len().min(99) as u8,
+        is_group: !is_direct,
+        has_messages: false,
+        avatar_url: None,
         unread: 0,
         pinned: false,
         last: "새 대화를 시작해 보세요.".into(),
@@ -2414,6 +2446,9 @@ async fn create_room(
                 id: id.to_string(),
                 name,
                 members: 2,
+                is_group: false,
+                has_messages: true,
+                avatar_url: None,
                 unread: 0,
                 pinned: false,
                 last: "이전 대화를 이어가세요.".into(),
@@ -2722,8 +2757,8 @@ async fn prepare_storage() -> Option<PgPool> {
     Some(pool)
 }
 async fn restore_data(db: &PgPool) -> Data {
-    let rooms = sqlx::query_as::<_, (Uuid, String, i64, String, i64)>("SELECT r.id,r.name,(SELECT COUNT(*) FROM retone_v2.room_members rm WHERE rm.room_id=r.id),COALESCE((SELECT m.body FROM retone_v2.messages m WHERE m.room_id=r.id AND m.deleted_at IS NULL ORDER BY m.created_at DESC LIMIT 1),'새 대화를 시작해 보세요.'),FLOOR(EXTRACT(EPOCH FROM COALESCE((SELECT MAX(m.created_at) FROM retone_v2.messages m WHERE m.room_id=r.id AND m.deleted_at IS NULL),r.created_at))*1000)::BIGINT FROM retone_v2.rooms r ORDER BY 5 DESC")
-        .fetch_all(db).await.unwrap_or_default().into_iter().map(|(id,name,members,last,updated)| Room { id:id.to_string(),name,members:members.min(255) as u8,unread:0,pinned:false,last,updated }).collect();
+    let rooms = sqlx::query_as::<_, (Uuid, String, i64, bool, bool, String, i64)>("SELECT r.id,r.name,(SELECT COUNT(*) FROM retone_v2.room_members rm WHERE rm.room_id=r.id),r.is_group,EXISTS(SELECT 1 FROM retone_v2.messages m WHERE m.room_id=r.id AND m.deleted_at IS NULL),COALESCE((SELECT m.body FROM retone_v2.messages m WHERE m.room_id=r.id AND m.deleted_at IS NULL ORDER BY m.created_at DESC LIMIT 1),'새 대화를 시작해 보세요.'),FLOOR(EXTRACT(EPOCH FROM COALESCE((SELECT MAX(m.created_at) FROM retone_v2.messages m WHERE m.room_id=r.id AND m.deleted_at IS NULL),r.created_at))*1000)::BIGINT FROM retone_v2.rooms r ORDER BY 7 DESC")
+        .fetch_all(db).await.unwrap_or_default().into_iter().map(|(id,name,members,is_group,has_messages,last,updated)| Room { id:id.to_string(),name,members:members.min(255) as u8,is_group,has_messages,avatar_url:None,unread:0,pinned:false,last,updated }).collect();
     let messages = sqlx::query_as::<_, (Uuid, Uuid, Option<String>, Option<Uuid>, String, i64, Option<String>, Option<String>, Option<Uuid>, Option<String>, Option<String>, Option<String>, bool, Option<String>, Option<String>)>("SELECT m.id,m.room_id,u.name,m.sender_id,m.body,FLOOR(EXTRACT(EPOCH FROM m.created_at)*1000)::BIGINT,m.intent,m.image_url,m.reply_to,m.ai_verdict,m.ai_suggestion,m.ai_trigger,m.alignment_hint,m.alignment_kind,m.alignment_summary FROM retone_v2.messages m LEFT JOIN retone_v2.users u ON u.id=m.sender_id WHERE m.deleted_at IS NULL ORDER BY m.created_at")
         .fetch_all(db).await.unwrap_or_default().into_iter().map(|(id,room_id,sender,sender_id,body,created,intent,image_url,reply_to,ai_verdict,ai_suggestion,ai_trigger,alignment_hint,alignment_kind,alignment_summary)| { Message { id:id.to_string(),room_id:room_id.to_string(),sender:sender.unwrap_or_else(|| "알 수 없는 사용자".into()),sender_id:sender_id.map(|value| value.to_string()),mine:false,body,created,unread:0,intent,alignment_hint,alignment_kind,alignment_summary,image_url,reply_to:reply_to.map(|value| value.to_string()),ai_verdict,ai_suggestion,ai_trigger } }).collect();
     let agreements = sqlx::query_as::<_, (Uuid, Uuid, String, String, String, i32, i32, Option<Uuid>)>("SELECT id,room_id,task,assignee_name,deadline_text,confirmations,revisions,source_message_id FROM retone_v2.agreements WHERE completed_at IS NULL")
@@ -2774,7 +2809,7 @@ async fn main() {
         .route("/api/admin/users/{id}/clear", post(clear_single_user))
         .route("/api/users/{id}", delete(delete_account))
         .route("/api/users/{id}/preferences", patch(update_preferences))
-        .route("/api/users/{id}/avatar", post(update_avatar))
+        .route("/api/users/{id}/avatar", post(update_avatar).delete(delete_avatar))
         .route("/api/images/check", post(guarded_image_check))
         .route("/api/ai/check", post(guarded_ai_check))
         .route("/api/ai/status", get(ai_connection_status))

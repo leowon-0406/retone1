@@ -79,7 +79,9 @@ async function main() {
     const choice=group.querySelector('.ai-choice-row button:last-child');
     saveAiDetail(choice,'강한 공격 표현',choice.textContent);
     const aiPanelStaysOpen=advanced.open && group.open && choice.classList.contains('selected');
-    return {draftKept,oldKept,newAdded,writes,scheduleFields,scheduleActions,localScheduleTime,loginPhoneFormat,planAlignmentVisible,friendCodeVisible,qrVisible,qrCodeParsed,exactNameSearchVisible,strongerAiDefaults,aiPanelStaysOpen,quickBeforeSend,manualFlow,settingsSelected,newestRoomFirst,messengerTyping};
+    const avatarMarkup=avatarContent('민서','https://example.test/avatar.jpg');
+    const roomAvatarVisible=avatarMarkup.includes('<img') && avatarMarkup.includes('avatar.jpg');
+    return {draftKept,oldKept,newAdded,writes,scheduleFields,scheduleActions,localScheduleTime,loginPhoneFormat,planAlignmentVisible,friendCodeVisible,qrVisible,qrCodeParsed,exactNameSearchVisible,strongerAiDefaults,aiPanelStaysOpen,quickBeforeSend,manualFlow,settingsSelected,newestRoomFirst,messengerTyping,roomAvatarVisible};
   })()`, context);
   assert.equal(result.draftKept, true);
   assert.equal(result.oldKept, true);
@@ -102,6 +104,7 @@ async function main() {
   assert.equal(result.settingsSelected, true);
   assert.equal(result.newestRoomFirst, true);
   assert.equal(result.messengerTyping, true);
+  assert.equal(result.roomAvatarVisible, true);
   assert.ok((source.match(/id="auth-phone" inputmode="numeric" maxlength="13" autocomplete="tel" oninput="formatPhoneInput\(this\)" placeholder="010-1234-5678"/g) || []).length >= 2);
   assert.match(roomCss, /#reply-slot:not\(:empty\).*grid-column:\s*1\s*\/\s*-1/s);
   assert.match(roomCss, /@keyframes messengerTyping/);
@@ -110,6 +113,9 @@ async function main() {
   assert.match(authCss, /password-requirements\{grid-template-columns:repeat\(2/);
   assert.match(source, /async function decodeFriendQr/);
   assert.match(source, /jsqr@1\.4\.0/);
+  assert.match(source, /r\.is_group \|\| r\.has_messages/);
+  assert.match(source, /async function confirmResetAvatar/);
+  assert.doesNotMatch(source, /연결됨/);
   console.log('Frontend regressions passed: reply layout, messenger typing, navigation and recent-room ordering.');
 }
 

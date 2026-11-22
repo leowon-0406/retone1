@@ -12,6 +12,15 @@
 .typing-bubble small { align-self: center; max-width: 10rem; overflow: hidden; color: #8a897d; font-size: .6rem; font-weight: 650; white-space: nowrap; text-overflow: ellipsis; }
 @keyframes messengerTyping { 0%, 60%, 100% { opacity: .38; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-.28rem); } }
 .dark .typing-avatar { background: #3c3d36; color: #d8d8ca; }
+.room-head-avatar { width: 2.35rem; height: 2.35rem; flex: 0 0 auto; border-radius: 50%; overflow: hidden; }
+.room-head-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.room-participants { color: #8b8b7d; font-size: .72rem; }
+.profile-reset { width: calc(100% - 28px); margin: 0 14px 14px; padding: 10px 12px; border: 1px solid #eadfd1; border-radius: 12px; background: #f8f3eb; color: #826f59; font-size: .75rem; font-weight: 800; }
+.profile-reset:hover { background: #f1e8dc; }
+.dark .profile-reset { border-color: #4d483f; background: #353229; color: #e3d8c8; }
+@media (max-width: 700px) {
+  .room-head-avatar { width: 2rem; height: 2rem; }
+}
 .dark .typing-dots { border-color: #4a4b43; background: #33342f; }
 .dark .typing-dots i { background: #c8cabb; }
 .dark .typing-bubble small { color: #b9bbad; }

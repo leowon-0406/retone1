@@ -24,6 +24,15 @@ let roomPollTimer = null;
 let inboxPollTimer = null;
 let inboxPollInFlight = false;
 let roomLoadVersion = 0;
+function rememberAvatar(user) {
+  if (user?.avatar_url) localStorage.setItem("retone-avatar", user.avatar_url);
+  else localStorage.removeItem("retone-avatar");
+}
+function avatarContent(name, avatarUrl) {
+  return avatarUrl
+    ? `<img src="${escAttr(avatarUrl)}" alt="${escAttr(name || "프로필")} 프로필 사진">`
+    : esc((name || "?").slice(0, 1));
+}
 const browserNotificationsEnabled = () => localStorage.getItem("retone-browser-notifications") === "1";
 let aiSavedResults = (() => {
   try {
@@ -317,13 +326,16 @@ async function home() {
     return;
   }
   const rooms = data.rooms.filter(
-    (r) => !["science", "friends"].includes(r.id) && !hasLeftRoom(r.id),
+    (r) =>
+      !["science", "friends"].includes(r.id) &&
+      !hasLeftRoom(r.id) &&
+      (r.is_group || r.has_messages),
   ).sort((a, b) => Number(b.updated || 0) - Number(a.updated || 0));
   const now = localDateTimeValue(new Date()).replace("T", " ");
   const upcoming = (data.appointments || [])
     .filter((appointment) => appointment.date >= now)
     .sort((a, b) => a.date.localeCompare(b.date))[0];
-  app.innerHTML = `<main class="layout">${rail()}<section class="page"><header class="head"><h1>채팅</h1><button class="new-room" onclick="newRoom()">＋ 새 대화</button></header><div class="content"><div class="intro"><h2>${esc(signedIn)}님, 반가워요.</h2><p>친구를 초대해 첫 대화를 시작해 보세요.</p></div><div class="dash"><section class="focus"><b>오늘의 공동 확인</b><span>채팅방에서 함께 확인할 일을 만들어 보세요.</span></section><section class="focus schedule"><b>다음 약속 <button onclick="newAppointment()">＋</button></b><span>${upcoming ? `${esc(upcoming.title)} · ${esc(upcoming.date)}` : "친구들과 약속을 정하면 여기에 보여요."}</span></section></div><div class="rooms">${rooms.length ? rooms.map((r) => `<button class="room" data-room-id="${esc(r.id)}" onclick="openRoom('${r.id}')"><span class="avatar">${esc(r.name[0])}</span><span class="copy"><b>${r.pinned ? "📌 " : ""}${esc(r.name)}</b><span class="room-last">${esc(r.last)}</span></span>${r.unread ? `<span class="badge">${r.unread}</span>` : ""}</button>`).join("") : `<button class="empty-chat" onclick="newRoom()"><b>아직 대화가 없어요</b><span>친구를 초대하거나 단체 채팅을 만들어 보세요. ＋</span></button>`}</div></div></section></main>`;
+  app.innerHTML = `<main class="layout">${rail()}<section class="page"><header class="head"><h1>채팅</h1><button class="new-room" onclick="newRoom()">＋ 새 대화</button></header><div class="content"><div class="intro"><h2>${esc(signedIn)}님, 반가워요.</h2><p>친구를 초대해 첫 대화를 시작해 보세요.</p></div><div class="dash"><section class="focus"><b>오늘의 공동 확인</b><span>채팅방에서 함께 확인할 일을 만들어 보세요.</span></section><section class="focus schedule"><b>다음 약속 <button onclick="newAppointment()">＋</button></b><span>${upcoming ? `${esc(upcoming.title)} · ${esc(upcoming.date)}` : "친구들과 약속을 정하면 여기에 보여요."}</span></section></div><div class="rooms">${rooms.length ? rooms.map((r) => `<button class="room" data-room-id="${esc(r.id)}" onclick="openRoom('${r.id}')"><span class="avatar">${avatarContent(r.name, r.avatar_url)}</span><span class="copy"><b>${r.pinned ? "📌 " : ""}${esc(r.name)}</b><span class="room-last">${esc(r.last)}</span></span>${r.unread ? `<span class="badge">${r.unread}</span>` : ""}</button>`).join("") : `<button class="empty-chat" onclick="newRoom()"><b>아직 대화가 없어요</b><span>친구를 초대하거나 단체 채팅을 만들어 보세요. ＋</span></button>`}</div></div></section></main>`;
   startInboxPolling(data);
 }
 async function openRoom(id) {
@@ -378,7 +390,7 @@ async function openRoom(id) {
       item.room_id === id &&
       (item.has_conflict || aiDetails()["대화 흐름 요약"] === "항상"),
   );
-  app.innerHTML = `<main class="layout">${rail()}<section class="chat"><header class="head"><button class="back-button" title="채팅 목록으로" aria-label="채팅 목록으로" onclick="home()"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14.5 5-7 7 7 7M8 12h9"/></svg></button><div class="room-title"><h1>${esc(room.name)}</h1><span>참여자 ${room.members}명 · AI ${roomRule(id)} · ${isRoomMuted(id) ? "알림 끔" : "연결됨"}</span><span class="room-slot" id="pulse-slot">${conversationPulse()}</span></div><div class="chat-actions"><button class="chat-primary-action" title="친구 초대" aria-label="친구 초대" onclick="inviteFriends()">＋</button><button class="chat-primary-action" title="AI 도움받기" aria-label="AI 도움받기" onclick="openAiHelp()">✦</button><button class="chat-secondary-action" title="약속 잡기" aria-label="약속 잡기" onclick="newAppointment()">◷</button><button class="chat-secondary-action" title="공동 확인" aria-label="공동 확인" onclick="newAgreement()">✓</button><button class="chat-secondary-action" title="회고 카드" aria-label="회고 카드" onclick="newReflection()">↻</button><button class="chat-secondary-action" title="채팅방 설정" aria-label="채팅방 설정" onclick="roomSettings()">⚙</button><button class="chat-more-action" title="더 보기" aria-label="더 보기" onclick="openChatMore()">⋯</button></div></header><section class="messages" id="messages" data-room="${escAttr(id)}">${messages.map(view).join("")}<template id="message-end"></template><div id="typing-status" class="typing-bubble" role="status" aria-live="polite"></div><div class="room-slot" id="alignment-slot">${alignmentCard(messages)}</div><div class="room-slot" id="appointments-slot">${appointments.map(viewAppointment).join("")}</div><div class="room-slot" id="reflections-slot">${reflections.map(viewReflection).join("")}</div><div class="room-slot" id="agreements-slot">${agreementMarkup(id)}</div></section><form class="sendbar" onsubmit="send(event)"><span id="reply-slot" class="room-slot">${replyComposer()}</span><button type="button" class="intent-button" title="의도 표시" onclick="chooseIntent()">${selectedIntent ? "◎" : "＋"}</button><label class="image-upload" title="사진 보내기" aria-label="사진 보내기"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="3"/><circle cx="9" cy="10" r="1.5"/><path d="m5.5 17 4.5-4 3.2 2.7 2.4-2 2.9 3.3"/></svg><input hidden type="file" accept="image/*" onchange="sendImage(this)"></label><input id="text" placeholder="메시지를 입력하세요" autocomplete="off" oninput="onChatTyping(this.value)" onblur="stopTyping()"><span id="ai-status" class="ai-status"></span><button>↑</button></form></section></main>`;
+  app.innerHTML = `<main class="layout">${rail()}<section class="chat"><header class="head"><button class="back-button" title="채팅 목록으로" aria-label="채팅 목록으로" onclick="home()"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14.5 5-7 7 7 7M8 12h9"/></svg></button><span class="room-head-avatar avatar">${avatarContent(room.name, room.avatar_url)}</span><div class="room-title"><h1>${esc(room.name)}</h1>${room.members >= 3 ? `<span class="room-participants">참여자 ${room.members}명</span>` : ""}<span class="room-slot" id="pulse-slot">${conversationPulse()}</span></div><div class="chat-actions"><button class="chat-primary-action" title="친구 초대" aria-label="친구 초대" onclick="inviteFriends()">＋</button><button class="chat-primary-action" title="AI 도움받기" aria-label="AI 도움받기" onclick="openAiHelp()">✦</button><button class="chat-secondary-action" title="약속 잡기" aria-label="약속 잡기" onclick="newAppointment()">◷</button><button class="chat-secondary-action" title="공동 확인" aria-label="공동 확인" onclick="newAgreement()">✓</button><button class="chat-secondary-action" title="회고 카드" aria-label="회고 카드" onclick="newReflection()">↻</button><button class="chat-secondary-action" title="채팅방 설정" aria-label="채팅방 설정" onclick="roomSettings()">⚙</button><button class="chat-more-action" title="더 보기" aria-label="더 보기" onclick="openChatMore()">⋯</button></div></header><section class="messages" id="messages" data-room="${escAttr(id)}">${messages.map(view).join("")}<template id="message-end"></template><div id="typing-status" class="typing-bubble" role="status" aria-live="polite"></div><div class="room-slot" id="alignment-slot">${alignmentCard(messages)}</div><div class="room-slot" id="appointments-slot">${appointments.map(viewAppointment).join("")}</div><div class="room-slot" id="reflections-slot">${reflections.map(viewReflection).join("")}</div><div class="room-slot" id="agreements-slot">${agreementMarkup(id)}</div></section><form class="sendbar" onsubmit="send(event)"><span id="reply-slot" class="room-slot">${replyComposer()}</span><button type="button" class="intent-button" title="의도 표시" onclick="chooseIntent()">${selectedIntent ? "◎" : "＋"}</button><label class="image-upload" title="사진 보내기" aria-label="사진 보내기"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="3"/><circle cx="9" cy="10" r="1.5"/><path d="m5.5 17 4.5-4 3.2 2.7 2.4-2 2.9 3.3"/></svg><input hidden type="file" accept="image/*" onchange="sendImage(this)"></label><input id="text" placeholder="메시지를 입력하세요" autocomplete="off" oninput="onChatTyping(this.value)" onblur="stopTyping()"><span id="ai-status" class="ai-status"></span><button>↑</button></form></section></main>`;
   const list = document.querySelector("#messages");
   if (refreshingCurrentRoom && !wasNearBottom) list.scrollTop = previousScrollTop;
   else list.scrollTop = list.scrollHeight;
@@ -547,8 +559,8 @@ function syncRoomExtras(id, messages) {
   updateFragment("#reflections-slot",(data.reflections || []).filter(a=>a.room_id===id).map(viewReflection).join(""));
   const room = data.rooms.find(r=>r.id===id);
   if (room) {
-    const header = document.querySelector(".room-title > span");
-    if(header) header.textContent = `참여자 ${room.members}명 · AI ${roomRule(id)} · ${isRoomMuted(id)?"알림 끔":"연결됨"}`;
+    const header = document.querySelector(".room-participants");
+    if (header && room.members >= 3) header.textContent = `참여자 ${room.members}명`;
   }
   updateFragment("#alignment-slot", alignmentCard(messages));
   updateFragment("#appointments-slot", (data.appointments || []).filter(a=>a.room_id===id).map(viewAppointment).join(""));
@@ -959,6 +971,12 @@ function settings() {
     .join(
       "",
     )}</div><div class="ai-toggles"></div></section><section id="settings-app-actions" class="settings-app-actions"></section><button class="room settings-logout" onclick="logout()"><span class="avatar">↪</span><span class="copy"><b>로그아웃</b><span>이 기기에서 안전하게 로그아웃해요.</span></span></button></div></section></main>`;
+  if (avatar) {
+    document.querySelector(".settings-profile-card")?.insertAdjacentHTML(
+      "beforeend",
+      `<button class="profile-reset" onclick="resetAvatar()">기본 이미지로 초기화</button>`,
+    );
+  }
   renderDetailedAiSettings();
   startInboxPolling(data);
 }
@@ -1359,6 +1377,21 @@ async function setAvatar(input) {
     popup(
       `<div class="ai-check warn"><h2>사진을 등록하지 못했어요</h2><p>2MB 이하의 이미지 파일인지, AI 안전 점검 연결 상태를 확인해주세요.</p><button onclick="closePopup()">확인</button></div>`,
     );
+  }
+}
+async function resetAvatar() {
+  popup(
+    `<div class="ai-check info"><span>프로필 사진 초기화</span><h2>기본 이미지로 돌아갈까요?</h2><p>등록한 프로필 사진 대신 이름의 첫 글자가 표시돼요.</p><div class="modal-actions"><button class="quiet" onclick="closePopup()">취소</button><button onclick="confirmResetAvatar()">초기화</button></div></div>`,
+  );
+}
+async function confirmResetAvatar() {
+  try {
+    await api(`/api/users/${signedInId}/avatar`, { method: "DELETE" });
+    localStorage.removeItem("retone-avatar");
+    closePopup();
+    settings();
+  } catch {
+    popup(`<div class="ai-check warn"><h2>프로필 사진을 초기화하지 못했어요</h2><p>연결 상태를 확인한 뒤 다시 시도해주세요.</p><button onclick="closePopup()">확인</button></div>`);
   }
 }
 function likelyFactualClaim(text) {
@@ -2629,6 +2662,7 @@ async function completeSignup() {
       }),
     });
     const user = auth.user;
+    rememberAvatar(user);
     sessionToken = "";
     signedIn = user.name;
     signedInId = user.id;
@@ -2712,6 +2746,7 @@ async function finishAuth(mode) {
       },
     );
     const user = auth.user;
+    rememberAvatar(user);
     sessionToken = "";
     signedIn = user.name;
     signedInId = user.id;
@@ -2739,6 +2774,7 @@ async function restoreLogin() {
   try {
     const headers = sessionToken ? {Authorization: `Bearer ${sessionToken}`} : {};
     const user = await api("/api/auth/me", {headers});
+    rememberAvatar(user);
     signedIn = user.name;
     signedInId = user.id;
     aiIntervention = user.ai_intervention;
