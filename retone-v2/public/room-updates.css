@@ -2,8 +2,19 @@
 #reply-slot { display: none !important; }
 #reply-slot:not(:empty) { display: block !important; grid-column: 1 / -1; min-width: 0; }
 #reply-slot .reply-composer { width: 100%; margin: 0 0 .55rem; }
-#typing-status { font-size: .76rem; font-weight: 600; }
-#typing-status:empty { display: none; }
+.typing-bubble { display: flex; align-items: end; gap: .45rem; width: fit-content; min-height: 2.25rem; margin: .35rem 0 .75rem; }
+.typing-bubble:empty { display: none; }
+.typing-avatar { display: grid; place-items: center; width: 1.75rem; height: 1.75rem; flex: 0 0 auto; border-radius: 50%; background: #eee8d9; color: #757567; font-size: .67rem; font-weight: 800; }
+.typing-dots { display: flex; align-items: center; gap: .25rem; min-width: 3.35rem; height: 2.25rem; padding: 0 .8rem; border: 1px solid #e9e0d2; border-radius: 1.1rem 1.1rem 1.1rem .35rem; background: #fffdf8; box-shadow: 0 .3rem 1rem #514a3512; }
+.typing-dots i { width: .38rem; height: .38rem; border-radius: 50%; background: #8b8c7f; animation: messengerTyping .9s ease-in-out infinite; }
+.typing-dots i:nth-child(2) { animation-delay: .15s; }
+.typing-dots i:nth-child(3) { animation-delay: .3s; }
+.typing-bubble small { align-self: center; max-width: 10rem; overflow: hidden; color: #8a897d; font-size: .6rem; font-weight: 650; white-space: nowrap; text-overflow: ellipsis; }
+@keyframes messengerTyping { 0%, 60%, 100% { opacity: .38; transform: translateY(0); } 30% { opacity: 1; transform: translateY(-.28rem); } }
+.dark .typing-avatar { background: #3c3d36; color: #d8d8ca; }
+.dark .typing-dots { border-color: #4a4b43; background: #33342f; }
+.dark .typing-dots i { background: #c8cabb; }
+.dark .typing-bubble small { color: #b9bbad; }
 .schedule-fields { display: grid; gap: .45rem; }
 .schedule-field { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) auto; align-items: center; gap: .4rem; }
 .schedule-field input { min-width: 0; width: 100%; }

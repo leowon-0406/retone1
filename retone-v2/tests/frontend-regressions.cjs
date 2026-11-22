@@ -24,7 +24,7 @@ async function main() {
     currentRoomMessages=[{id:'old',room_id:'room-1',mine:false,sender:'친구',body:'기존 메시지',unread:0}];
     view=m=>'<article class="bubble '+(m.mine?'mine':'')+'" data-message-id="'+m.id+'">'+m.body+'<div class="bubble-tools"></div></article>';
     syncRoomExtras=()=>{}; notifyNewMessage=()=>{}; queueFactChecks=()=>{};
-    document.body.innerHTML='<section class="chat"><section id="messages" data-room="room-1"><article class="bubble" data-message-id="old">기존 메시지<div class="bubble-tools"></div></article><template id="message-end"></template></section><input id="text"></section>';
+    document.body.innerHTML='<section class="chat"><section id="messages" data-room="room-1"><article class="bubble" data-message-id="old">기존 메시지<div class="bubble-tools"></div></article><template id="message-end"></template><div id="typing-status" class="typing-bubble"></div></section><input id="text"></section>';
     const input=document.querySelector('#text'); input.value='작성 중인 초안'; input.focus();
     const old=document.querySelector('[data-message-id=old]');
     reconcileBubbles(document.querySelector('#messages'),[
@@ -38,6 +38,9 @@ async function main() {
     api=async(url,options)=>{writes.push({url,active:JSON.parse(options.body).active})};
     onChatTyping('안녕'); await typingWrites;
     stopTyping(); await typingWrites;
+    api=async()=>({typing:['친구'],messages:currentRoomMessages,appointments:[],agreements:[],reflections:[],insights:[]});
+    await refreshRoom('room-1');
+    const messengerTyping=document.querySelectorAll('#typing-status .typing-dots i').length===3 && document.querySelector('#typing-status')?.textContent.includes('친구님이 입력 중');
     const schedule = appointmentEditorMarkup({id:'plan',date:'2026-11-22 18:00',place:'회의실',title:'회의',fields:[{label:'준비물',value:'발표 자료'}]});
     const scheduleFields = schedule.includes('준비물') && schedule.includes('발표 자료') && schedule.includes('＋ 세부 항목');
     let aiRequestBody=null;
@@ -59,7 +62,7 @@ async function main() {
     localStorage.removeItem('retone-ai-sensitivity');
     const sensitivity=sensitivityState();
     const strongerAiDefaults=sensitivity.overall===55 && sensitivity.categories['강한 공격 표현']===65 && sensitivity.categories['비꼼·압박 표현']===60;
-    return {draftKept,oldKept,newAdded,writes,scheduleFields,friendCodeVisible,qrVisible,qrCodeParsed,strongerAiDefaults,quickBeforeSend,manualFlow,settingsSelected,newestRoomFirst};
+    return {draftKept,oldKept,newAdded,writes,scheduleFields,friendCodeVisible,qrVisible,qrCodeParsed,strongerAiDefaults,quickBeforeSend,manualFlow,settingsSelected,newestRoomFirst,messengerTyping};
   })()`, context);
   assert.equal(result.draftKept, true);
   assert.equal(result.oldKept, true);
@@ -75,8 +78,10 @@ async function main() {
   assert.equal(result.manualFlow, true);
   assert.equal(result.settingsSelected, true);
   assert.equal(result.newestRoomFirst, true);
+  assert.equal(result.messengerTyping, true);
   assert.match(roomCss, /#reply-slot:not\(:empty\).*grid-column:\s*1\s*\/\s*-1/s);
-  console.log('Frontend regressions passed: reply layout, navigation state, recent-room ordering and AI flow.');
+  assert.match(roomCss, /@keyframes messengerTyping/);
+  console.log('Frontend regressions passed: reply layout, messenger typing, navigation and recent-room ordering.');
 }
 
 main().catch(error=>{ console.error(error); process.exitCode=1; });
