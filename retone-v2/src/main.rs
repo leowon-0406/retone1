@@ -2101,7 +2101,7 @@ async fn bootstrap(
         // A one-to-one room has one shared database record, but its title must be
         // personalised: each participant should see the other person's name.
         if let Ok(rows) = sqlx::query_as::<_, (Uuid, String, Option<String>)>(
-            "SELECT r.id,COALESCE(u.name,'(이름 없음)'),u.avatar_url FROM retone_v2.rooms r JOIN retone_v2.room_members mine ON mine.room_id=r.id AND mine.user_id=$1 LEFT JOIN retone_v2.room_members peer ON peer.room_id=r.id AND peer.user_id<>$1 LEFT JOIN retone_v2.users u ON u.id=peer.user_id AND u.deleted_at IS NULL WHERE r.is_group=FALSE",
+            "SELECT r.id,COALESCE(u.name,'✕'),u.avatar_url FROM retone_v2.rooms r JOIN retone_v2.room_members mine ON mine.room_id=r.id AND mine.user_id=$1 LEFT JOIN retone_v2.room_members peer ON peer.room_id=r.id AND peer.user_id<>$1 LEFT JOIN retone_v2.users u ON u.id=peer.user_id AND u.deleted_at IS NULL WHERE r.is_group=FALSE",
         )
         .bind(user_id)
         .fetch_all(&app.db)
@@ -2635,7 +2635,7 @@ async fn leave_room(
     {
         room.members = room.members.saturating_sub(1);
         if !room.is_group && room.members < 2 {
-            room.name = "(이름 없음)".into();
+            room.name = "✕".into();
             room.avatar_url = None;
         }
     }
