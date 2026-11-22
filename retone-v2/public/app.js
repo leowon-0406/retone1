@@ -40,6 +40,7 @@ let factFindings = (() => {
   }
 })();
 const factChecksInFlight = new Set();
+const contextChecksInFlight = new Set();
 const FACT_FINDING_VERSION = 3;
 const aiCategoryDefaults = {
   "강한 공격 표현": "강한 표현만",
@@ -158,7 +159,7 @@ function sensitivityWord(name, value) {
   if (["표현 바꾸기", "감정 도움 AI"].includes(name))
     return value >= 75 ? "항상" : "필요할 때";
   if (name === "말맞춤 카드") return value >= 75 ? "넓게" : "약속 대화만";
-  if (name === "대화 흐름 요약") return value >= 75 ? "항상" : "갈등 있을 때";
+  if (name === "대화 흐름 요약") return "눌렀을 때만";
   if (name === "비꼼·압박 표현")
     return value < 35 ? "가볍게" : value < 70 ? "균형 있게" : "민감하게";
   if (name === "출처 확인 제안")
@@ -257,7 +258,7 @@ const esc = (s) =>
     (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c],
   );
 const escAttr = (s) => esc(s).replace(/"/g, "&quot;");
-const AI_CACHE_VERSION = "evidence-v2";
+const AI_CACHE_VERSION = "two-stage-v1";
 const aiCacheKey = (text) =>
   `${AI_CACHE_VERSION}|${signedInId}|${activeAiIntervention()}|${JSON.stringify(aiDetails())}|${text.trim()}`;
 function savedAiResult(text) {
@@ -372,7 +373,7 @@ async function openRoom(id) {
       item.room_id === id &&
       (item.has_conflict || aiDetails()["대화 흐름 요약"] === "항상"),
   );
-  app.innerHTML = `<main class="layout">${rail()}<section class="chat"><header class="head"><button class="back-button" title="채팅 목록으로" aria-label="채팅 목록으로" onclick="home()"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14.5 5-7 7 7 7M8 12h9"/></svg></button><div class="room-title"><h1>${esc(room.name)}</h1><span>참여자 ${room.members}명 · AI ${roomRule(id)} · ${isRoomMuted(id) ? "알림 끔" : "연결됨"}</span><small id="typing-status" role="status"></small><span class="room-slot" id="pulse-slot">${conversationPulse(messages)}</span></div><div class="chat-actions"><button class="chat-primary-action" title="친구 초대" aria-label="친구 초대" onclick="inviteFriends()">＋</button><button class="chat-primary-action" title="AI 도움받기" aria-label="AI 도움받기" onclick="openAiHelp()">✦</button><button class="chat-secondary-action" title="약속 잡기" aria-label="약속 잡기" onclick="newAppointment()">◷</button><button class="chat-secondary-action" title="공동 확인" aria-label="공동 확인" onclick="newAgreement()">✓</button><button class="chat-secondary-action" title="회고 카드" aria-label="회고 카드" onclick="newReflection()">↻</button><button class="chat-secondary-action" title="채팅방 설정" aria-label="채팅방 설정" onclick="roomSettings()">⚙</button><button class="chat-more-action" title="더 보기" aria-label="더 보기" onclick="openChatMore()">⋯</button></div></header><section class="messages" id="messages" data-room="${escAttr(id)}"><div class="room-slot" id="insights-slot">${insights.map(viewInsight).join("")}</div>${messages.map(view).join("")}<template id="message-end"></template><div class="room-slot" id="alignment-slot">${alignmentCard(messages)}</div><div class="room-slot" id="appointments-slot">${appointments.map(viewAppointment).join("")}</div><div class="room-slot" id="reflections-slot">${reflections.map(viewReflection).join("")}</div><div class="room-slot" id="agreements-slot">${agreementMarkup(id)}</div></section><form class="sendbar" onsubmit="send(event)"><span id="reply-slot" class="room-slot">${replyComposer()}</span><button type="button" class="intent-button" title="의도 표시" onclick="chooseIntent()">${selectedIntent ? "◎" : "＋"}</button><label class="image-upload" title="사진 보내기" aria-label="사진 보내기"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="3"/><circle cx="9" cy="10" r="1.5"/><path d="m5.5 17 4.5-4 3.2 2.7 2.4-2 2.9 3.3"/></svg><input hidden type="file" accept="image/*" onchange="sendImage(this)"></label><input id="text" placeholder="메시지를 입력하세요" autocomplete="off" oninput="onChatTyping(this.value)" onblur="stopTyping()"><span id="ai-status" class="ai-status"></span><button>↑</button></form></section></main>`;
+  app.innerHTML = `<main class="layout">${rail()}<section class="chat"><header class="head"><button class="back-button" title="채팅 목록으로" aria-label="채팅 목록으로" onclick="home()"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14.5 5-7 7 7 7M8 12h9"/></svg></button><div class="room-title"><h1>${esc(room.name)}</h1><span>참여자 ${room.members}명 · AI ${roomRule(id)} · ${isRoomMuted(id) ? "알림 끔" : "연결됨"}</span><small id="typing-status" role="status"></small><span class="room-slot" id="pulse-slot">${conversationPulse()}</span></div><div class="chat-actions"><button class="chat-primary-action" title="친구 초대" aria-label="친구 초대" onclick="inviteFriends()">＋</button><button class="chat-primary-action" title="AI 도움받기" aria-label="AI 도움받기" onclick="openAiHelp()">✦</button><button class="chat-secondary-action" title="약속 잡기" aria-label="약속 잡기" onclick="newAppointment()">◷</button><button class="chat-secondary-action" title="공동 확인" aria-label="공동 확인" onclick="newAgreement()">✓</button><button class="chat-secondary-action" title="회고 카드" aria-label="회고 카드" onclick="newReflection()">↻</button><button class="chat-secondary-action" title="채팅방 설정" aria-label="채팅방 설정" onclick="roomSettings()">⚙</button><button class="chat-more-action" title="더 보기" aria-label="더 보기" onclick="openChatMore()">⋯</button></div></header><section class="messages" id="messages" data-room="${escAttr(id)}">${messages.map(view).join("")}<template id="message-end"></template><div class="room-slot" id="alignment-slot">${alignmentCard(messages)}</div><div class="room-slot" id="appointments-slot">${appointments.map(viewAppointment).join("")}</div><div class="room-slot" id="reflections-slot">${reflections.map(viewReflection).join("")}</div><div class="room-slot" id="agreements-slot">${agreementMarkup(id)}</div></section><form class="sendbar" onsubmit="send(event)"><span id="reply-slot" class="room-slot">${replyComposer()}</span><button type="button" class="intent-button" title="의도 표시" onclick="chooseIntent()">${selectedIntent ? "◎" : "＋"}</button><label class="image-upload" title="사진 보내기" aria-label="사진 보내기"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="4.5" width="17" height="15" rx="3"/><circle cx="9" cy="10" r="1.5"/><path d="m5.5 17 4.5-4 3.2 2.7 2.4-2 2.9 3.3"/></svg><input hidden type="file" accept="image/*" onchange="sendImage(this)"></label><input id="text" placeholder="메시지를 입력하세요" autocomplete="off" oninput="onChatTyping(this.value)" onblur="stopTyping()"><span id="ai-status" class="ai-status"></span><button>↑</button></form></section></main>`;
   const list = document.querySelector("#messages");
   if (refreshingCurrentRoom && !wasNearBottom) list.scrollTop = previousScrollTop;
   else list.scrollTop = list.scrollHeight;
@@ -542,7 +543,6 @@ function syncRoomExtras(id, messages) {
   }
   updateFragment("#alignment-slot", alignmentCard(messages));
   updateFragment("#appointments-slot", (data.appointments || []).filter(a=>a.room_id===id).map(viewAppointment).join(""));
-  updateFragment("#insights-slot", (data.insights || []).filter(i=>i.room_id===id && (i.has_conflict || aiDetails()["대화 흐름 요약"]==="항상")).map(viewInsight).join(""));
   updateFragment("#pulse-slot", conversationPulse());
   updateFragment("#reply-slot", replyComposer());
 }
@@ -1017,8 +1017,8 @@ const aiCategories = [
   ],
   [
     "대화 흐름 요약",
-    "10개마다 실행하지만, 이어지는 주제는 최근 대화 흐름으로 함께 정리해요.",
-    ["끄기", "갈등 있을 때", "항상"],
+    "채팅방 위의 대화 흐름 버튼을 눌렀을 때만 최근 맥락을 정리해요.",
+    ["끄기", "눌렀을 때만"],
   ],
   [
     "이미지 안전 안내",
@@ -1070,10 +1070,28 @@ function renderDetailedAiSettings() {
     const [, desc, options] = aiCategories.find(([title]) => title === name);
     return `<article class="ai-category"><span><b>${name}</b><small>${desc}</small></span><div class="ai-choice-row">${options.map((option) => `<button class="${saved[name] === option ? "selected" : ""}" onclick="saveAiDetail('${name}','${option}')">${option}</button>`).join("")}</div></article>`;
   };
-  root.innerHTML = `<section class="overall-sensitivity"><span>기본 AI 민감도</span><b id="overall-sensitivity-label">${sensitivityLabel(sensitivity.overall)} · ${sensitivity.overall}</b><input type="range" min="0" max="100" value="${sensitivity.overall}" style="--sensitivity:${sensitivity.overall}%" oninput="previewOverallSensitivity(this.value,this)" onchange="setOverallSensitivity(this.value)"><small>모든 채팅방의 기본값이에요. 친한 친구 방은 방 설정에서 따로 낮출 수 있어요.</small></section><details class="ai-advanced-settings"><summary><span><b>세부 항목 조절</b><small>필요한 항목만 열어, 내 대화 방식에 맞춰요.</small></span><i>⌄</i></summary><div class="ai-setting-intro"><b>‘그냥 보내기’ 선택도 반영해요</b><span>${esc(learningNote())}</span></div>${aiGroups.map(([title, desc, names]) => `<details class="ai-setting-group"><summary><span><b>${title}</b><small>${desc}</small></span><i>⌄</i></summary><div class="ai-category-list">${names.map(card).join("")}</div></details>`).join("")}</details>`;
+  root.innerHTML = `<section class="overall-sensitivity"><span>기본 AI 민감도</span><b id="overall-sensitivity-label">${sensitivityLabel(sensitivity.overall)} · ${sensitivity.overall}</b><input type="range" min="0" max="100" value="${sensitivity.overall}" style="--sensitivity:${sensitivity.overall}%" oninput="previewOverallSensitivity(this.value,this)" onchange="setOverallSensitivity(this.value)"><small>모든 채팅방의 기본값이에요. 친한 친구 방은 방 설정에서 따로 낮출 수 있어요.</small><button class="ai-connection-button" onclick="checkAiConnection()">OpenAI 연결 확인</button></section><details class="ai-advanced-settings"><summary><span><b>세부 항목 조절</b><small>필요한 항목만 열어, 내 대화 방식에 맞춰요.</small></span><i>⌄</i></summary><div class="ai-setting-intro"><b>‘그냥 보내기’ 선택도 반영해요</b><span>${esc(learningNote())}</span></div>${aiGroups.map(([title, desc, names]) => `<details class="ai-setting-group"><summary><span><b>${title}</b><small>${desc}</small></span><i>⌄</i></summary><div class="ai-category-list">${names.map(card).join("")}</div></details>`).join("")}</details>`;
   const actions = document.querySelector("#settings-app-actions");
   if (actions)
     actions.innerHTML = `<section class="settings-actions"><button class="theme-toggle" onclick="toggleTheme()">${document.body.classList.contains("dark") ? "☀️ 라이트 모드" : "🌙 다크 모드"}</button><button class="notification-toggle" onclick="toggleBrowserNotifications()">${browserNotificationsEnabled() ? "🔔 새 메시지 알림 켬" : "🔕 새 메시지 알림 켜기"}</button><button class="danger-action" onclick="openDeleteAccount()">회원 탈퇴</button></section>`;
+}
+async function checkAiConnection() {
+  popup(`<div class="ai-check info analysis-loading"><div class="thinking-loader" aria-label="OpenAI 연결 확인 중"><i></i><i></i><i></i></div><span>AI 연결 확인</span><h2>OpenAI와 연결되는지 확인하고 있어요</h2></div>`);
+  try {
+    const result = await api("/api/ai/status");
+    const messages = {
+      connected: ["연결이 정상이에요", "사전에 없는 문장도 전송 후 맥락 검사에서 OpenAI가 확인해요."],
+      missing: ["API 키가 설정되지 않았어요", "Render 환경 변수에 OPENAI_API_KEY를 저장해야 해요."],
+      invalid_key: ["API 키를 사용할 수 없어요", "키가 잘못됐거나 해당 프로젝트에서 사용할 권한이 없는지 확인해주세요."],
+      quota_or_rate_limit: ["사용량 또는 호출 제한을 확인해주세요", "API 크레딧과 프로젝트 사용 한도를 확인한 뒤 다시 시도해주세요."],
+      unreachable: ["OpenAI 서버에 연결하지 못했어요", "잠시 후 다시 시도하거나 Render의 외부 연결 상태를 확인해주세요."],
+      api_error: ["OpenAI 응답을 확인하지 못했어요", "잠시 후 다시 확인해주세요."],
+    };
+    const [title, copy] = messages[result.state] || messages.api_error;
+    popup(`<div class="ai-check ${result.connected ? "info" : "warn"}"><span>AI 연결 상태</span><h2>${title}</h2><p>${copy}</p><button onclick="closePopup()">확인</button></div>`);
+  } catch {
+    popup(`<div class="ai-check warn"><span>AI 연결 상태</span><h2>상태를 확인하지 못했어요</h2><p>로그인 상태나 서버 배포 상태를 확인해주세요.</p><button onclick="closePopup()">확인</button></div>`);
+  }
 }
 function saveAiDetail(name, value) {
   const state = sensitivityState();
@@ -1298,6 +1316,10 @@ function view(m) {
     finding?.status === "check" || hasSources
       ? `<button class="fact-cue ${finding.status === "check" ? "needs-check" : ""}" title="${finding.status === "check" ? "출처를 한 번 더 확인해 보세요" : "관련 출처 보기"}" onpointerdown="event.stopPropagation()" onclick="event.stopPropagation();openFactFinding('${m.id}')">ⓘ<span>출처</span></button>`
       : "";
+  const contextCue =
+    m.mine && m.ai_verdict === "WARN"
+      ? `<button class="context-tone-cue" title="앞 대화와 함께 확인한 AI 제안" onpointerdown="event.stopPropagation()" onclick="event.stopPropagation();openContextToneFinding('${m.id}')"><span>AI</span> 맥락 제안</button>`
+      : "";
   const messageMenu = m.mine
     ? `<button class="message-menu" title="메시지 관리" aria-label="메시지 관리" onpointerdown="event.stopPropagation()" onclick="event.stopPropagation();openMessageActions('${m.id}')"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg></button>`
     : "";
@@ -1310,7 +1332,38 @@ function view(m) {
   const replyButton = `<button class="reply-shortcut" title="답장" aria-label="답장" onpointerdown="event.stopPropagation()" onclick="event.stopPropagation();startReply('${m.id}')"><span>↩</span><em>답장</em></button>`;
   const tap = m.mine ? "" : `onclick="handleMessageTap('${m.id}')"`;
   const press = `onpointerdown="beginMessagePress(event,'${m.id}',${m.mine})" onpointerup="endMessageGesture(event,'${m.id}',${m.mine})" onpointerleave="endMessageGesture(event,'${m.id}',${m.mine})" onpointermove="trackMessageSwipe(event,'${m.id}',${m.mine})" onpointercancel="cancelMessagePress(true)" oncontextmenu="return false"`;
-  return `<article class="bubble ${m.mine ? "mine" : ""}" data-message-id="${esc(m.id)}" ${tap} ${press}><div class="meta"><span>${esc(m.sender)}${m.intent ? ` · <span class="intent-tag">${esc(m.intent)}</span>` : ""}</span>${messageMenu}</div>${quote}${m.image_url ? `<img class="chat-image" src="${m.image_url}" alt="보낸 사진">` : ""}${m.body ? `<span>${esc(m.body)}</span>` : ""}<div class="bubble-tools">${factCue}${replyButton}${m.mine && m.unread ? `<span class="read">${m.unread}</span>` : ""}</div></article>`;
+  return `<article class="bubble ${m.mine ? "mine" : ""}" data-message-id="${esc(m.id)}" ${tap} ${press}><div class="meta"><span>${esc(m.sender)}${m.intent ? ` · <span class="intent-tag">${esc(m.intent)}</span>` : ""}</span>${messageMenu}</div>${quote}${m.image_url ? `<img class="chat-image" src="${m.image_url}" alt="보낸 사진">` : ""}${m.body ? `<span>${esc(m.body)}</span>` : ""}<div class="bubble-tools">${contextCue}${factCue}${replyButton}${m.mine && m.unread ? `<span class="read">${m.unread}</span>` : ""}</div></article>`;
+}
+function openContextToneFinding(id) {
+  const message = currentRoomMessages.find((item) => item.id === id);
+  if (!message?.ai_suggestion) return;
+  const evidence = message.ai_trigger
+    ? `<p>맥락에서 눈에 띈 표현 · <q>${esc(message.ai_trigger)}</q></p>`
+    : "";
+  popup(`<div class="ai-check warn context-tone-result"><span>전송 후 맥락 확인</span><h2>앞 대화와 함께 보면 이렇게 들릴 수도 있어요</h2>${evidence}<p class="ai-suggestion">${esc(message.ai_suggestion)}</p><small>이미 전송된 메시지를 막거나 판단하지 않고, 다음 대화에 참고할 수 있는 제안이에요.</small><button onclick="closePopup()">확인</button></div>`);
+}
+async function queueContextToneCheck(room, messageId) {
+  if (!messageId || contextChecksInFlight.has(messageId) || activeAiIntervention() === "off" || aiDetails()["비꼼·압박 표현"] === "끄기") return;
+  contextChecksInFlight.add(messageId);
+  if (roomId === room) setAiStatus("보낸 문장을 앞 대화와 함께 확인 중", true);
+  try {
+    const result = await api(`/api/rooms/${room}/messages/${messageId}`, {method:"POST"});
+    const message = currentRoomMessages.find((item) => item.id === messageId);
+    if (message) {
+      message.ai_verdict = result.verdict;
+      message.ai_suggestion = result.suggestion;
+      message.ai_trigger = result.trigger;
+      const node = document.querySelector(`.bubble[data-message-id="${messageId}"]`);
+      if (node) node.outerHTML = view(message);
+    } else if (roomId === room && result.verdict === "WARN") {
+      await refreshRoom(room);
+    }
+    if (roomId === room) setAiStatus(result.verdict === "WARN" ? "맥락을 확인한 제안이 있어요" : "맥락 확인 완료");
+  } catch (error) {
+    if (roomId === room) setAiStatus(error.status === 502 || error.status === 503 ? "AI 연결을 확인해주세요" : "맥락 확인을 잠시 후 다시 시도할게요");
+  } finally {
+    contextChecksInFlight.delete(messageId);
+  }
 }
 function beginMessagePress(event, id, mine) {
   cancelMessagePress();
@@ -1418,17 +1471,9 @@ function focusReply(id) {
   target.classList.add("reply-focused");
   setTimeout(() => target.classList.remove("reply-focused"), 900);
 }
-function latestConversationInsight() {
-  return (data?.insights || [])
-    .filter((item) => item.room_id === roomId)
-    .sort((a, b) => (b.checkpoint || 0) - (a.checkpoint || 0))[0];
-}
 function conversationPulse() {
-  if (aiDetails()["대화 흐름 참고"] === "끄기") return "";
-  const insight = latestConversationInsight();
-  const caution = Boolean(insight?.has_conflict);
-  const label = insight?.topic || "필요할 때 살펴보기";
-  return `<button class="conversation-pulse ${caution ? "careful" : ""}" onclick="openConflictGuide()"><span>대화 흐름</span><b>${caution ? "엇갈림 가능성" : esc(label)}</b></button>`;
+  if (aiDetails()["대화 흐름 요약"] === "끄기") return "";
+  return `<button class="conversation-pulse" onclick="openConflictGuide()"><span>대화 흐름</span><b>눌러서 분석</b></button>`;
 }
 function openConversationPulse() {
   popup(
@@ -1672,6 +1717,7 @@ async function runAiCheck(text) {
       text,
       ai_intervention: activeAiIntervention(),
       details: aiDetails(),
+      phase: "quick",
     }),
   });
   aiPrefetch.promise = request;
@@ -1879,10 +1925,11 @@ async function reportAiResult() {
 async function sendApproved() {
   if (!pendingSend) return;
   const next = pendingSend;
+  let sentMessage = null;
   closePopup();
   setAiStatus("");
   try {
-    await api(`/api/rooms/${next.room}/messages`, {
+    sentMessage = await api(`/api/rooms/${next.room}/messages`, {
       method: "POST",
       body: JSON.stringify({
         sender: signedIn,
@@ -1918,15 +1965,8 @@ async function sendApproved() {
     if (intentButton) intentButton.textContent="＋";
     openRoom(next.room);
   }
-  if (aiDetails()["대화 흐름 요약"] !== "끄기")
-    api(`/api/rooms/${next.room}/insight`, { method: "POST" })
-      .then(async () => {
-        data = await api(
-          `/api/bootstrap?user_id=${encodeURIComponent(signedInId)}`,
-        );
-        if (roomId === next.room) openRoom(next.room);
-      })
-      .catch(() => {});
+  if (next.result?.verdict !== "WARN" && sentMessage?.id)
+    queueContextToneCheck(next.room, sentMessage.id);
 }
 function editPendingSend(allowOnePass = false) {
   const body = pendingSend?.body || "";

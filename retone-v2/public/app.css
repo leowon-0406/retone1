@@ -105,6 +105,12 @@ body.dark{--text:#f4f2e9;--muted:#c1c3b7;--line:#45463f;--stroke:#4b4c44;--canva
 .dark .qr-divider::before,.dark .qr-divider::after{background:#55544c}
 @media(max-width:700px){.friend-intro{grid-template-columns:1fr}.my-code-entry{width:100%!important}.friend-add-card .my-qr-card .qr-image{width:190px!important;height:190px!important}}
 @media(max-width:390px){.friend-code-overview b{font-size:16px}.friend-add-card .my-qr-card .qr-image{width:176px!important;height:176px!important}}
+.context-tone-cue{display:inline-flex!important;align-items:center;gap:5px;width:auto!important;height:25px!important;margin:5px 0 0!important;padding:4px 8px!important;border:1px solid #d8c9ad!important;border-radius:9px!important;background:#fff8ea!important;color:#7b6040!important;box-shadow:none!important;font-size:9px!important;font-weight:850!important}
+.context-tone-cue span{display:grid;place-items:center;width:18px;height:16px;border-radius:6px;background:#eadcae;color:#635431;font-size:8px}
+.context-tone-cue:hover{background:#fffdf7!important;border-color:#cbb78f!important}
+.ai-connection-button{width:auto!important;margin:12px 0 0!important;padding:8px 11px!important;border:1px solid #ded2bf!important;border-radius:11px!important;background:#fffaf1!important;color:#655e52!important;box-shadow:none!important;font-size:10px!important}
+.dark .context-tone-cue,.dark .ai-connection-button{border-color:#625b4c!important;background:#424038!important;color:#eee3cc!important}
+.dark .context-tone-cue span{background:#625b3d;color:#f3eaa9}
 @media(min-width:701px){.chat-actions .chat-more-action{display:none!important}}
 
 /* A reply action should feel like a part of the message, not a button floating beside it. */

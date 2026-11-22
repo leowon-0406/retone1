@@ -35,10 +35,16 @@ async function main() {
 
     const writes=[]; queueAiCheck=()=>{};
     api=async(url,options)=>{writes.push({url,active:JSON.parse(options.body).active})};
-    onChatTyping('안녕'); await Promise.resolve(); await Promise.resolve();
-    stopTyping(); await Promise.resolve(); await Promise.resolve();
+    onChatTyping('안녕'); await typingWrites;
+    stopTyping(); await typingWrites;
     const schedule = appointmentEditorMarkup({id:'plan',date:'2026-11-22 18:00',place:'회의실',title:'회의',fields:[{label:'준비물',value:'발표 자료'}]});
     const scheduleFields = schedule.includes('준비물') && schedule.includes('발표 자료') && schedule.includes('＋ 세부 항목');
+    let aiRequestBody=null;
+    api=async(url,options)=>{if(url==='/api/ai/check'){aiRequestBody=JSON.parse(options.body);return {verdict:'PASS',source:'quick',info:{level:'none'}}} throw new Error('unexpected')};
+    aiPrefetch={text:'오늘 회의 어떻게 할까',result:null,promise:null,timer:null};
+    await runAiCheck('오늘 회의 어떻게 할까');
+    const quickBeforeSend=aiRequestBody?.phase==='quick';
+    const manualFlow=conversationPulse().includes('눌러서 분석');
     friendIdentityCache={userId:'me',profile:{friend_code:'MZ3C4M',qr_svg:'<svg viewBox="0 0 10 10"></svg>'}};
     openFriendAdd('qr'); await Promise.resolve(); await Promise.resolve();
     const friendCodeVisible = document.querySelector('#friend-code-overview')?.textContent.includes('MZ3C4M');
@@ -47,7 +53,7 @@ async function main() {
     localStorage.removeItem('retone-ai-sensitivity');
     const sensitivity=sensitivityState();
     const strongerAiDefaults=sensitivity.overall===55 && sensitivity.categories['강한 공격 표현']===65 && sensitivity.categories['비꼼·압박 표현']===60;
-    return {draftKept,oldKept,newAdded,writes,scheduleFields,friendCodeVisible,qrVisible,qrCodeParsed,strongerAiDefaults};
+    return {draftKept,oldKept,newAdded,writes,scheduleFields,friendCodeVisible,qrVisible,qrCodeParsed,strongerAiDefaults,quickBeforeSend,manualFlow};
   })()`, context);
   assert.equal(result.draftKept, true);
   assert.equal(result.oldKept, true);
@@ -59,7 +65,9 @@ async function main() {
   assert.equal(result.qrVisible, true);
   assert.equal(result.qrCodeParsed, true);
   assert.equal(result.strongerAiDefaults, true);
-  console.log('Frontend regressions passed: draft, focus, incremental append, typing, schedule, friend QR/code and AI strength defaults.');
+  assert.equal(result.quickBeforeSend, true);
+  assert.equal(result.manualFlow, true);
+  console.log('Frontend regressions passed: chat state, friend QR/code, quick AI precheck and manual conversation flow.');
 }
 
 main().catch(error=>{ console.error(error); process.exitCode=1; });

@@ -162,4 +162,6 @@ ALTER TABLE retone_v2.appointments ADD COLUMN IF NOT EXISTS fields JSONB NOT NUL
 ALTER TABLE retone_v2.appointments ADD COLUMN IF NOT EXISTS source_message_id UUID REFERENCES retone_v2.messages(id) ON DELETE SET NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS appointment_source_unique ON retone_v2.appointments(source_message_id);
 ALTER TABLE retone_v2.messages ADD COLUMN IF NOT EXISTS fact_result JSONB;
+ALTER TABLE retone_v2.messages ADD COLUMN IF NOT EXISTS ai_trigger TEXT;
+ALTER TABLE retone_v2.messages ADD COLUMN IF NOT EXISTS ai_context_version INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE retone_v2.ai_cache ADD COLUMN IF NOT EXISTS warning_trigger TEXT;
