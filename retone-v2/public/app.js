@@ -258,9 +258,12 @@ const esc = (s) =>
     (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c],
   );
 const escAttr = (s) => esc(s).replace(/"/g, "&quot;");
-const AI_CACHE_VERSION = "two-stage-v1";
+const AI_CACHE_VERSION = "pre-context-v1";
+const aiContextSnapshot = () => currentRoomMessages
+  .slice(-12)
+  .map((message) => `${message.sender}: ${String(message.body || "").slice(0, 300)}`);
 const aiCacheKey = (text) =>
-  `${AI_CACHE_VERSION}|${signedInId}|${activeAiIntervention()}|${JSON.stringify(aiDetails())}|${text.trim()}`;
+  `${AI_CACHE_VERSION}|${signedInId}|${activeAiIntervention()}|${JSON.stringify(aiDetails())}|${aiContextSnapshot().join("\n")}|${text.trim()}`;
 function savedAiResult(text) {
   const result = aiSavedResults[aiCacheKey(text)] || null;
   return result && (result.verdict === "PASS" || result.verdict === "WARN")
@@ -1724,7 +1727,7 @@ function queueAiCheck(value) {
     promise: null,
     // Do not call the service for every letter. One pre-check after a natural
     // typing pause preserves fast sending without turning typing into API traffic.
-    timer: setTimeout(() => runAiCheck(text), 900),
+    timer: setTimeout(() => runAiCheck(text), 550),
   };
   setAiStatus("");
 }
@@ -1737,7 +1740,8 @@ async function runAiCheck(text) {
       text,
       ai_intervention: activeAiIntervention(),
       details: aiDetails(),
-      phase: "quick",
+      phase: "pre_send",
+      context: aiContextSnapshot(),
     }),
   });
   aiPrefetch.promise = request;
@@ -1754,7 +1758,7 @@ async function runAiCheck(text) {
   } catch {
     if (aiPrefetch.text === text) {
       aiPrefetch.promise = null;
-      setAiStatus("");
+      setAiStatus("AI 연결을 확인해주세요");
     }
   }
 }
@@ -1768,7 +1772,7 @@ async function checkForSend(body) {
   clearTimeout(aiPrefetch.timer);
   aiPrefetch = { text: body, result: null, promise: null, timer: null };
   return runAiCheck(body).then(
-    () => aiPrefetch.result || { verdict: "PASS", info: { level: "none" } },
+    () => aiPrefetch.result || { verdict: "PASS", source: "unavailable", info: { level: "none" } },
   );
 }
 function addPendingBubble(body) {
@@ -1812,7 +1816,7 @@ async function send(event) {
   try {
     showCheckResult(await checkForSend(body));
   } catch {
-    await sendApproved();
+    showCheckResult({ verdict: "PASS", source: "unavailable", info: { level: "none" } });
   }
 }
 async function sendImageNow(dataUrl) {
@@ -1867,6 +1871,11 @@ function showCheckResult(result) {
     return;
   }
   if (pendingSend) pendingSend.result = result;
+  if (["unavailable", "fallback"].includes(result.source)) {
+    removePendingBubble();
+    popup(`<div class="ai-check warn"><span>AI 연결 확인 필요</span><h2>기본 표현만 확인했어요</h2><p>OpenAI 확인이 연결되지 않아 사전에 없는 비꼼이나 맥락 표현까지는 아직 살피지 못했어요.</p><small>연결되지 않은 상태를 정상 통과처럼 처리하지 않고 알려드려요.</small><div class="modal-actions"><button class="quiet" onclick="retryPendingCheck()">다시 확인</button><button onclick="sendApproved()">기본 검사로 보내기</button></div></div>`);
+    return;
+  }
   const info = result.info || { level: "none", queries: [] };
   const evidence = result.trigger && pendingSend?.body.includes(result.trigger) ? `<p>짚은 표현 · <q>${esc(result.trigger)}</q></p>` : "";
   const suggestion = result.suggestion
@@ -1891,6 +1900,18 @@ function showCheckResult(result) {
     return;
   }
   sendApproved();
+}
+async function retryPendingCheck() {
+  if (!pendingSend) return;
+  closePopup();
+  addPendingBubble(pendingSend.body);
+  aiPrefetch = { text: pendingSend.body, result: null, promise: null, timer: null };
+  try {
+    await runAiCheck(pendingSend.body);
+    showCheckResult(aiPrefetch.result || {verdict:"PASS",source:"unavailable"});
+  } catch {
+    showCheckResult({verdict:"PASS",source:"unavailable"});
+  }
 }
 function sendDespiteWarning() {
   if (pendingSend?.result?.verdict === "WARN") {

@@ -47,7 +47,7 @@ async function main() {
     api=async(url,options)=>{if(url==='/api/ai/check'){aiRequestBody=JSON.parse(options.body);return {verdict:'PASS',source:'quick',info:{level:'none'}}} throw new Error('unexpected')};
     aiPrefetch={text:'오늘 회의 어떻게 할까',result:null,promise:null,timer:null};
     await runAiCheck('오늘 회의 어떻게 할까');
-    const quickBeforeSend=aiRequestBody?.phase==='quick';
+    const quickBeforeSend=aiRequestBody?.phase==='pre_send' && Array.isArray(aiRequestBody.context) && aiRequestBody.context.length>0;
     const manualFlow=conversationPulse().includes('눌러서 분석');
     nav='settings';
     const settingsSelected=rail().includes('class="active" onclick="settings()"');
