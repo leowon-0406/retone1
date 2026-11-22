@@ -27,4 +27,6 @@
 .appointment-delete .danger-action { background: #b65347 !important; color: #fff !important; }
 .dark .appointment-card .appointment-actions .danger { background: #4a302d !important; color: #ffb3a7 !important; }
 @media(max-width:700px) { .appointment-actions { display: grid; grid-template-columns: 1fr 1fr; } }
+.friend-add-tabs { grid-template-columns: repeat(4, minmax(0, 1fr)) !important; }
+@media(max-width:390px) { .friend-add-tabs button { font-size: 10px !important; padding-inline: 2px !important; } }
 .appointment-editor { max-height: 80dvh; overflow-y: auto; }

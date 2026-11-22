@@ -646,7 +646,7 @@ async function friends() {
     return;
   }
   const person = (user, action, detail) => `<article class="friend-row"><span class="avatar">${user.avatar_url ? `<img src="${user.avatar_url}" alt="">` : esc(user.name[0])}</span><span class="copy"><b>${esc(user.name)}</b><span>${detail}</span></span>${action}</article>`;
-  app.innerHTML = `<main class="layout">${rail()}<section class="page"><header class="head"><h1>친구</h1><div class="friend-head-actions"><button class="new-room" onclick="openFriendAdd()">＋ 친구 추가</button><button class="head-quiet" onclick="home()">채팅 목록</button></div></header><div class="content"><div class="intro friend-intro"><div><h2>내 친구</h2><p>전화번호, 친구코드 또는 QR로만 친구 요청을 보낼 수 있어요. 가입한 전체 사용자는 표시하지 않아요.</p></div><button id="my-code-entry" class="my-code-entry" onclick="openFriendAdd('qr')"><span>내 친구코드</span><b>불러오는 중</b><i>QR 보기</i></button></div>${relations.incoming.length ? `<section class="friend-section"><b>받은 친구 요청 <em>${relations.incoming.length}</em></b><div>${relations.incoming.map((user) => person(user, `<button onclick="acceptFriend('${user.id}')">수락</button><button class="soft" onclick="blockFriend('${user.id}')">차단</button>`, "친구 요청을 보냈어요")).join("")}</div></section>` : ""}<section class="friend-section"><b>친구 ${relations.friends.length}</b><div>${relations.friends.length ? relations.friends.map((user) => person(user, `<button onclick="startDirect('${esc(user.name)}','${user.id}')">채팅</button><button class="soft" onclick="blockFriend('${user.id}')">차단</button>`, "1:1 대화를 시작할 수 있어요")).join("") : `<div class="empty-chat"><b>아직 친구가 없어요</b><span>위의 ‘친구 추가’에서 전화번호, 코드 또는 QR로 요청을 보내보세요.</span></div>`}</div></section>${relations.outgoing.length ? `<section class="friend-section"><b>보낸 요청</b><div>${relations.outgoing.map((user) => person(user, `<span class="request-state">대기 중</span>`, "수락을 기다리고 있어요")).join("")}</div></section>` : ""}${relations.blocked.length ? `<details class="blocked-list"><summary>차단한 사용자 ${relations.blocked.length}명</summary><p>차단한 사용자는 친구 요청과 채팅을 시작할 수 없어요.</p></details>` : ""}</div></section></main>`;
+  app.innerHTML = `<main class="layout">${rail()}<section class="page"><header class="head"><h1>친구</h1><div class="friend-head-actions"><button class="new-room" onclick="openFriendAdd()">＋ 친구 추가</button><button class="head-quiet" onclick="home()">채팅 목록</button></div></header><div class="content"><div class="intro friend-intro"><div><h2>내 친구</h2><p>정확한 이름, 전화번호, 친구코드 또는 QR로 친구 요청을 보낼 수 있어요. 가입한 전체 사용자는 표시하지 않아요.</p></div><button id="my-code-entry" class="my-code-entry" onclick="openFriendAdd('qr')"><span>내 친구코드</span><b>불러오는 중</b><i>QR 보기</i></button></div>${relations.incoming.length ? `<section class="friend-section"><b>받은 친구 요청 <em>${relations.incoming.length}</em></b><div>${relations.incoming.map((user) => person(user, `<button onclick="acceptFriend('${user.id}')">수락</button><button class="soft" onclick="blockFriend('${user.id}')">차단</button>`, "친구 요청을 보냈어요")).join("")}</div></section>` : ""}<section class="friend-section"><b>친구 ${relations.friends.length}</b><div>${relations.friends.length ? relations.friends.map((user) => person(user, `<button onclick="startDirect('${esc(user.name)}','${user.id}')">채팅</button><button class="soft" onclick="blockFriend('${user.id}')">차단</button>`, "1:1 대화를 시작할 수 있어요")).join("") : `<div class="empty-chat"><b>아직 친구가 없어요</b><span>위의 ‘친구 추가’에서 이름, 전화번호, 코드 또는 QR로 요청을 보내보세요.</span></div>`}</div></section>${relations.outgoing.length ? `<section class="friend-section"><b>보낸 요청</b><div>${relations.outgoing.map((user) => person(user, `<span class="request-state">대기 중</span>`, "수락을 기다리고 있어요")).join("")}</div></section>` : ""}${relations.blocked.length ? `<details class="blocked-list"><summary>차단한 사용자 ${relations.blocked.length}명</summary><p>차단한 사용자는 친구 요청과 채팅을 시작할 수 없어요.</p></details>` : ""}</div></section></main>`;
   loadFriendCodeEntry();
   startInboxPolling(data);
 }
@@ -669,8 +669,8 @@ async function loadFriendCodeEntry() {
     if (document.contains(entry)) entry.innerHTML = `<span>내 친구코드</span><b>다시 확인</b><i>눌러서 열기</i>`;
   }
 }
-function openFriendAdd(initialMode = "phone") {
-  popup(`<div class="friend-add-card"><span>친구 추가</span><h2>친구를 찾아볼까요?</h2><p>상대가 요청을 수락하면 1:1 대화를 시작할 수 있어요.</p><button class="friend-code-overview" id="friend-code-overview" onclick="showFriendAddPanel('qr')"><span>내 친구코드</span><b>불러오는 중…</b><i>QR · 복사</i></button><div class="friend-add-tabs"><button data-friend-add="phone" onclick="showFriendAddPanel('phone')">전화번호</button><button data-friend-add="code" onclick="showFriendAddPanel('code')">친구코드</button><button data-friend-add="qr" onclick="showFriendAddPanel('qr')">내 QR</button></div><div id="friend-add-panel"></div></div>`);
+function openFriendAdd(initialMode = "name") {
+  popup(`<div class="friend-add-card"><span>친구 추가</span><h2>친구를 찾아볼까요?</h2><p>상대가 요청을 수락하면 1:1 대화를 시작할 수 있어요.</p><button class="friend-code-overview" id="friend-code-overview" onclick="showFriendAddPanel('qr')"><span>내 친구코드</span><b>불러오는 중…</b><i>QR · 복사</i></button><div class="friend-add-tabs"><button data-friend-add="name" onclick="showFriendAddPanel('name')">이름</button><button data-friend-add="phone" onclick="showFriendAddPanel('phone')">전화번호</button><button data-friend-add="code" onclick="showFriendAddPanel('code')">친구코드</button><button data-friend-add="qr" onclick="showFriendAddPanel('qr')">내 QR</button></div><div id="friend-add-panel"></div></div>`);
   hydrateFriendCodeOverview();
   showFriendAddPanel(initialMode);
 }
@@ -690,6 +690,10 @@ function showFriendAddPanel(mode) {
   document.querySelectorAll("[data-friend-add]").forEach((button) => button.classList.toggle("selected", button.dataset.friendAdd === mode));
   const panel = document.querySelector("#friend-add-panel");
   if (!panel) return;
+  if (mode === "name") {
+    panel.innerHTML = `<label>친구 이름<input id="friend-name" autocomplete="off" maxlength="30" placeholder="가입할 때 입력한 이름"></label><small>개인정보 보호를 위해 이름이 정확히 일치할 때만 찾아요. 동명이인이 있으면 친구코드를 이용해주세요.</small><button onclick="lookupFriend('name')">친구 찾기</button><div id="friend-search-result"></div>`;
+    return;
+  }
   if (mode === "phone") {
     panel.innerHTML = `<label>친구 전화번호<input id="friend-phone" inputmode="numeric" autocomplete="tel" maxlength="13" oninput="formatPhoneInput(this)" placeholder="010-1234-5678"></label><small>전화번호는 친구를 찾는 데에만 사용되며, 상대에게 공개되지 않아요.</small><button onclick="lookupFriend('phone')">친구 찾기</button><div id="friend-search-result"></div>`;
     return;
@@ -762,18 +766,19 @@ async function shareFriendCode() {
   try { await navigator.clipboard.writeText(text); alert("친구코드를 복사했어요."); } catch { alert(text); }
 }
 async function lookupFriend(mode) {
-  const field = document.querySelector(mode === "phone" ? "#friend-phone" : "#friend-code");
+  const field = document.querySelector(mode === "name" ? "#friend-name" : mode === "phone" ? "#friend-phone" : "#friend-code");
   const value = field?.value.trim();
-  if (!value) return alert(mode === "phone" ? "전화번호를 입력해주세요." : "친구코드를 입력해주세요.");
+  if (!value) return alert(mode === "name" ? "친구의 정확한 이름을 입력해주세요." : mode === "phone" ? "전화번호를 입력해주세요." : "친구코드를 입력해주세요.");
   if (mode === "phone" && !isValidMobilePhone(value))
     return alert("010-1234-5678 형식의 휴대폰 번호를 입력해주세요.");
   const root = document.querySelector("#friend-search-result");
   if (root) root.innerHTML = `<div class="friend-lookup-loading"><span class="thinking-loader"><i></i><i></i><i></i></span>친구를 찾고 있어요.</div>`;
   try {
-    const result = await api("/api/friends/lookup", { method: "POST", body: JSON.stringify(mode === "phone" ? { phone: phoneDigits(value) } : { friend_code: value }) });
+    const payload = mode === "name" ? { name: value } : mode === "phone" ? { phone: phoneDigits(value) } : { friend_code: value };
+    const result = await api("/api/friends/lookup", { method: "POST", body: JSON.stringify(payload) });
     if (!root) return;
     if (!result.user) {
-      root.innerHTML = `<div class="friend-search-empty">찾는 사용자가 없어요. 전화번호 또는 친구코드를 다시 확인해주세요.</div>`;
+      root.innerHTML = `<div class="friend-search-empty">${result.ambiguous ? "같은 이름의 사용자가 둘 이상이에요. 친구코드나 전화번호로 찾아주세요." : mode === "name" ? "정확히 일치하는 이름의 사용자가 없어요." : "찾는 사용자가 없어요. 입력 정보를 다시 확인해주세요."}</div>`;
       return;
     }
     const user = result.user;
@@ -1367,7 +1372,9 @@ function openContextToneFinding(id) {
   popup(`<div class="ai-check warn context-tone-result"><span>전송 후 맥락 확인</span><h2>앞 대화와 함께 보면 이렇게 들릴 수도 있어요</h2>${evidence}<p class="ai-suggestion">${esc(message.ai_suggestion)}</p><small>이미 전송된 메시지를 막거나 판단하지 않고, 다음 대화에 참고할 수 있는 제안이에요.</small><button onclick="closePopup()">확인</button></div>`);
 }
 async function queueContextToneCheck(room, messageId) {
-  if (!messageId || contextChecksInFlight.has(messageId) || activeAiIntervention() === "off" || aiDetails()["비꼼·압박 표현"] === "끄기") return;
+  const toneEnabled = activeAiIntervention() !== "off" && aiDetails()["비꼼·압박 표현"] !== "끄기";
+  const alignmentEnabled = activeAiIntervention() !== "off" && aiDetails()["말맞춤 카드"] !== "끄기";
+  if (!messageId || contextChecksInFlight.has(messageId) || (!toneEnabled && !alignmentEnabled)) return;
   contextChecksInFlight.add(messageId);
   if (roomId === room) setAiStatus("보낸 문장을 앞 대화와 함께 확인 중", true);
   try {
@@ -1377,12 +1384,16 @@ async function queueContextToneCheck(room, messageId) {
       message.ai_verdict = result.verdict;
       message.ai_suggestion = result.suggestion;
       message.ai_trigger = result.trigger;
+      message.alignment_hint = Boolean(result.alignment_hint);
+      message.alignment_kind = result.alignment_kind || null;
+      message.alignment_summary = result.alignment_summary || null;
       const node = document.querySelector(`.bubble[data-message-id="${messageId}"]`);
       if (node) node.outerHTML = view(message);
-    } else if (roomId === room && result.verdict === "WARN") {
+      updateFragment("#alignment-slot", alignmentCard(currentRoomMessages));
+    } else if (roomId === room && (result.verdict === "WARN" || result.alignment_hint)) {
       await refreshRoom(room);
     }
-    if (roomId === room) setAiStatus(result.verdict === "WARN" ? "맥락을 확인한 제안이 있어요" : "맥락 확인 완료");
+    if (roomId === room) setAiStatus(result.alignment_hint ? "약속·계획 말맞춤 카드를 준비했어요" : result.verdict === "WARN" ? "맥락을 확인한 제안이 있어요" : "맥락 확인 완료");
   } catch (error) {
     if (roomId === room) setAiStatus(error.status === 502 || error.status === 503 ? "AI 연결을 확인해주세요" : "맥락 확인을 잠시 후 다시 시도할게요");
   } finally {
@@ -1593,18 +1604,24 @@ function alignmentCard(messages) {
     .reverse()
     .find(
       (item) =>
-        item.alignment_hint && !(data.appointments || []).some(a=>a.source_message_id === item.id) &&
+        item.alignment_hint && !(data.appointments || []).some(a=>a.source_message_id === item.id) && !(data.agreements || []).some(a=>a.source_message_id === item.id) &&
         localStorage.getItem(`retone-alignment-dismissed-${item.id}`) !== "1",
     );
   if (!message) return "";
-  return `<article class="alignment-card"><span>✦ 말맞춤 제안</span><b>약속을 정하는 대화 같아요.</b><p>‘${esc(message.body)}’에 대해 시간·장소·할 일을 함께 맞춰볼까요?</p><div><button onclick="openAlignmentCard('${message.id}')">말맞춤 카드 만들기</button><button class="quiet" onclick="dismissAlignment('${message.id}')">나중에</button></div></article>`;
+  const planning = message.alignment_kind === "plan";
+  const title = planning ? "함께할 일을 계획하는 대화 같아요." : "약속을 정하는 대화 같아요.";
+  const summary = message.alignment_summary || message.body;
+  const help = planning ? "담당자·기한·준비할 내용을 함께 맞춰볼까요?" : "시간·장소·할 일을 함께 맞춰볼까요?";
+  return `<article class="alignment-card"><span>✦ 말맞춤 제안 · ${planning ? "계획" : "약속"}</span><b>${title}</b><p>‘${esc(summary)}’ — ${help}</p><div><button onclick="openAlignmentCard('${message.id}')">${planning ? "계획 카드 만들기" : "약속 카드 만들기"}</button><button class="quiet" onclick="dismissAlignment('${message.id}')">나중에</button></div></article>`;
 }
 function dismissAlignment(id) {
   localStorage.setItem(`retone-alignment-dismissed-${id}`, "1");
   openRoom(roomId);
 }
 function openAlignmentCard(id) {
-  popup(appointmentEditorMarkup(null,id));
+  const message = currentRoomMessages.find((item) => item.id === id);
+  if (message?.alignment_kind === "plan") return newAgreement(message.alignment_summary || message.body || "", id);
+  popup(appointmentEditorMarkup(null, id, message?.alignment_summary || message?.body || ""));
 }
 function inspectMessage(id) {
   popup(
@@ -2011,8 +2028,7 @@ async function sendApproved() {
     if (intentButton) intentButton.textContent="＋";
     openRoom(next.room);
   }
-  if (next.result?.verdict !== "WARN" && sentMessage?.id)
-    queueContextToneCheck(next.room, sentMessage.id);
+  if (sentMessage?.id) queueContextToneCheck(next.room, sentMessage.id);
 }
 function editPendingSend(allowOnePass = false) {
   const body = pendingSend?.body || "";
@@ -2147,12 +2163,13 @@ async function saveRoom() {
     alert("채팅방을 만들지 못했어요. 초대할 친구와 서버 연결을 다시 확인해주세요.");
   }
 }
-function newAgreement() {
+function newAgreement(task = "", sourceId = "") {
   popup(
-    `<div class="schedule-editor"><span>공동 확인</span><h2>함께 확인할 일을 만들어요</h2><p>마감일은 달력에서 골라 정확하게 공유할 수 있어요.</p><label>할 일<input id="task" placeholder="예: 발표 자료 초안 정리"></label><label>담당자<input id="assignee" placeholder="예: 원준영"></label><label>마감 날짜와 시간<div class="quick-date"><button type="button" onclick="setQuickDate('deadline',0)">오늘</button><button type="button" onclick="setQuickDate('deadline',1)">내일</button></div><input id="deadline" type="datetime-local"></label><button onclick="saveAgreement()">공동 확인 카드 만들기</button></div>`,
+    `<div class="schedule-editor" data-source="${escAttr(sourceId)}"><span>공동 확인</span><h2>함께 확인할 일을 만들어요</h2><p>마감일은 달력에서 골라 정확하게 공유할 수 있어요.</p><label>할 일<input id="task" value="${escAttr(task)}" placeholder="예: 발표 자료 초안 정리"></label><label>담당자<input id="assignee" placeholder="예: 원준영"></label><label>마감 날짜와 시간<div class="quick-date"><button type="button" onclick="setQuickDate('deadline',0)">오늘</button><button type="button" onclick="setQuickDate('deadline',1)">내일</button></div><input id="deadline" type="datetime-local"></label><button onclick="saveAgreement()">공동 확인 카드 만들기</button></div>`,
   );
 }
 async function saveAgreement() {
+  const editor = document.querySelector(".schedule-editor");
   const task = document.querySelector("#task").value.trim();
   const deadline = document.querySelector("#deadline").value;
   if (!task || !deadline) return alert("할 일과 마감 날짜·시간을 선택해주세요.");
@@ -2164,8 +2181,11 @@ async function saveAgreement() {
         room_id: roomId,
         assignee: document.querySelector("#assignee").value,
         deadline: deadline.replace("T", " "),
+        source_message_id: editor?.dataset.source || null,
       }),
     });
+    if (editor?.dataset.source)
+      localStorage.setItem(`retone-alignment-dismissed-${editor.dataset.source}`, "1");
     data = await api(`/api/bootstrap?user_id=${encodeURIComponent(signedInId)}`);
     closePopup();
     openRoom(roomId);
@@ -2194,10 +2214,10 @@ function addScheduleField(button) {
   host.insertAdjacentHTML("beforeend",scheduleFieldMarkup());
   host.lastElementChild.firstElementChild.focus();
 }
-function appointmentEditorMarkup(item = null, sourceId = "") {
+function appointmentEditorMarkup(item = null, sourceId = "", draftTitle = "") {
   const editing = Boolean(item);
   const date = item?.date ? String(item.date).replace(" ", "T").slice(0, 16) : "";
-  return `<div class="schedule-editor appointment-editor" data-client="${crypto.randomUUID()}" data-source="${escAttr(sourceId)}" data-room="${escAttr(roomId)}"><span>${editing ? "공동 약속 수정" : "함께할 약속"}</span><h2>${editing ? "서로 약속을 바꿔볼까요?" : "약속을 함께 정해요"}</h2><p>${editing ? "이 방의 참여자는 시간·장소·내용을 최신 계획으로 함께 바꿀 수 있어요." : "회의·보이스톡·만남 일정을 달력에서 골라 바로 공유해요."}</p><label>약속 이름<input id="appointmentTitle" value="${escAttr(item?.title || "")}" placeholder="예: 발표 방향 짧은 회의"></label><label>날짜와 시간<div class="quick-date"><button type="button" onclick="setQuickDate('appointmentDate',0)">오늘</button><button type="button" onclick="setQuickDate('appointmentDate',1)">내일</button></div><input id="appointmentDate" type="datetime-local" value="${escAttr(date)}"></label><label>장소 또는 온라인 링크<input id="appointmentPlace" value="${escAttr(item?.place === "장소 미정" ? "" : item?.place || "")}" placeholder="예: 교실, 디스코드, Google Meet"></label><div class="schedule-fields">${(item?.fields || []).map(scheduleFieldMarkup).join("")}</div><button type="button" class="quiet" onclick="addScheduleField(this)">＋ 세부 항목</button><button onclick="saveAppointment('${item?.id || ""}')">${editing ? "변경 사항 공유하기" : "약속 공유하기"}</button></div>`;
+  return `<div class="schedule-editor appointment-editor" data-client="${crypto.randomUUID()}" data-source="${escAttr(sourceId)}" data-room="${escAttr(roomId)}"><span>${editing ? "공동 약속 수정" : "함께할 약속"}</span><h2>${editing ? "서로 약속을 바꿔볼까요?" : "약속을 함께 정해요"}</h2><p>${editing ? "이 방의 참여자는 시간·장소·내용을 최신 계획으로 함께 바꿀 수 있어요." : "회의·보이스톡·만남 일정을 달력에서 골라 바로 공유해요."}</p><label>약속 이름<input id="appointmentTitle" value="${escAttr(item?.title || draftTitle)}" placeholder="예: 발표 방향 짧은 회의"></label><label>날짜와 시간<div class="quick-date"><button type="button" onclick="setQuickDate('appointmentDate',0)">오늘</button><button type="button" onclick="setQuickDate('appointmentDate',1)">내일</button></div><input id="appointmentDate" type="datetime-local" value="${escAttr(date)}"></label><label>장소 또는 온라인 링크<input id="appointmentPlace" value="${escAttr(item?.place === "장소 미정" ? "" : item?.place || "")}" placeholder="예: 교실, 디스코드, Google Meet"></label><div class="schedule-fields">${(item?.fields || []).map(scheduleFieldMarkup).join("")}</div><button type="button" class="quiet" onclick="addScheduleField(this)">＋ 세부 항목</button><button onclick="saveAppointment('${item?.id || ""}')">${editing ? "변경 사항 공유하기" : "약속 공유하기"}</button></div>`;
 }
 function editAppointment(id) {
   const item = (data?.appointments || []).find((appointment) => appointment.id === id);

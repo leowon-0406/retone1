@@ -165,3 +165,8 @@ ALTER TABLE retone_v2.messages ADD COLUMN IF NOT EXISTS fact_result JSONB;
 ALTER TABLE retone_v2.messages ADD COLUMN IF NOT EXISTS ai_trigger TEXT;
 ALTER TABLE retone_v2.messages ADD COLUMN IF NOT EXISTS ai_context_version INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE retone_v2.ai_cache ADD COLUMN IF NOT EXISTS warning_trigger TEXT;
+ALTER TABLE retone_v2.messages ADD COLUMN IF NOT EXISTS alignment_hint BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE retone_v2.messages ADD COLUMN IF NOT EXISTS alignment_kind TEXT;
+ALTER TABLE retone_v2.messages ADD COLUMN IF NOT EXISTS alignment_summary TEXT;
+ALTER TABLE retone_v2.agreements ADD COLUMN IF NOT EXISTS source_message_id UUID REFERENCES retone_v2.messages(id) ON DELETE SET NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS agreement_source_unique ON retone_v2.agreements(source_message_id) WHERE source_message_id IS NOT NULL;
