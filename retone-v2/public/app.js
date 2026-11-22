@@ -720,24 +720,79 @@ function friendCodeFromQr(value) {
   const matched = String(value || "").trim().match(/^RETONE-FRIEND:([A-Z0-9-]+)$/i);
   return matched ? matched[1].toUpperCase() : "";
 }
+let qrDecoderPromise = null;
+function loadQrDecoder() {
+  if (window.jsQR) return Promise.resolve(window.jsQR);
+  if (qrDecoderPromise) return qrDecoderPromise;
+  qrDecoderPromise = new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = "https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js";
+    script.async = true;
+    script.onload = () => window.jsQR ? resolve(window.jsQR) : reject(new Error("qr-decoder-missing"));
+    script.onerror = () => reject(new Error("qr-decoder-load-failed"));
+    document.head.appendChild(script);
+  }).catch((error) => {
+    qrDecoderPromise = null;
+    throw error;
+  });
+  return qrDecoderPromise;
+}
+function qrImagePixels(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const image = new Image();
+    image.onload = () => {
+      try {
+        const scale = Math.min(1, 1400 / Math.max(image.naturalWidth, image.naturalHeight));
+        const width = Math.max(1, Math.round(image.naturalWidth * scale));
+        const height = Math.max(1, Math.round(image.naturalHeight * scale));
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const context = canvas.getContext("2d", { willReadFrequently: true });
+        context.drawImage(image, 0, 0, width, height);
+        resolve(context.getImageData(0, 0, width, height));
+      } catch (error) {
+        reject(error);
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+    };
+    image.onerror = () => {
+      URL.revokeObjectURL(url);
+      reject(new Error("qr-image-invalid"));
+    };
+    image.src = url;
+  });
+}
+async function decodeFriendQr(file) {
+  if (window.BarcodeDetector && window.createImageBitmap) {
+    try {
+      const bitmap = await createImageBitmap(file);
+      const codes = await new BarcodeDetector({ formats: ["qr_code"] }).detect(bitmap);
+      bitmap.close?.();
+      const nativeCode = friendCodeFromQr(codes[0]?.rawValue);
+      if (nativeCode) return nativeCode;
+    } catch {}
+  }
+  const [decoder, pixels] = await Promise.all([loadQrDecoder(), qrImagePixels(file)]);
+  return friendCodeFromQr(decoder(pixels.data, pixels.width, pixels.height, { inversionAttempts: "attemptBoth" })?.data);
+}
 async function scanFriendQr(input) {
   const file = input.files?.[0];
   if (!file) return;
-  const Detector = window.BarcodeDetector;
-  if (!Detector || !window.createImageBitmap) {
-    alert("이 브라우저에서는 QR 사진 인식을 지원하지 않아요. 친구코드를 직접 입력해주세요.");
-    return;
-  }
   try {
-    const bitmap = await createImageBitmap(file);
-    const codes = await new Detector({ formats: ["qr_code"] }).detect(bitmap);
-    const friendCode = friendCodeFromQr(codes[0]?.rawValue);
+    const panel = document.querySelector("#my-friend-qr");
+    if (panel) panel.insertAdjacentHTML("afterend", `<div id="qr-scan-progress" class="friend-lookup-loading"><span class="thinking-loader"><i></i><i></i><i></i></span>QR 사진을 읽고 있어요.</div>`);
+    const friendCode = await decodeFriendQr(file);
     if (!friendCode) throw new Error("not-retone-qr");
+    document.querySelector("#qr-scan-progress")?.remove();
     showFriendAddPanel("code");
     document.querySelector("#friend-code").value = friendCode;
     lookupFriend("code");
   } catch {
-    alert("Re:Tone 친구 QR을 읽지 못했어요. QR이 선명한 사진인지 확인하거나 친구코드를 입력해주세요.");
+    document.querySelector("#qr-scan-progress")?.remove();
+    alert("QR을 읽지 못했어요. 사진을 다시 선택하거나 친구코드 6자리를 입력해주세요.");
   } finally {
     input.value = "";
   }
@@ -899,7 +954,7 @@ function settings() {
   )
     .map(
       ([key, [title, desc]]) =>
-        `<button class="ai-level ${aiIntervention === key ? "selected" : ""}" onclick="setAiIntervention('${key}')"><strong>${title}</strong><span>${desc}</span></button>`,
+        `<button data-ai-level="${key}" class="ai-level ${aiIntervention === key ? "selected" : ""}" onclick="setAiIntervention('${key}')"><strong>${title}</strong><span>${desc}</span></button>`,
     )
     .join(
       "",
@@ -1093,13 +1148,22 @@ const aiGroups = [
 function renderDetailedAiSettings() {
   const root = document.querySelector(".ai-toggles");
   if (!root) return;
+  const keepAdvancedOpen = Boolean(root.querySelector(".ai-advanced-settings")?.open);
+  const keepGroupsOpen = new Set(
+    Array.from(root.querySelectorAll(".ai-setting-group[open]"), (group) => group.querySelector("summary b")?.textContent).filter(Boolean),
+  );
   const sensitivity = sensitivityState();
   const saved = aiDetails(false);
   const card = (name) => {
     const [, desc, options] = aiCategories.find(([title]) => title === name);
-    return `<article class="ai-category"><span><b>${name}</b><small>${desc}</small></span><div class="ai-choice-row">${options.map((option) => `<button class="${saved[name] === option ? "selected" : ""}" onclick="saveAiDetail('${name}','${option}')">${option}</button>`).join("")}</div></article>`;
+    return `<article class="ai-category"><span><b>${name}</b><small>${desc}</small></span><div class="ai-choice-row">${options.map((option) => `<button class="${saved[name] === option ? "selected" : ""}" onclick="saveAiDetail(this,'${name}','${option}')">${option}</button>`).join("")}</div></article>`;
   };
   root.innerHTML = `<section class="overall-sensitivity"><span>기본 AI 민감도</span><b id="overall-sensitivity-label">${sensitivityLabel(sensitivity.overall)} · ${sensitivity.overall}</b><input type="range" min="0" max="100" value="${sensitivity.overall}" style="--sensitivity:${sensitivity.overall}%" oninput="previewOverallSensitivity(this.value,this)" onchange="setOverallSensitivity(this.value)"><small>모든 채팅방의 기본값이에요. 친한 친구 방은 방 설정에서 따로 낮출 수 있어요.</small><button class="ai-connection-button" onclick="checkAiConnection()">OpenAI 연결 확인</button></section><details class="ai-advanced-settings"><summary><span><b>세부 항목 조절</b><small>필요한 항목만 열어, 내 대화 방식에 맞춰요.</small></span><i>⌄</i></summary><div class="ai-setting-intro"><b>‘그냥 보내기’ 선택도 반영해요</b><span>${esc(learningNote())}</span></div>${aiGroups.map(([title, desc, names]) => `<details class="ai-setting-group"><summary><span><b>${title}</b><small>${desc}</small></span><i>⌄</i></summary><div class="ai-category-list">${names.map(card).join("")}</div></details>`).join("")}</details>`;
+  const advanced = root.querySelector(".ai-advanced-settings");
+  if (advanced) advanced.open = keepAdvancedOpen;
+  root.querySelectorAll(".ai-setting-group").forEach((group) => {
+    group.open = keepGroupsOpen.has(group.querySelector("summary b")?.textContent);
+  });
   const actions = document.querySelector("#settings-app-actions");
   if (actions)
     actions.innerHTML = `<section class="settings-actions"><button class="theme-toggle" onclick="toggleTheme()">${document.body.classList.contains("dark") ? "☀️ 라이트 모드" : "🌙 다크 모드"}</button><button class="notification-toggle" onclick="toggleBrowserNotifications()">${browserNotificationsEnabled() ? "🔔 새 메시지 알림 켬" : "🔕 새 메시지 알림 켜기"}</button><button class="danger-action" onclick="openDeleteAccount()">회원 탈퇴</button></section>`;
@@ -1122,7 +1186,7 @@ async function checkAiConnection() {
     popup(`<div class="ai-check warn"><span>AI 연결 상태</span><h2>상태를 확인하지 못했어요</h2><p>로그인 상태나 서버 배포 상태를 확인해주세요.</p><button onclick="closePopup()">확인</button></div>`);
   }
 }
-function saveAiDetail(name, value) {
+function saveAiDetail(button, name, value) {
   const state = sensitivityState();
   const map = {
     끄기: 0,
@@ -1140,7 +1204,7 @@ function saveAiDetail(name, value) {
   };
   state.categories[name] = map[value] ?? 50;
   saveSensitivity(state);
-  renderDetailedAiSettings();
+  button?.closest(".ai-choice-row")?.querySelectorAll("button").forEach((item) => item.classList.toggle("selected", item === button));
 }
 function previewOverallSensitivity(value, input) {
   const label = document.querySelector("#overall-sensitivity-label");
@@ -1224,7 +1288,10 @@ async function setAiIntervention(level) {
   });
   aiIntervention = user.ai_intervention;
   sessionStorage.setItem("retone-v2-ai-level", aiIntervention);
-  settings();
+  document.querySelectorAll("[data-ai-level]").forEach((button) =>
+    button.classList.toggle("selected", button.dataset.aiLevel === aiIntervention),
+  );
+  renderDetailedAiSettings();
 }
 async function logout() {
   try { await api("/api/auth/logout", {method:"POST"}); }

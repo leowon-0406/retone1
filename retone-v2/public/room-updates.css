@@ -29,4 +29,17 @@
 @media(max-width:700px) { .appointment-actions { display: grid; grid-template-columns: 1fr 1fr; } }
 .friend-add-tabs { grid-template-columns: repeat(4, minmax(0, 1fr)) !important; }
 @media(max-width:390px) { .friend-add-tabs button { font-size: 10px !important; padding-inline: 2px !important; } }
+@media(max-width:700px) {
+  .layout > .rail { position: fixed; z-index: 4; inset: auto 0 0; display: flex !important; width: 100%; height: calc(64px + env(safe-area-inset-bottom)); padding: 6px 10px env(safe-area-inset-bottom); border-top: 1px solid #e5dccd; background: #fffaf2 !important; box-shadow: 0 -8px 24px #40372514; color: #4f554a; }
+  .layout > .rail .brand, .layout > .rail > p, .layout > .rail > small { display: none !important; }
+  .layout > .rail nav { display: grid; width: 100%; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+  .layout > .rail nav button { position: relative; display: grid; min-height: 48px; margin: 0; padding: 15px 6px 5px; place-items: center; border-radius: 13px; background: transparent !important; color: #777b70 !important; text-align: center; font-size: 11px; transform: none !important; }
+  .layout > .rail nav button.active { background: #f0f3ce !important; color: #58651f !important; }
+  .layout > .rail nav button.active:before { left: 50%; top: 7px; width: 20px; height: 3px; border-radius: 999px; background: #c9d94f; transform: translateX(-50%); }
+  .layout > .page { min-height: calc(100dvh - 64px - env(safe-area-inset-bottom)); }
+  .layout > .chat { height: calc(100dvh - 64px - env(safe-area-inset-bottom)) !important; }
+  .dark .layout > .rail { border-color: #44483e; background: #292d27 !important; }
+  .dark .layout > .rail nav button { color: #c8ccbf !important; }
+  .dark .layout > .rail nav button.active { background: #444b33 !important; color: #edf2b0 !important; }
+}
 .appointment-editor { max-height: 80dvh; overflow-y: auto; }

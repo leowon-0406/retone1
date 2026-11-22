@@ -72,7 +72,14 @@ async function main() {
     localStorage.removeItem('retone-ai-sensitivity');
     const sensitivity=sensitivityState();
     const strongerAiDefaults=sensitivity.overall===55 && sensitivity.categories['강한 공격 표현']===65 && sensitivity.categories['비꼼·압박 표현']===60;
-    return {draftKept,oldKept,newAdded,writes,scheduleFields,scheduleActions,localScheduleTime,loginPhoneFormat,planAlignmentVisible,friendCodeVisible,qrVisible,qrCodeParsed,exactNameSearchVisible,strongerAiDefaults,quickBeforeSend,manualFlow,settingsSelected,newestRoomFirst,messengerTyping};
+    document.body.innerHTML='<div class="ai-toggles"></div><div id="settings-app-actions"></div>';
+    renderDetailedAiSettings();
+    const advanced=document.querySelector('.ai-advanced-settings'); advanced.open=true;
+    const group=document.querySelector('.ai-setting-group'); group.open=true;
+    const choice=group.querySelector('.ai-choice-row button:last-child');
+    saveAiDetail(choice,'강한 공격 표현',choice.textContent);
+    const aiPanelStaysOpen=advanced.open && group.open && choice.classList.contains('selected');
+    return {draftKept,oldKept,newAdded,writes,scheduleFields,scheduleActions,localScheduleTime,loginPhoneFormat,planAlignmentVisible,friendCodeVisible,qrVisible,qrCodeParsed,exactNameSearchVisible,strongerAiDefaults,aiPanelStaysOpen,quickBeforeSend,manualFlow,settingsSelected,newestRoomFirst,messengerTyping};
   })()`, context);
   assert.equal(result.draftKept, true);
   assert.equal(result.oldKept, true);
@@ -89,6 +96,7 @@ async function main() {
   assert.equal(result.qrCodeParsed, true);
   assert.equal(result.exactNameSearchVisible, true);
   assert.equal(result.strongerAiDefaults, true);
+  assert.equal(result.aiPanelStaysOpen, true);
   assert.equal(result.quickBeforeSend, true);
   assert.equal(result.manualFlow, true);
   assert.equal(result.settingsSelected, true);
@@ -97,8 +105,11 @@ async function main() {
   assert.ok((source.match(/id="auth-phone" inputmode="numeric" maxlength="13" autocomplete="tel" oninput="formatPhoneInput\(this\)" placeholder="010-1234-5678"/g) || []).length >= 2);
   assert.match(roomCss, /#reply-slot:not\(:empty\).*grid-column:\s*1\s*\/\s*-1/s);
   assert.match(roomCss, /@keyframes messengerTyping/);
+  assert.match(roomCss, /layout > \.rail[\s\S]*display:\s*flex\s*!important/);
   assert.match(authCss, /label>\.password-field\{margin-top:7px\}/);
   assert.match(authCss, /password-requirements\{grid-template-columns:repeat\(2/);
+  assert.match(source, /async function decodeFriendQr/);
+  assert.match(source, /jsqr@1\.4\.0/);
   console.log('Frontend regressions passed: reply layout, messenger typing, navigation and recent-room ordering.');
 }
 
