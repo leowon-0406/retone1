@@ -559,7 +559,7 @@ function agreementMarkup(id) {
     .slice(0, 1)
     .map(
       (a) =>
-        `<article class="agreement" data-agreement-id="${escAttr(a.id)}"><b>✓ 공동 확인 · ${esc(a.task)}</b><small>담당 ${esc(a.assignee)} · ${esc(a.deadline)} · 확인 ${a.confirmations} · 보완 ${a.revisions}</small><div><button onclick="answerAgreement('${a.id}','confirm',this)">확인했어요</button><button class="quiet" onclick="answerAgreement('${a.id}','revise',this)">보완 요청</button></div><span class="agreement-feedback" role="status" aria-live="polite"></span></article>`,
+        `<article class="agreement agreement-card" data-agreement-id="${escAttr(a.id)}"><header><span class="agreement-icon" aria-hidden="true">✓</span><div><small>공동 확인</small><b>${esc(a.task)}</b></div></header><div class="agreement-meta"><span><i>담당</i>${esc(a.assignee)}</span><span><i>마감</i>${esc(a.deadline)}</span></div><div class="agreement-progress" aria-label="공동 확인 진행 상황"><span>확인 <b>${a.confirmations}</b></span><span>보완 <b>${a.revisions}</b></span></div><div class="agreement-actions"><button class="agreement-confirm" onclick="answerAgreement('${a.id}','confirm',this)"><span>✓</span> 확인했어요</button><button class="agreement-revise" onclick="answerAgreement('${a.id}','revise',this)">보완 요청</button></div><span class="agreement-feedback" role="status" aria-live="polite"></span></article>`,
     )
     .join(
       "",
