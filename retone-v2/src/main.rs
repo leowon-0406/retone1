@@ -1771,6 +1771,7 @@ async fn bootstrap(
             let unread = rows.into_iter().map(|(id,count)|(id.to_string(),count.min(255) as u8)).collect::<HashMap<_,_>>();
             rooms.iter_mut().for_each(|room| room.unread = *unread.get(&room.id).unwrap_or(&0));
         }
+        rooms.sort_by(|left, right| right.updated.cmp(&left.updated));
     }
     Ok(Json(DataOut {
         rooms,
@@ -2571,7 +2572,7 @@ async fn prepare_storage() -> Option<PgPool> {
     Some(pool)
 }
 async fn restore_data(db: &PgPool) -> Data {
-    let rooms = sqlx::query_as::<_, (Uuid, String, i64, String, i64)>("SELECT r.id,r.name,(SELECT COUNT(*) FROM retone_v2.room_members rm WHERE rm.room_id=r.id),COALESCE((SELECT m.body FROM retone_v2.messages m WHERE m.room_id=r.id AND m.deleted_at IS NULL ORDER BY m.created_at DESC LIMIT 1),'새 대화를 시작해 보세요.'),FLOOR(EXTRACT(EPOCH FROM r.created_at)*1000)::BIGINT FROM retone_v2.rooms r ORDER BY r.created_at")
+    let rooms = sqlx::query_as::<_, (Uuid, String, i64, String, i64)>("SELECT r.id,r.name,(SELECT COUNT(*) FROM retone_v2.room_members rm WHERE rm.room_id=r.id),COALESCE((SELECT m.body FROM retone_v2.messages m WHERE m.room_id=r.id AND m.deleted_at IS NULL ORDER BY m.created_at DESC LIMIT 1),'새 대화를 시작해 보세요.'),FLOOR(EXTRACT(EPOCH FROM COALESCE((SELECT MAX(m.created_at) FROM retone_v2.messages m WHERE m.room_id=r.id AND m.deleted_at IS NULL),r.created_at))*1000)::BIGINT FROM retone_v2.rooms r ORDER BY 5 DESC")
         .fetch_all(db).await.unwrap_or_default().into_iter().map(|(id,name,members,last,updated)| Room { id:id.to_string(),name,members:members.min(255) as u8,unread:0,pinned:false,last,updated }).collect();
     let messages = sqlx::query_as::<_, (Uuid, Uuid, Option<String>, Option<Uuid>, String, i64, Option<String>, Option<String>, Option<Uuid>, Option<String>, Option<String>, Option<String>)>("SELECT m.id,m.room_id,u.name,m.sender_id,m.body,FLOOR(EXTRACT(EPOCH FROM m.created_at)*1000)::BIGINT,m.intent,m.image_url,m.reply_to,m.ai_verdict,m.ai_suggestion,m.ai_trigger FROM retone_v2.messages m LEFT JOIN retone_v2.users u ON u.id=m.sender_id WHERE m.deleted_at IS NULL ORDER BY m.created_at")
         .fetch_all(db).await.unwrap_or_default().into_iter().map(|(id,room_id,sender,sender_id,body,created,intent,image_url,reply_to,ai_verdict,ai_suggestion,ai_trigger)| { let alignment_hint = looks_like_alignment(&body); Message { id:id.to_string(),room_id:room_id.to_string(),sender:sender.unwrap_or_else(|| "알 수 없는 사용자".into()),sender_id:sender_id.map(|value| value.to_string()),mine:false,body,created,unread:0,intent,alignment_hint,image_url,reply_to:reply_to.map(|value| value.to_string()),ai_verdict,ai_suggestion,ai_trigger } }).collect();

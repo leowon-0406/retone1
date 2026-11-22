@@ -14,6 +14,7 @@ async function main() {
     console, URL, URLSearchParams, FormData:dom.window.FormData,
   });
   let source = fs.readFileSync(new URL('../public/app.js', `file://${__filename}`), 'utf8');
+  const roomCss = fs.readFileSync(new URL('../public/room-updates.css', `file://${__filename}`), 'utf8');
   source = source.replace(/\nrestoreLogin\(\);\s*$/, '\n');
   vm.runInContext(source, context);
 
@@ -45,6 +46,11 @@ async function main() {
     await runAiCheck('오늘 회의 어떻게 할까');
     const quickBeforeSend=aiRequestBody?.phase==='quick';
     const manualFlow=conversationPulse().includes('눌러서 분석');
+    nav='settings';
+    const settingsSelected=rail().includes('class="active" onclick="settings()"');
+    document.body.innerHTML='<div class="rooms"><button data-room-id="old"></button><button data-room-id="new"></button></div>';
+    updateHomeRoomSummaries([{id:'old',updated:1,last:'old',unread:0},{id:'new',updated:2,last:'new',unread:0}]);
+    const newestRoomFirst=document.querySelector('.rooms button')?.dataset.roomId==='new';
     friendIdentityCache={userId:'me',profile:{friend_code:'MZ3C4M',qr_svg:'<svg viewBox="0 0 10 10"></svg>'}};
     openFriendAdd('qr'); await Promise.resolve(); await Promise.resolve();
     const friendCodeVisible = document.querySelector('#friend-code-overview')?.textContent.includes('MZ3C4M');
@@ -53,7 +59,7 @@ async function main() {
     localStorage.removeItem('retone-ai-sensitivity');
     const sensitivity=sensitivityState();
     const strongerAiDefaults=sensitivity.overall===55 && sensitivity.categories['강한 공격 표현']===65 && sensitivity.categories['비꼼·압박 표현']===60;
-    return {draftKept,oldKept,newAdded,writes,scheduleFields,friendCodeVisible,qrVisible,qrCodeParsed,strongerAiDefaults,quickBeforeSend,manualFlow};
+    return {draftKept,oldKept,newAdded,writes,scheduleFields,friendCodeVisible,qrVisible,qrCodeParsed,strongerAiDefaults,quickBeforeSend,manualFlow,settingsSelected,newestRoomFirst};
   })()`, context);
   assert.equal(result.draftKept, true);
   assert.equal(result.oldKept, true);
@@ -67,7 +73,10 @@ async function main() {
   assert.equal(result.strongerAiDefaults, true);
   assert.equal(result.quickBeforeSend, true);
   assert.equal(result.manualFlow, true);
-  console.log('Frontend regressions passed: chat state, friend QR/code, quick AI precheck and manual conversation flow.');
+  assert.equal(result.settingsSelected, true);
+  assert.equal(result.newestRoomFirst, true);
+  assert.match(roomCss, /#reply-slot:not\(:empty\).*grid-column:\s*1\s*\/\s*-1/s);
+  console.log('Frontend regressions passed: reply layout, navigation state, recent-room ordering and AI flow.');
 }
 
 main().catch(error=>{ console.error(error); process.exitCode=1; });

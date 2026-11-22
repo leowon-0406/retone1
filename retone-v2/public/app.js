@@ -297,12 +297,13 @@ async function api(url, options = {}) {
   return r.json();
 }
 function rail() {
-  return `<aside class="rail"><div class="brand">Re:<i>Tone</i></div><p>더 나은 대화를 위한<br>새로운 작업 공간</p><nav><button class="${nav === "chat" ? "active" : ""}" onclick="nav='chat';home()">채팅</button><button class="${nav === "friends" ? "active" : ""}" onclick="nav='friends';friends()">친구</button><button onclick="settings()">설정</button></nav><small>${esc(signedIn || "Re:Tone")} · v2</small></aside>`;
+  return `<aside class="rail"><div class="brand">Re:<i>Tone</i></div><p>더 나은 대화를 위한<br>새로운 작업 공간</p><nav><button class="${nav === "chat" ? "active" : ""}" onclick="home()">채팅</button><button class="${nav === "friends" ? "active" : ""}" onclick="friends()">친구</button><button class="${nav === "settings" ? "active" : ""}" onclick="settings()">설정</button></nav><small>${esc(signedIn || "Re:Tone")} · v2</small></aside>`;
 }
 function connectionIssue(title, retry) {
   return `<main class="layout">${rail()}<section class="page"><header class="head"><h1>${esc(title)}</h1></header><div class="content"><section class="empty-chat connection-issue"><b>연결을 확인하지 못했어요</b><span>인터넷 또는 서버 상태를 확인한 뒤 다시 시도해주세요.</span><button onclick="${retry}">다시 시도</button></section></div></section></main>`;
 }
 async function home() {
+  nav = "chat";
   roomLoadVersion += 1;
   stopRoomPolling();
   roomId = null;
@@ -314,7 +315,7 @@ async function home() {
   }
   const rooms = data.rooms.filter(
     (r) => !["science", "friends"].includes(r.id) && !hasLeftRoom(r.id),
-  );
+  ).sort((a, b) => Number(b.updated || 0) - Number(a.updated || 0));
   const upcoming = (data.appointments || [])
     .slice()
     .sort((a, b) => a.date.localeCompare(b.date))[0];
@@ -402,7 +403,10 @@ function stopInboxPolling() {
   inboxPollInFlight = false;
 }
 function updateHomeRoomSummaries(rooms) {
-  rooms.forEach((room) => {
+  rooms
+    .slice()
+    .sort((a, b) => Number(b.updated || 0) - Number(a.updated || 0))
+    .forEach((room) => {
     const button = document.querySelector(`[data-room-id="${room.id}"]`);
     if (!button) return;
     const last = button.querySelector(".room-last");
@@ -414,6 +418,7 @@ function updateHomeRoomSummaries(rooms) {
     } else {
       badge?.remove();
     }
+    button.parentElement?.appendChild(button);
   });
 }
 function notifyUnreadRoom(room, previousUnread) {
@@ -611,6 +616,7 @@ function notifyNewMessage(message) {
   new Notification(room?.name || "Re:Tone", { body: `${message.sender}: ${message.body || "사진을 보냈어요."}`, tag: `retone-${roomId}` });
 }
 async function friends() {
+  nav = "friends";
   roomLoadVersion += 1;
   stopRoomPolling();
   roomId = null;

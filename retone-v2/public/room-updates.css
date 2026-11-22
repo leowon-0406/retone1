@@ -1,4 +1,7 @@
 .chat .room-slot, .sendbar .room-slot { display: contents; }
+#reply-slot { display: none !important; }
+#reply-slot:not(:empty) { display: block !important; grid-column: 1 / -1; min-width: 0; }
+#reply-slot .reply-composer { width: 100%; margin: 0 0 .55rem; }
 #typing-status { font-size: .76rem; font-weight: 600; }
 #typing-status:empty { display: none; }
 .schedule-fields { display: grid; gap: .45rem; }
