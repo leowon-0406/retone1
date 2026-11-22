@@ -39,7 +39,10 @@
 - Focused source/configuration checks: passed
 - Frontend regression suite: passed
 - Rust build and test compilation: passed
-- Live API smoke test: pending after deployment
+- Live API smoke test: passed after deployment
+  - `gpt-6-luna` returned a structured `PASS` result through `/api/ai/check`.
+  - The quality route returned a specific, non-fallback conversation summary.
+  - GPT-6 reasoning items are skipped when extracting the final `output_text`.
 
 ## Responses API capability assessment
 
