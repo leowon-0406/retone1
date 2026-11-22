@@ -46,6 +46,7 @@ async function main() {
     const scheduleCard = viewAppointment({id:'plan',date:'2026-11-22 18:00',place:'회의실',title:'회의',fields:[]});
     const scheduleActions = scheduleCard.includes('함께 수정') && scheduleCard.includes('일정 삭제');
     const localScheduleTime = localDateTimeValue(new Date(2026,10,22,18,5)) === '2026-11-22T18:05';
+    const loginPhoneFormat = formatPhoneNumber('01012345678') === '010-1234-5678';
     let aiRequestBody=null;
     api=async(url,options)=>{if(url==='/api/ai/check'){aiRequestBody=JSON.parse(options.body);return {verdict:'PASS',source:'quick',info:{level:'none'}}} throw new Error('unexpected')};
     aiPrefetch={text:'오늘 회의 어떻게 할까',result:null,promise:null,timer:null};
@@ -65,7 +66,7 @@ async function main() {
     localStorage.removeItem('retone-ai-sensitivity');
     const sensitivity=sensitivityState();
     const strongerAiDefaults=sensitivity.overall===55 && sensitivity.categories['강한 공격 표현']===65 && sensitivity.categories['비꼼·압박 표현']===60;
-    return {draftKept,oldKept,newAdded,writes,scheduleFields,scheduleActions,localScheduleTime,friendCodeVisible,qrVisible,qrCodeParsed,strongerAiDefaults,quickBeforeSend,manualFlow,settingsSelected,newestRoomFirst,messengerTyping};
+    return {draftKept,oldKept,newAdded,writes,scheduleFields,scheduleActions,localScheduleTime,loginPhoneFormat,friendCodeVisible,qrVisible,qrCodeParsed,strongerAiDefaults,quickBeforeSend,manualFlow,settingsSelected,newestRoomFirst,messengerTyping};
   })()`, context);
   assert.equal(result.draftKept, true);
   assert.equal(result.oldKept, true);
@@ -75,6 +76,7 @@ async function main() {
   assert.equal(result.scheduleFields, true);
   assert.equal(result.scheduleActions, true);
   assert.equal(result.localScheduleTime, true);
+  assert.equal(result.loginPhoneFormat, true);
   assert.equal(result.friendCodeVisible, true);
   assert.equal(result.qrVisible, true);
   assert.equal(result.qrCodeParsed, true);
@@ -84,6 +86,7 @@ async function main() {
   assert.equal(result.settingsSelected, true);
   assert.equal(result.newestRoomFirst, true);
   assert.equal(result.messengerTyping, true);
+  assert.ok((source.match(/id="auth-phone" inputmode="numeric" maxlength="13" autocomplete="tel" oninput="formatPhoneInput\(this\)" placeholder="010-1234-5678"/g) || []).length >= 2);
   assert.match(roomCss, /#reply-slot:not\(:empty\).*grid-column:\s*1\s*\/\s*-1/s);
   assert.match(roomCss, /@keyframes messengerTyping/);
   console.log('Frontend regressions passed: reply layout, messenger typing, navigation and recent-room ordering.');
